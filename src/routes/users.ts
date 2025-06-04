@@ -7,13 +7,14 @@ import {
   getUserByIdController
 } from "../controllers/userController";
 import { userRegisterValidations } from "../validations/userValidations";
+import { verifyToken } from "../middleware/authMiddleware";
 
 const router = express.Router();
 
-router.get("/", getAllUsersController);
-router.get("/:userId", getUserByIdController);
+router.get("/", verifyToken, getAllUsersController);
+router.get("/:userId", verifyToken, getUserByIdController);
 router.post("/register", userRegisterValidations, userController);
-router.put("/:userId", updateUserController);
-router.delete("/:userId", deleteUserController);
+router.put("/:userId", verifyToken, updateUserController);
+router.delete("/:userId", verifyToken, deleteUserController);
 
 export default router;

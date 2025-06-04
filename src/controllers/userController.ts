@@ -20,9 +20,19 @@ export const userController = async (req: Request, res: Response) => {
     birthDate,
     emergencyContact,
   } = req.body;
+
   try {
+    // 1. Crear el usuario en Firebase Authentication
+    const userRecord = await admin.auth().createUser({
+      email,
+      password,
+    });
+
+    // 2. Hashear la contraseña (solo para almacenamiento interno en Firestore)
     const hashedPassword = await bcrypt.hash(password, 10);
-    const newUserRef = admin.firestore().collection("users").doc();
+
+    // 3. Guardar la data adicional en Firestore con el UID generado por Auth
+    const newUserRef = admin.firestore().collection("users").doc(userRecord.uid);
     await newUserRef.set({
       firstName,
       lastName,
@@ -30,6 +40,8 @@ export const userController = async (req: Request, res: Response) => {
       password: hashedPassword,
       phone,
       branch,
+      role: 'user',
+      isAdmin: false,
       isNew: true,
       birthDate: birthDate || null,
       registrationDate: new Date().toISOString(),
@@ -47,15 +59,28 @@ export const userController = async (req: Request, res: Response) => {
       },
     });
 
-    res.status(201).json({ message: "User registered successfully.", id: newUserRef.id });
-  } catch (error) {
-    console.error('Error detallado:', error instanceof Error ? error.message : error);
-    res.status(500).json({ 
-      error: "Internal server error",
-      details: error instanceof Error ? error.message : 'Unknown error'
+    res.status(201).json({
+      message: "Usuario registrado correctamente.",
+      id: userRecord.uid,
+      email: userRecord.email,
+    });
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+    console.error('Error al registrar usuario:', error.message);
+    res.status(500).json({
+      error: "Error interno del servidor",
+      details: error.message,
+    });
+  } else {
+    console.error('Error desconocido:', error);
+    res.status(500).json({
+      error: "Error interno del servidor",
+      details: 'Error desconocido',
     });
   }
+  }
 };
+
 
 export const updateUserController = async (req: Request, res: Response) => {
   const errors = validationResult(req);
@@ -68,6 +93,10 @@ export const updateUserController = async (req: Request, res: Response) => {
   const updateData = { ...req.body };
   
   try {
+    // Prevenir cambios en el rol y estado de admin
+    delete updateData.role;
+    delete updateData.isAdmin;
+
     // Si viene password, hay que hashearla
     if (updateData.password) {
       updateData.password = await bcrypt.hash(updateData.password, 10);
