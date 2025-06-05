@@ -46,7 +46,7 @@ export const loginController = async (req: Request, res: Response) => {
       (userData?.password as string) || ""
     );
     if (!isValidPassword) {
-      res.status(401).json({ error: "Contraseña incorrecta" });
+      res.status(401).json({ error: "Revisa las credenciales" });
       return Promise.resolve();
     }
 
@@ -54,7 +54,7 @@ export const loginController = async (req: Request, res: Response) => {
     const customToken = await admin
       .auth()
       .createCustomToken(userCredential.uid, {
-        role: userData?.role || "user",
+        role: userData?.role ?? "user",
         isAdmin: userData?.role === "admin",
       });
 
