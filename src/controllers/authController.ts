@@ -1,87 +1,35 @@
 import { Request, Response } from "express";
-import { validationResult } from "express-validator";
-import bcrypt from "bcrypt";
+
 import admin from "../config/firebase";
 
 export const loginController = async (req: Request, res: Response) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    res.status(400).json({ errors: errors.array() });
-    return Promise.resolve();
-  }
-
   try {
-    const { email, password } = req.body;
+    const { uid } = req.body;
 
-    if (!email || !password) {
-      res.status(400).json({ error: "Email y contraseña son requeridos" });
-      return Promise.resolve();
+    if (!uid) {
+      return res.status(400).json({ error: "UID es requerido" });
     }
 
-    // Autenticar con Firebase Auth
-    const userCredential = await admin.auth().getUserByEmail(email);
-
-    if (!userCredential) {
-      res.status(404).json({ error: "Usuario no encontrado" });
-      return Promise.resolve();
-    }
-
-    // Buscar el usuario en Firestore para obtener su rol y contraseña
-    const userDoc = await admin
-      .firestore()
-      .collection("users")
-      .doc(userCredential.uid)
-      .get();
+    // Obtener datos del usuario desde Firestore
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
 
     if (!userDoc.exists) {
-      res.status(404).json({ error: "Datos de usuario no encontrados" });
-      return Promise.resolve();
+      return res.status(404).json({ error: "Datos de usuario no encontrados" });
     }
 
     const userData = userDoc.data();
-
-    // Verificar la contraseña
-    const isValidPassword = await bcrypt.compare(
-      password,
-      (userData?.password as string) || ""
-    );
-    if (!isValidPassword) {
-      res.status(401).json({ error: "Revisa las credenciales" });
-      return Promise.resolve();
-    }
-
-    // Crear token personalizado con los claims
-    const customToken = await admin
-      .auth()
-      .createCustomToken(userCredential.uid, {
-        role: userData?.role ?? "user",
-        isAdmin: userData?.role === "admin",
-      });
-
-    // Crear objeto de usuario sin la contraseña
     const userDataWithoutPassword = { ...userData };
     delete userDataWithoutPassword.password;
 
-    res.status(200).json({
-      token: customToken,
-      user: {
-        uid: userCredential.uid,
-        email: userCredential.email,
-        ...userDataWithoutPassword,
-        role: userData?.role || "user",
-      },
+    return res.status(200).json({
+      uid,
+      email: userData?.email,
+      ...userDataWithoutPassword,
+      role: userData?.role ?? "user",
     });
-    return Promise.resolve();
   } catch (error) {
-    console.error(
-      "Error detallado:",
-      error instanceof Error ? error.message : error
-    );
-    res.status(401).json({
-      error: "Error de autenticación",
-      details: error instanceof Error ? error.message : "Error desconocido",
-    });
-    return Promise.resolve();
+    console.error("Error al obtener datos del usuario:", error);
+    return res.status(500).json({ error: "Error interno al obtener usuario" });
   }
 };
 
