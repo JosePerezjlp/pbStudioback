@@ -2,26 +2,28 @@ import { Request, Response } from "express";
 
 import admin from "../config/firebase";
 
-export const loginController = async (req: Request, res: Response) => {
+export const loginController = async (req: Request, res: Response): Promise<void> => {
   try {
     const { uid } = req.body;
 
     if (!uid) {
-      return res.status(400).json({ error: "UID es requerido" });
+      res.status(400).json({ error: "UID es requerido" });
+      return;
     }
 
     // Obtener datos del usuario desde Firestore
     const userDoc = await admin.firestore().collection("users").doc(uid).get();
 
     if (!userDoc.exists) {
-      return res.status(404).json({ error: "Datos de usuario no encontrados" });
+      res.status(404).json({ error: "Datos de usuario no encontrados" });
+      return;
     }
 
     const userData = userDoc.data();
     const userDataWithoutPassword = { ...userData };
     delete userDataWithoutPassword.password;
 
-    return res.status(200).json({
+    res.status(200).json({
       uid,
       email: userData?.email,
       ...userDataWithoutPassword,
@@ -29,7 +31,7 @@ export const loginController = async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Error al obtener datos del usuario:", error);
-    return res.status(500).json({ error: "Error interno al obtener usuario" });
+    res.status(500).json({ error: "Error interno al obtener usuario" });
   }
 };
 
