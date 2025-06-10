@@ -5,6 +5,7 @@ import homeRouter from "./routes/home";
 import usersRouter from "./routes/users";
 import authRouter from "./routes/auth";
 import { initializeDefaultAdmin } from "./utils/adminInit";
+import contentRouter from "./routes/content";
 
 dotenv.config();
 
@@ -35,6 +36,7 @@ app.use(express.json());
 app.use("/", homeRouter);
 app.use("/users", usersRouter);
 app.use("/auth", authRouter);
+app.use("/content", contentRouter);
 
 const startServer = async () => {
   try {
