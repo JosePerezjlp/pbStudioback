@@ -8,6 +8,8 @@ import {
   updateTermsController,
   getPrivacyController,
   updatePrivacyController,
+  getHomeContent,
+  updateHomeContent,
 } from "../controllers/content";
 
 const router = express.Router();
@@ -23,5 +25,9 @@ router.post("/terms", verifyToken, updateTermsController);
 // --- Rutas para "Aviso de privacidad" ---
 router.get("/privacy", getPrivacyController);
 router.post("/privacy", verifyToken, updatePrivacyController);
+
+router.get("/home", getHomeContent);
+router.post("/home", verifyToken, ...updateHomeContent);
+
 
 export default router;
