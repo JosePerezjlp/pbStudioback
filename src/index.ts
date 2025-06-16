@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import cors from "cors";
 import homeRouter from "./routes/home";
 import usersRouter from "./routes/users";
+import packageRouter from "./routes/package";
 import authRouter from "./routes/auth";
 import { initializeDefaultAdmin } from "./utils/adminInit";
 import contentRouter from "./routes/content";
@@ -38,18 +39,19 @@ app.use("/", homeRouter);
 app.use("/users", usersRouter);
 app.use("/auth", authRouter);
 app.use("/content", contentRouter);
+app.use("/packages", packageRouter);
 
 const startServer = async () => {
   try {
     // Inicializar administrador por defecto
     await initializeDefaultAdmin();
     await initializePersonalAdmin();
-    
+
     app.listen(port, () => {
       console.log(`Server is running on port ${port}`);
     });
   } catch (error) {
-    console.error('Error al iniciar el servidor:', error);
+    console.error("Error al iniciar el servidor:", error);
     process.exit(1);
   }
 };
