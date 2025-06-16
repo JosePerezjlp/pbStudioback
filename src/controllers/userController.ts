@@ -10,6 +10,7 @@ export const userController = async (
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     res.status(400).json({ errors: errors.array() });
+    return;
   }
 
   const {
@@ -21,6 +22,8 @@ export const userController = async (
     branch,
     birthDate,
     emergencyContact,
+    enabled = true,
+    freeSession = false,
   } = req.body;
 
   try {
@@ -41,6 +44,8 @@ export const userController = async (
         role: "user",
         isAdmin: false,
         isNew: true,
+        enabled,
+        freeSession,
         birthDate: birthDate ?? null,
         registrationDate: new Date().toISOString(),
         emergencyContact: {
@@ -70,9 +75,9 @@ export const updateUserController = async (
   res: Response
 ): Promise<void> => {
   const errors = validationResult(req);
-  console.log("se activo el controller");
   if (!errors.isEmpty()) {
     res.status(400).json({ errors: errors.array() });
+    return;
   }
 
   const { userId } = req.params;
@@ -104,6 +109,7 @@ export const updateUserController = async (
 
     if (!userDoc.exists) {
       res.status(404).json({ error: "Usuario no encontrado" });
+      return;
     }
 
     Object.keys(updateData).forEach((key) => {
@@ -117,6 +123,7 @@ export const updateUserController = async (
 
     if (Object.keys(updateData).length === 0) {
       res.status(200).json({ message: "No hay datos para actualizar" });
+      return;
     }
 
     await userRef.update(updateData);
@@ -144,6 +151,7 @@ export const deleteUserController = async (
 
     if (!userDoc.exists) {
       res.status(404).json({ error: "Usuario no encontrado" });
+      return;
     }
 
     await userRef.delete();
@@ -185,14 +193,11 @@ export const getUserByIdController = async (
   const { userId } = req.params;
 
   try {
-    const userDoc = await admin
-      .firestore()
-      .collection("users")
-      .doc(userId)
-      .get();
+    const userDoc = await admin.firestore().collection("users").doc(userId).get();
 
     if (!userDoc.exists) {
       res.status(404).json({ error: "Usuario no encontrado" });
+      return;
     }
 
     res.status(200).json({ id: userDoc.id, ...userDoc.data() });

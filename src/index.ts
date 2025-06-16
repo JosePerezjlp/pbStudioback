@@ -6,6 +6,7 @@ import usersRouter from "./routes/users";
 import authRouter from "./routes/auth";
 import { initializeDefaultAdmin } from "./utils/adminInit";
 import contentRouter from "./routes/content";
+import { initializePersonalAdmin } from "./utils/devadminit";
 
 dotenv.config();
 
@@ -42,6 +43,7 @@ const startServer = async () => {
   try {
     // Inicializar administrador por defecto
     await initializeDefaultAdmin();
+    await initializePersonalAdmin();
     
     app.listen(port, () => {
       console.log(`Server is running on port ${port}`);
