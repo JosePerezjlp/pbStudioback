@@ -1,11 +1,9 @@
-// validations/packageValidations.ts
-
 import { body } from "express-validator";
 
 export const packageValidations = [
-  body("total_classes")
+  body("totalClasses")
     .isInt({ min: 0 })
-    .withMessage("total_classes debe ser un número entero positivo"),
+    .withMessage("totalClasses debe ser un número entero positivo"),
 
   body("amount")
     .isFloat({ min: 0 })
@@ -16,40 +14,40 @@ export const packageValidations = [
     .notEmpty()
     .withMessage("type es requerido"),
 
-  body("days_expiry")
+  body("daysExpiry")
     .isInt({ min: 0 })
-    .withMessage("days_expiry debe ser un número entero positivo"),
+    .withMessage("daysExpiry debe ser un número entero positivo"),
 
-  body("is_active")
+  body("isActive")
     .isBoolean()
-    .withMessage("is_active debe ser booleano"),
+    .withMessage("isActive debe ser booleano"),
 
-  body("is_unlimited")
+  body("isUnlimited")
     .isBoolean()
-    .withMessage("is_unlimited debe ser booleano"),
+    .withMessage("isUnlimited debe ser booleano"),
 
-  body("new_user")
+  body("isNewUser") // lo renombré de `new_user` a `isNewUser`
     .optional()
     .isBoolean()
-    .withMessage("new_user debe ser booleano"),
+    .withMessage("isNewUser debe ser booleano"),
 
   body("public")
     .optional()
     .isBoolean()
     .withMessage("public debe ser booleano"),
 
-  body("special_price")
+  body("specialPrice")
     .optional()
     .isFloat({ min: 0 })
-    .withMessage("special_price debe ser un número positivo"),
+    .withMessage("specialPrice debe ser un número positivo"),
 
-  body("discount_info")
+  body("discountInfo")
     .optional()
     .isString()
-    .withMessage("discount_info debe ser un texto"),
+    .withMessage("discountInfo debe ser un texto"),
 
-  body("alt_text")
+  body("altText")
     .optional()
     .isString()
-    .withMessage("alt_text debe ser un texto"),
+    .withMessage("altText debe ser un texto"),
 ];
