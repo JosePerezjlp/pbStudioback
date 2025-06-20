@@ -6,7 +6,7 @@ export const createBranchController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { name, location, isPublic = true } = req.body;
+    const { name, location, isPublic = true, area = "", address = "", phone = "" } = req.body;
 
     if (!name || typeof name !== "string") {
       res.status(400).json({ error: "Nombre inválido o faltante" });
@@ -17,6 +17,9 @@ export const createBranchController = async (
       name,
       location: location || "",
       isPublic: Boolean(isPublic),
+      area: area || "",
+      address: address || "",
+      phone: phone || "",
       createdAt: new Date().toISOString(),
     };
 
@@ -82,11 +85,17 @@ export const updateBranchController = async (
       name?: string;
       location?: string;
       isPublic?: boolean;
+      area?: string;
+      address?: string;
+      phone?: string;
     } = {};
 
     if (req.body.name) updateData.name = String(req.body.name);
     if (req.body.location) updateData.location = String(req.body.location);
     if ("isPublic" in req.body) updateData.isPublic = Boolean(req.body.isPublic);
+    if (req.body.area) updateData.area = String(req.body.area);
+    if (req.body.address) updateData.address = String(req.body.address);
+    if (req.body.phone) updateData.phone = String(req.body.phone);
 
     await ref.update(updateData);
 

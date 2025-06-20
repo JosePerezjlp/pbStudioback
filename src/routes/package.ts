@@ -12,7 +12,7 @@ import { packageValidations } from "../middleware/packageValidation";
 
 const router = express.Router();
 
-router.get("/", verifyToken, getAllPackagesController);
+router.get("/", getAllPackagesController);
 router.get("/:packageId", verifyToken, getPackageByIdController);
 router.post("/", verifyToken, packageValidations, createPackageController);
 router.put(
