@@ -9,6 +9,7 @@ import salonsRouter from "./routes/salons";
 import disciplinesRouter from "./routes/disciplines";
 import branchRouter from "./routes/branch";
 import authRouter from "./routes/auth";
+import classesRouter from "./routes/classes"
 import { initializeDefaultAdmin } from "./utils/adminInit";
 import contentRouter from "./routes/content";
 import { initializePersonalAdmin } from "./utils/devadminit";
@@ -48,6 +49,7 @@ app.use("/instructors", instructorRouter);
 app.use("/rooms", salonsRouter);
 app.use("/disciplines", disciplinesRouter);
 app.use("/branches", branchRouter);
+app.use("/classes", classesRouter)
 
 const startServer = async () => {
   try {
