@@ -1,6 +1,10 @@
 import express from "express";
 import dotenv from "dotenv";
+import cron from "node-cron";
+import { DateTime } from "luxon";
 import cors from "cors";
+import type { WriteResult } from "firebase-admin/firestore";
+import admin from "./config/firebase";
 import homeRouter from "./routes/home";
 import usersRouter from "./routes/users";
 import packageRouter from "./routes/package";
@@ -9,7 +13,7 @@ import salonsRouter from "./routes/salons";
 import disciplinesRouter from "./routes/disciplines";
 import branchRouter from "./routes/branch";
 import authRouter from "./routes/auth";
-import classesRouter from "./routes/classes"
+import classesRouter from "./routes/classes";
 import { initializeDefaultAdmin } from "./utils/adminInit";
 import contentRouter from "./routes/content";
 import { initializePersonalAdmin } from "./utils/devadminit";
@@ -49,7 +53,7 @@ app.use("/instructors", instructorRouter);
 app.use("/rooms", salonsRouter);
 app.use("/disciplines", disciplinesRouter);
 app.use("/branches", branchRouter);
-app.use("/classes", classesRouter)
+app.use("/classes", classesRouter);
 
 const startServer = async () => {
   try {
@@ -67,3 +71,48 @@ const startServer = async () => {
 };
 
 startServer();
+
+// CRON JOB: cierra automáticamente las clases vencidas
+cron.schedule("*/10 * * * *", async () => {
+  try {
+    // Hora de México
+    const nowMexico = DateTime.now().setZone("America/Mexico_City");
+    const todayStr = nowMexico.toISODate() ?? ""; // fallback para evitar null
+    const currentTime = nowMexico.toFormat("HH:mm");
+
+    if (!todayStr) {
+      console.error("❌ No se pudo obtener la fecha en formato ISO para CDMX.");
+      return;
+    }
+
+    const snapshot = await admin.firestore()
+      .collection("classes")
+      .where("status", "==", "abierta")
+      .get();
+
+    const updatePromises: Promise<WriteResult>[] = [];
+    let updates = 0;
+
+    snapshot.docs.forEach((doc) => {
+      const data = doc.data();
+      if (
+        (data.day < todayStr) ||
+        (data.day === todayStr &&
+          data.hour <= currentTime &&
+          data.hour >= "06:00" &&
+          data.hour <= "22:00")
+      ) {
+        updatePromises.push(doc.ref.update({ status: "cerrada" }));
+        updates += 1;
+      }
+    });
+
+    await Promise.all(updatePromises);
+
+    if (updates > 0) {
+      console.log(`🟢 Cerradas automáticamente: ${updates} clases.`);
+    }
+  } catch (err) {
+    console.error("❌ Error en el CRON de cierre automático de clases:", err);
+  }
+});

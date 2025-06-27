@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import admin from "../config/firebase";
 
+// CREA UNA CLASE, VERIFICANDO DUPLICADOS
 export const createClassController = async (
   req: Request,
   res: Response
@@ -24,6 +25,24 @@ export const createClassController = async (
 
     if (Number.isNaN(parsedCapacity) || Number.isNaN(parsedOccupied)) {
       res.status(400).json({ error: "Los campos numéricos no son válidos" });
+      return;
+    }
+
+    // Verificar que no exista una clase con la misma sede, día, hora y salón
+    const conflictQuery = await admin
+      .firestore()
+      .collection("classes")
+      .where("day", "==", day)
+      .where("hour", "==", hour)
+      .where("branch", "==", branch)
+      .where("room", "==", room)
+      .get();
+
+    if (!conflictQuery.empty) {
+      res.status(409).json({
+        error: "Ya existe una clase programada en ese salón, sede y horario.",
+        code: "CONFLICTING_CLASS",
+      });
       return;
     }
 
@@ -51,6 +70,7 @@ export const createClassController = async (
   }
 };
 
+// LISTA TODAS LAS CLASES
 export const getAllClassesController = async (_req: Request, res: Response) => {
   try {
     const snapshot = await admin.firestore().collection("classes").get();
@@ -64,6 +84,7 @@ export const getAllClassesController = async (_req: Request, res: Response) => {
   }
 };
 
+// OBTIENE UNA CLASE POR ID
 export const getClassByIdController = async (
   req: Request,
   res: Response
@@ -83,6 +104,7 @@ export const getClassByIdController = async (
   }
 };
 
+// ACTUALIZA UNA CLASE, VERIFICANDO DUPLICADOS
 export const updateClassController = async (
   req: Request,
   res: Response
@@ -98,12 +120,44 @@ export const updateClassController = async (
     }
 
     const updateData = { ...req.body };
-
     if ("capacity" in updateData) {
       updateData.capacity = Number(updateData.capacity);
     }
     if ("occupied" in updateData) {
       updateData.occupied = Number(updateData.occupied);
+    }
+
+    // Solo chequeamos conflicto si se va a modificar alguno de los campos clave
+    if (
+      updateData.day ||
+      updateData.hour ||
+      updateData.branch ||
+      updateData.room
+    ) {
+      // Toma los nuevos valores, o los originales si no cambiaron
+      const dayToCheck = updateData.day ?? doc.data()?.day;
+      const hourToCheck = updateData.hour ?? doc.data()?.hour;
+      const branchToCheck = updateData.branch ?? doc.data()?.branch;
+      const roomToCheck = updateData.room ?? doc.data()?.room;
+
+      // Busca clases distintas a esta, pero con mismos valores clave
+      const conflictQuery = await admin
+        .firestore()
+        .collection("classes")
+        .where("day", "==", dayToCheck)
+        .where("hour", "==", hourToCheck)
+        .where("branch", "==", branchToCheck)
+        .where("room", "==", roomToCheck)
+        .get();
+
+      const conflict = conflictQuery.docs.find((d) => d.id !== classId);
+      if (conflict) {
+        res.status(409).json({
+          error: "Ya existe una clase programada en ese salón, sede y horario.",
+          code: "CONFLICTING_CLASS",
+        });
+        return;
+      }
     }
 
     await ref.update(updateData);
@@ -113,6 +167,7 @@ export const updateClassController = async (
   }
 };
 
+// ELIMINA UNA CLASE
 export const deleteClassController = async (
   req: Request,
   res: Response
