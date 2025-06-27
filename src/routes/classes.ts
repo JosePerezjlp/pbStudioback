@@ -11,7 +11,7 @@ import {
 const router = express.Router();
 
 // Pública (aunque está protegida con verifyToken)
-router.get("/", verifyToken, getAllClassesController);
+router.get("/", getAllClassesController);
 
 // Protegidas
 router.get("/:classId", verifyToken, getClassByIdController);

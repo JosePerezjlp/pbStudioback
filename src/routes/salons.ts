@@ -12,7 +12,7 @@ import {
 const router = express.Router();
 
 // Pública
-router.get("/", verifyToken, getAllClassroomsController);
+router.get("/", getAllClassroomsController);
 
 // Protegidas
 router.get("/:classroomId", verifyToken, getClassroomByIdController);

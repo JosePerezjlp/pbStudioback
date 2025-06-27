@@ -12,7 +12,7 @@ import {
 const router = express.Router();
 
 // Pública (puedes protegerlas todas si quieres)
-router.get("/", verifyToken, getAllDisciplinesController);
+router.get("/", getAllDisciplinesController);
 
 // Protegidas
 router.get("/:disciplineId", verifyToken, getDisciplineByIdController);
