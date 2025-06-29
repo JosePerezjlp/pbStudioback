@@ -14,6 +14,7 @@ import disciplinesRouter from "./routes/disciplines";
 import branchRouter from "./routes/branch";
 import authRouter from "./routes/auth";
 import classesRouter from "./routes/classes";
+import paypalRouter from "./routes/paypal"
 import { initializeDefaultAdmin } from "./utils/adminInit";
 import contentRouter from "./routes/content";
 import { initializePersonalAdmin } from "./utils/devadminit";
@@ -54,6 +55,7 @@ app.use("/rooms", salonsRouter);
 app.use("/disciplines", disciplinesRouter);
 app.use("/branches", branchRouter);
 app.use("/classes", classesRouter);
+app.use("/paypal", paypalRouter)
 
 const startServer = async () => {
   try {
