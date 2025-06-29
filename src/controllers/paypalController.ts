@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import axios from "axios";
 import dotenv from "dotenv";
 import admin from "../config/firebase";
+import { AuthRequest } from "../middleware/authMiddleware";
 
 dotenv.config();
 
@@ -47,8 +48,8 @@ export const createPayPalOrderController = async (
         purchase_units: [
           {
             amount: {
-              currency_code: currency,
-              value: amount,
+              currency_code: currency ?? "USD",
+              value: Number(amount).toFixed(2),
             },
             description,
           },
@@ -64,18 +65,33 @@ export const createPayPalOrderController = async (
 
     res.status(201).json({ orderID: response.data.id });
   } catch (error) {
-    console.error("Error al crear orden:", error);
+    if (axios.isAxiosError(error)) {
+      console.error("❌ PayPal error:", {
+        status: error.response?.status,
+        data: error.response?.data, // 👈 Aquí aparece el ‘details’ de PayPal
+        headers: error.response?.headers,
+      });
+    } else {
+      console.error("❌ Error inesperado:", (error as Error).message);
+    }
     res.status(500).json({ error: "No se pudo crear la orden" });
   }
 };
 
 // Capturar orden de PayPal
 export const capturePayPalOrderController = async (
-  req: Request,
+  req: AuthRequest,
   res: Response
 ): Promise<void> => {
   try {
-    const { orderID } = req.body;
+    const { orderID, packageId } = req.body;
+    const uid = req.user?.uid; // El middleware verifyToken debe adjuntar esto
+
+    if (!orderID || !packageId || !uid) {
+      res.status(400).json({ error: "Faltan datos necesarios" });
+      return;
+    }
+
     const accessToken = await getAccessToken();
 
     const response = await axios.post(
@@ -91,7 +107,19 @@ export const capturePayPalOrderController = async (
 
     const { data } = response;
 
-    // Extraer datos útiles para guardar
+    const packageDoc = await admin
+      .firestore()
+      .collection("packages")
+      .doc(packageId)
+      .get();
+    if (!packageDoc.exists) {
+      res.status(404).json({ error: "Paquete no encontrado" });
+      return;
+    }
+
+    const packageData = packageDoc.data();
+
+    // Transacción PayPal
     const transactionData = {
       orderID: data.id,
       status: data.status,
@@ -110,20 +138,45 @@ export const capturePayPalOrderController = async (
         data.purchase_units?.[0]?.payments?.captures?.[0]?.create_time ||
         new Date().toISOString(),
       createdAt: new Date().toISOString(),
+      package: {
+        id: packageId,
+        ...packageData,
+      },
+      userId: uid,
     };
 
-    // Guardar en Firestore
+    // Guardar la transacción
     await admin
       .firestore()
       .collection("paypal_transactions")
       .add(transactionData);
 
-    res
-      .status(200)
-      .json({
-        message: "Pago capturado y guardado",
-        transaction: transactionData,
-      });
+    // Armar paquete asignado al usuario
+    const userPackage = {
+      id: packageId,
+      assignedAt: new Date().toISOString(),
+      expiresAt: packageData?.daysExpiry
+        ? new Date(
+            Date.now() + packageData.daysExpiry * 24 * 60 * 60 * 1000
+          ).toISOString()
+        : null,
+      totalClasses: packageData?.totalClasses ?? 0,
+      classesUsed: 0,
+      isUnlimited: packageData?.isUnlimited ?? false,
+      type: packageData?.type ?? "Individual",
+      active: true,
+    };
+
+    // Agregarlo al array "packages" del usuario
+    const userRef = admin.firestore().collection("users").doc(uid);
+    await userRef.update({
+      packages: admin.firestore.FieldValue.arrayUnion(userPackage),
+    });
+
+    res.status(200).json({
+      message: "Pago capturado y paquete asignado",
+      transaction: transactionData,
+    });
   } catch (error: unknown) {
     if (axios.isAxiosError(error)) {
       console.error(
