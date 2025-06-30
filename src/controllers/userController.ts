@@ -28,7 +28,6 @@ export const userController = async (
 
   try {
     const userRecord = await admin.auth().createUser({ email, password });
-    const hashedPassword = await bcrypt.hash(password, 10);
 
     await admin
       .firestore()
@@ -38,7 +37,6 @@ export const userController = async (
         firstName,
         lastName,
         email,
-        password: hashedPassword,
         phone,
         branch,
         role: "user",
@@ -52,8 +50,8 @@ export const userController = async (
           name: emergencyContact?.name ?? null,
           phone: emergencyContact?.phone ?? null,
         },
-        transactions: [],
         packages: [],
+        transactions: [],
         waitlist: { inList: false, position: null },
         classes: { total: 0, available: 0, taken: 0 },
       });
@@ -193,7 +191,11 @@ export const getUserByIdController = async (
   const { userId } = req.params;
 
   try {
-    const userDoc = await admin.firestore().collection("users").doc(userId).get();
+    const userDoc = await admin
+      .firestore()
+      .collection("users")
+      .doc(userId)
+      .get();
 
     if (!userDoc.exists) {
       res.status(404).json({ error: "Usuario no encontrado" });
