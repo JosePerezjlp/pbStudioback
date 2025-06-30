@@ -14,10 +14,11 @@ import disciplinesRouter from "./routes/disciplines";
 import branchRouter from "./routes/branch";
 import authRouter from "./routes/auth";
 import classesRouter from "./routes/classes";
-import paypalRouter from "./routes/paypal"
-import transactionsRouter from "./routes/transactions"
+import paypalRouter from "./routes/paypal";
+import transactionsRouter from "./routes/transactions";
 import { initializeDefaultAdmin } from "./utils/adminInit";
 import contentRouter from "./routes/content";
+import reservationRoutes from "./routes/reservations";
 import { initializePersonalAdmin } from "./utils/devadminit";
 
 dotenv.config();
@@ -56,8 +57,9 @@ app.use("/rooms", salonsRouter);
 app.use("/disciplines", disciplinesRouter);
 app.use("/branches", branchRouter);
 app.use("/classes", classesRouter);
-app.use("/paypal", paypalRouter)
-app.use("/transactions", transactionsRouter)
+app.use("/paypal", paypalRouter);
+app.use("/transactions", transactionsRouter);
+app.use("/reservations", reservationRoutes);
 
 const startServer = async () => {
   try {
@@ -89,7 +91,8 @@ cron.schedule("*/10 * * * *", async () => {
       return;
     }
 
-    const snapshot = await admin.firestore()
+    const snapshot = await admin
+      .firestore()
       .collection("classes")
       .where("status", "==", "abierta")
       .get();
@@ -100,7 +103,7 @@ cron.schedule("*/10 * * * *", async () => {
     snapshot.docs.forEach((doc) => {
       const data = doc.data();
       if (
-        (data.day < todayStr) ||
+        data.day < todayStr ||
         (data.day === todayStr &&
           data.hour <= currentTime &&
           data.hour >= "06:00" &&

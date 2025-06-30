@@ -7,7 +7,7 @@ import {
   getAllDisciplinesController,
   getDisciplineByIdController,
   updateDisciplineController,
-} from "../controllers/disciplinesController.";
+} from "../controllers/disciplinesController";
 
 const router = express.Router();
 
