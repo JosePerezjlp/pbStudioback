@@ -6,15 +6,36 @@ import admin from "../config/firebase";
 import { AuthRequest } from "../middleware/authMiddleware";
 
 /* ---------- helpers ---------- */
-const cleanUndefined = <T extends object>(obj: T): T =>
-  Object.fromEntries(
-    Object.entries(obj as Record<string, unknown>).filter(
-      ([, v]) => v !== undefined
-    )
-  ) as T;
+export function cleanUndefined<T>(obj: T): T {
+  // 1) Arrays → limpia cada elemento
+  if (Array.isArray(obj)) {
+    return obj.map(cleanUndefined) as unknown as T;
+  }
+
+  // 2) Objetos → crea una copia sin claves `undefined`
+  if (obj !== null && typeof obj === "object") {
+    const cleaned = Object.entries(obj as Record<string, unknown>).reduce<
+      Record<string, unknown>
+    >((acc, [key, value]) => {
+      if (value !== undefined) {
+        acc[key] =
+          typeof value === "object" && value !== null
+            ? cleanUndefined(value) // recursión profunda
+            : value;
+      }
+      return acc;
+    }, {});
+
+    return cleaned as unknown as T;
+  }
+
+  // 3) Primitivos → se devuelven tal cual
+  return obj;
+}
 
 /* ---------- Tipos ---------- */
-export type PaymentMethod = "paypal" | "cash";
+export type PaymentMethod = "paypal" | "cash" | "terminal";
+
 export type TransactionStatus = "paid" | "pending" | "rejected";
 
 export interface PackageInfo {
@@ -70,12 +91,26 @@ export const createCashTransactionController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { packageId, amount, couponCode } = req.body as {
+    const {
+      targetUserId,
+      packageId,
+      amount,
+      couponCode,
+      paymentMethod = "cash", // ← lee el método
+    } = req.body as {
+      targetUserId?: string;
       packageId: string;
       amount: number;
       couponCode?: string;
+      paymentMethod?: PaymentMethod; // "cash" | "terminal"
     };
-    const uid = req.user?.uid;
+
+    if (!["cash", "terminal"].includes(paymentMethod)) {
+      res.status(400).json({ error: "Método de pago inválido" });
+      return;
+    }
+
+    const uid = targetUserId ?? req.user?.uid;
     if (!packageId || !amount || !uid) {
       res.status(400).json({ error: "Faltan datos requeridos" });
       return;
@@ -114,13 +149,13 @@ export const createCashTransactionController = async (
         id: packageId,
         totalClasses: pkgData.totalClasses,
         type: pkgData.type,
-        modality: pkgData.modality,
+        ...(pkgData.modality && { modality: pkgData.modality }), // 👈 solo si existe
       },
       amount,
       currency: "MXN",
       couponUsed: Boolean(couponCode),
       couponCode,
-      paymentMethod: "cash",
+      paymentMethod,
       status: "paid",
       createdAt: new Date().toISOString(),
     };
@@ -136,6 +171,7 @@ export const createCashTransactionController = async (
       classesUsed: 0,
       isUnlimited: pkgData.isUnlimited ?? false,
       type: pkgData.type,
+      ...(pkgData.modality && { modality: pkgData.modality }), // 👈 idem
       active: true,
     };
     const addTotal = pkgData.isUnlimited ? 0 : pkgData.totalClasses;
