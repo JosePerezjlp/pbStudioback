@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import admin from "../config/firebase";
+import { ERROR_CODES } from "../types/enums";
 
 // CREA UNA RESERVA
 export const createReservationController = async (
@@ -13,7 +14,7 @@ export const createReservationController = async (
     const userRef = admin.firestore().collection("users").doc(userId);
     const userDoc = await userRef.get();
     if (!userDoc.exists) {
-      res.status(404).json({ error: "Usuario no encontrado" });
+      res.status(404).json({ error: "Usuario no encontrado", code: ERROR_CODES.USER_NOT_FOUND, });
       return;
     }
 
@@ -21,7 +22,7 @@ export const createReservationController = async (
     const classRef = admin.firestore().collection("classes").doc(classId);
     const classDoc = await classRef.get();
     if (!classDoc.exists) {
-      res.status(404).json({ error: "Clase no encontrada" });
+      res.status(404).json({ error: "Clase no encontrada", code: ERROR_CODES.CLASS_NOT_FOUND, });
       return;
     }
 
@@ -37,7 +38,7 @@ export const createReservationController = async (
     if (!duplicateReservation.empty) {
       res.status(409).json({
         error: "Ya tienes una reserva para esta clase. No puedes reservar más de un puesto.",
-        code: "DUPLICATE_RESERVATION"
+        code: ERROR_CODES.DUPLICATE_RESERVATION
       });
       return;
     }
@@ -48,7 +49,7 @@ export const createReservationController = async (
     const currentOccupied = classData?.occupied ?? 0;
     const available = currentCapacity - currentOccupied;
     if (available <= 0) {
-      res.status(409).json({ error: "No hay cupos disponibles en esta clase" });
+      res.status(409).json({ error: "No hay cupos disponibles en esta clase", code: ERROR_CODES.NO_SLOTS_AVAILABLE });
       return;
     }
 
@@ -58,7 +59,7 @@ export const createReservationController = async (
     const availableClasses = userClasses.available ?? 0;
     const takenClasses = userClasses.taken ?? 0;
     if (availableClasses <= 0) {
-      res.status(409).json({ error: "No tienes clases disponibles" });
+      res.status(409).json({ error: "No tienes clases disponibles", code: ERROR_CODES.NO_CLASSES_AVAILABLE });
       return;
     }
 
