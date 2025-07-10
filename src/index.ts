@@ -19,8 +19,13 @@ import transactionsRouter from "./routes/transactions";
 import { initializeDefaultAdmin } from "./utils/adminInit";
 import contentRouter from "./routes/content";
 import reservationRoutes from "./routes/reservations";
+import contactRouter from "./routes/contact";
+import passwordResetRouter from "./routes/passwordReset";
 import { initializePersonalAdmin } from "./utils/devadminit";
-import { sendClassReminderEmail, sendPackageExpiryWarningEmail } from "./utils/emailService";
+import {
+  sendClassReminderEmail,
+  sendPackageExpiryWarningEmail,
+} from "./utils/emailService";
 
 dotenv.config();
 
@@ -61,6 +66,8 @@ app.use("/classes", classesRouter);
 app.use("/paypal", paypalRouter);
 app.use("/transactions", transactionsRouter);
 app.use("/reservations", reservationRoutes);
+app.use("/contact", contactRouter);
+app.use("/password-reset", passwordResetRouter);
 
 const startServer = async () => {
   try {
@@ -270,7 +277,8 @@ cron.schedule("0 8 * * *", async () => {
 /* ────────────────────────────────────────────────────────────────
    CRON 4: Avisar 5 días antes de que un paquete expire
 ──────────────────────────────────────────────────────────────── */
-cron.schedule("30 8 * * *", async () => {          // a las 08:30 CDMX, diario
+cron.schedule("30 8 * * *", async () => {
+  // a las 08:30 CDMX, diario
   try {
     const today = DateTime.now().setZone("America/Mexico_City").startOf("day");
     const usersSnap = await admin.firestore().collection("users").get();
@@ -287,12 +295,14 @@ cron.schedule("30 8 * * *", async () => {          // a las 08:30 CDMX, diario
           expiresAt,
           isUnlimited = false,
           active = false,
-          notifiedExpiry = false,      // ← nuevo flag
+          notifiedExpiry = false, // ← nuevo flag
         } = pkg;
 
         if (!active || isUnlimited || !expiresAt) return;
 
-        const expiryDate = DateTime.fromISO(expiresAt).setZone("America/Mexico_City").startOf("day");
+        const expiryDate = DateTime.fromISO(expiresAt)
+          .setZone("America/Mexico_City")
+          .startOf("day");
         const daysLeft = Math.round(expiryDate.diff(today, "days").days);
 
         if (daysLeft <= 5 && daysLeft >= 1 && !notifiedExpiry) {
@@ -312,9 +322,14 @@ cron.schedule("30 8 * * *", async () => {          // a las 08:30 CDMX, diario
                 updatedPackages[i].notifiedExpiry = true;
 
                 await userRef.update({ packages: updatedPackages });
-                console.log(`⏰ Aviso de expiración enviado a ${email} (faltan ${daysLeft} días)`);
+                console.log(
+                  `⏰ Aviso de expiración enviado a ${email} (faltan ${daysLeft} días)`
+                );
               } catch (err) {
-                console.error(`❌ Error enviando aviso de expiración a ${email}:`, err);
+                console.error(
+                  `❌ Error enviando aviso de expiración a ${email}:`,
+                  err
+                );
               }
             })()
           );
@@ -327,4 +342,3 @@ cron.schedule("30 8 * * *", async () => {          // a las 08:30 CDMX, diario
     console.error("❌ Error en el CRON de expiración de paquetes:", err);
   }
 });
-

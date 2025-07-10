@@ -132,3 +132,72 @@ export const sendClassReminderEmail = async (
     `,
   });
 };
+
+/* ===============================================================
+   CONTACTO WEB
+   =============================================================== */
+
+/** 1) Notificación interna */
+export const sendContactNotificationEmail = async (payload: {
+  name: string;
+  phone: string;
+  email: string;
+  message: string;
+}) => {
+  const { name, phone, email, message } = payload;
+
+  await resend.emails.send({
+    from: FROM,
+    to: "admin@pbstudioapp.com",
+    subject: "📩 Nuevo mensaje de contacto",
+    html: `
+      <h3>Datos enviados desde el formulario</h3>
+      <ul>
+        <li><strong>Nombre:</strong> ${name}</li>
+        <li><strong>Teléfono:</strong> ${phone || "—"}</li>
+        <li><strong>Email:</strong> ${email}</li>
+      </ul>
+      <p><strong>Mensaje:</strong></p>
+      <p>${message.replace(/\n/g, "<br/>")}</p>
+    `,
+  });
+};
+
+/** 2) Autorespuesta al visitante */
+export const sendContactAutoReplyEmail = async (payload: {
+  name: string;
+  email: string;
+}) => {
+  const { name, email } = payload;
+
+  await resend.emails.send({
+    from: FROM,
+    to: email,
+    subject: "¡Hemos recibido tu mensaje en PB Studio!",
+    html: `
+      <p>Hola ${name},</p>
+      <p>Gracias por escribirnos. Hemos recibido tu mensaje y nos pondremos en contacto contigo lo antes posible.</p>
+      <p>— Equipo PB Studio</p>
+    `,
+  });
+};
+// Restablecer password 
+
+/* Envía un código de 6 dígitos para restablecer contraseña */
+export const sendPasswordResetCodeEmail = async (
+  to: string,
+  name: string,
+  code: string
+) => {
+  await resend.emails.send({
+    from: FROM,
+    to,
+    subject: "Código para restablecer tu contraseña",
+    html: `
+      <p>Hola ${name},</p>
+      <p>Tu código de verificación es:</p>
+      <h2 style="letter-spacing:4px">${code}</h2>
+      <p>Caduca en 2&nbsp;horas. Si no pediste este código, ignora este correo.</p>
+    `,
+  });
+};
