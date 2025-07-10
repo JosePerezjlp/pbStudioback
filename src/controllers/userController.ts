@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import { validationResult } from "express-validator";
 import admin from "../config/firebase";
+import { sendWelcomeEmail } from "../utils/emailService";
 
 export const userController = async (
   req: Request,
@@ -55,6 +56,12 @@ export const userController = async (
         waitlist: { inList: false, position: null },
         classes: { total: 0, available: 0, taken: 0 },
       });
+
+    try {
+      await sendWelcomeEmail(email, firstName);
+    } catch (emailErr) {
+      console.error("No se pudo enviar el correo de bienvenida:", emailErr);
+    }
 
     res.status(201).json({
       message: "Usuario registrado correctamente.",

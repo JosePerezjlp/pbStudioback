@@ -4,6 +4,7 @@
 import { Request, Response } from "express";
 import admin from "../config/firebase";
 import { AuthRequest } from "../middleware/authMiddleware";
+import { sendPackagePurchaseEmail } from "../utils/emailService";
 
 /* ---------- helpers ---------- */
 export function cleanUndefined<T>(obj: T): T {
@@ -190,6 +191,19 @@ export const createCashTransactionController = async (
         "classes.taken": admin.firestore.FieldValue.increment(0), // crea si no existe
       });
     });
+
+    try {
+      await sendPackagePurchaseEmail(
+        userData.email,
+        userData.firstName || "Usuario",
+        `Paquete ${pkgData.type}`,
+        pkgData.totalClasses,
+        userPackage.expiresAt,
+        pkgData.modality
+      );
+    } catch (emailErr) {
+      console.error("❌ No se pudo enviar el email de compra:", emailErr);
+    }
 
     /* --- Respuesta -------------------------------------------------------- */
     res.status(201).json({

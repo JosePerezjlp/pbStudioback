@@ -11,6 +11,7 @@ import {
   saveTransaction,
   TransactionStatus,
 } from "./transactionController";
+import { sendPackagePurchaseEmail } from "../utils/emailService";
 
 dotenv.config();
 
@@ -20,18 +21,16 @@ const CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET!;
 
 /* ---------- helpers ---------- */
 const cleanUndefined = <T extends Record<string, unknown>>(obj: T): T =>
-  Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as T;
+  Object.fromEntries(
+    Object.entries(obj).filter(([, v]) => v !== undefined)
+  ) as T;
 
 const getAccessToken = async (): Promise<string> => {
   const params = new URLSearchParams({ grant_type: "client_credentials" });
-  const { data } = await axios.post(
-    `${PAYPAL_API}/v1/oauth2/token`,
-    params,
-    {
-      auth: { username: CLIENT_ID, password: CLIENT_SECRET },
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    }
-  );
+  const { data } = await axios.post(`${PAYPAL_API}/v1/oauth2/token`, params, {
+    auth: { username: CLIENT_ID, password: CLIENT_SECRET },
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  });
   return data.access_token as string;
 };
 
@@ -57,7 +56,10 @@ export const createPayPalOrderController = async (
         intent: "CAPTURE",
         purchase_units: [
           {
-            amount: { currency_code: currency, value: Number(amount).toFixed(2) },
+            amount: {
+              currency_code: currency,
+              value: Number(amount).toFixed(2),
+            },
             description,
           },
         ],
@@ -72,7 +74,10 @@ export const createPayPalOrderController = async (
 
     res.status(201).json({ orderID: data.id });
   } catch (err) {
-    console.error("❌ PayPal create-order error:", axios.isAxiosError(err) ? err.response?.data : err);
+    console.error(
+      "❌ PayPal create-order error:",
+      axios.isAxiosError(err) ? err.response?.data : err
+    );
     res.status(500).json({ error: "No se pudo crear la orden" });
   }
 };
@@ -86,7 +91,10 @@ export const capturePayPalOrderController = async (
 ): Promise<void> => {
   try {
     /* ---------- Validaciones ---------- */
-    const { orderID, packageId } = req.body as { orderID: string; packageId: string };
+    const { orderID, packageId } = req.body as {
+      orderID: string;
+      packageId: string;
+    };
     const uid = req.user?.uid;
     if (!orderID || !packageId || !uid) {
       res.status(400).json({ error: "Faltan datos necesarios" });
@@ -126,15 +134,20 @@ export const capturePayPalOrderController = async (
     const paypalTx = {
       orderID: data.id,
       status: data.status,
-      amount: data.purchase_units?.[0]?.payments?.captures?.[0]?.amount?.value ?? "0",
-      currency: data.purchase_units?.[0]?.payments?.captures?.[0]?.amount?.currency_code ?? "MXN",
+      amount:
+        data.purchase_units?.[0]?.payments?.captures?.[0]?.amount?.value ?? "0",
+      currency:
+        data.purchase_units?.[0]?.payments?.captures?.[0]?.amount
+          ?.currency_code ?? "MXN",
       payer: {
         name: `${data.payer.name.given_name} ${data.payer.name.surname}`,
         email: data.payer.email_address,
         payer_id: data.payer.payer_id,
       },
       captureID: data.purchase_units?.[0]?.payments?.captures?.[0]?.id ?? "",
-      capturedAt: data.purchase_units?.[0]?.payments?.captures?.[0]?.create_time ?? new Date().toISOString(),
+      capturedAt:
+        data.purchase_units?.[0]?.payments?.captures?.[0]?.create_time ??
+        new Date().toISOString(),
       createdAt: new Date().toISOString(),
       package: cleanedPackage,
       userId: uid,
@@ -143,7 +156,8 @@ export const capturePayPalOrderController = async (
     await admin.firestore().collection("paypal_transactions").add(paypalTx);
 
     /* ---------- Registro genérico ---------- */
-    const genericStatus: TransactionStatus = data.status === "COMPLETED" ? "paid" : "pending";
+    const genericStatus: TransactionStatus =
+      data.status === "COMPLETED" ? "paid" : "pending";
 
     await saveTransaction({
       userId: uid,
@@ -184,6 +198,25 @@ export const capturePayPalOrderController = async (
 
     const updatedSnap = await userRef.get();
     const updatedUser = { id: uid, ...(updatedSnap.data() || {}) };
+    /* ---------- envio de email ---------- */
+
+    const userSnap = await admin.firestore().doc(`users/${uid}`).get();
+    const userData = userSnap.data();
+    const userEmail = userData?.email;
+    const userFirstName = userData?.firstName ?? "Usuario";
+
+    try {
+      await sendPackagePurchaseEmail(
+        userEmail,
+        userFirstName,
+        `Paquete ${pkgData.type}`,
+        pkgData.totalClasses,
+        userPackage.expiresAt,
+        pkgData.modality
+      );
+    } catch (emailErr) {
+      console.error("❌ No se pudo enviar el email de compra:", emailErr);
+    }
 
     /* ---------- Respuesta ---------- */
     res.status(200).json({
@@ -192,7 +225,10 @@ export const capturePayPalOrderController = async (
       user: updatedUser,
     });
   } catch (err) {
-    console.error("❌ PayPal capture error:", axios.isAxiosError(err) ? err.response?.data : err);
+    console.error(
+      "❌ PayPal capture error:",
+      axios.isAxiosError(err) ? err.response?.data : err
+    );
     res.status(500).json({ error: "No se pudo capturar la orden" });
   }
 };
@@ -205,7 +241,10 @@ export const getAllTransactionsController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const snap = await admin.firestore().collection("paypal_transactions").get();
+    const snap = await admin
+      .firestore()
+      .collection("paypal_transactions")
+      .get();
     const transactions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     res.status(200).json({ transactions });
   } catch (err) {

@@ -1,6 +1,10 @@
 import { Request, Response } from "express";
 import admin from "../config/firebase";
 import { ERROR_CODES } from "../types/enums";
+import {
+  sendReservationCancelledEmail,
+  sendReservationConfirmationEmail,
+} from "../utils/emailService";
 
 // CREA UNA RESERVA
 export const createReservationController = async (
@@ -14,7 +18,10 @@ export const createReservationController = async (
     const userRef = admin.firestore().collection("users").doc(userId);
     const userDoc = await userRef.get();
     if (!userDoc.exists) {
-      res.status(404).json({ error: "Usuario no encontrado", code: ERROR_CODES.USER_NOT_FOUND, });
+      res.status(404).json({
+        error: "Usuario no encontrado",
+        code: ERROR_CODES.USER_NOT_FOUND,
+      });
       return;
     }
 
@@ -22,7 +29,10 @@ export const createReservationController = async (
     const classRef = admin.firestore().collection("classes").doc(classId);
     const classDoc = await classRef.get();
     if (!classDoc.exists) {
-      res.status(404).json({ error: "Clase no encontrada", code: ERROR_CODES.CLASS_NOT_FOUND, });
+      res.status(404).json({
+        error: "Clase no encontrada",
+        code: ERROR_CODES.CLASS_NOT_FOUND,
+      });
       return;
     }
 
@@ -37,8 +47,9 @@ export const createReservationController = async (
 
     if (!duplicateReservation.empty) {
       res.status(409).json({
-        error: "Ya tienes una reserva para esta clase. No puedes reservar más de un puesto.",
-        code: ERROR_CODES.DUPLICATE_RESERVATION
+        error:
+          "Ya tienes una reserva para esta clase. No puedes reservar más de un puesto.",
+        code: ERROR_CODES.DUPLICATE_RESERVATION,
       });
       return;
     }
@@ -49,7 +60,10 @@ export const createReservationController = async (
     const currentOccupied = classData?.occupied ?? 0;
     const available = currentCapacity - currentOccupied;
     if (available <= 0) {
-      res.status(409).json({ error: "No hay cupos disponibles en esta clase", code: ERROR_CODES.NO_SLOTS_AVAILABLE });
+      res.status(409).json({
+        error: "No hay cupos disponibles en esta clase",
+        code: ERROR_CODES.NO_SLOTS_AVAILABLE,
+      });
       return;
     }
 
@@ -59,7 +73,10 @@ export const createReservationController = async (
     const availableClasses = userClasses.available ?? 0;
     const takenClasses = userClasses.taken ?? 0;
     if (availableClasses <= 0) {
-      res.status(409).json({ error: "No tienes clases disponibles", code: ERROR_CODES.NO_CLASSES_AVAILABLE });
+      res.status(409).json({
+        error: "No tienes clases disponibles",
+        code: ERROR_CODES.NO_CLASSES_AVAILABLE,
+      });
       return;
     }
 
@@ -79,10 +96,38 @@ export const createReservationController = async (
       }),
       classRef.update({
         occupied: currentOccupied + 1,
-      })
+      }),
     ]);
 
-    res.status(201).json({ message: "Reserva creada correctamente", id: ref.id });
+    // Envio de email
+    const data = classDoc.data()!;
+    const { discipline, day, hour } = data;
+    const dateStr = new Date(`${day}T00:00:00`).toLocaleDateString("es-MX", {
+      weekday: "long", // jueves
+      day: "numeric", // 10
+      month: "long", // julio
+      year: "numeric", // 2025
+    });
+
+    // ── 2. Formateamos la fecha ‘2025-07-10’ a algo legible en español
+
+    const classInfo = `${discipline} el ${dateStr} a las ${hour}`;
+
+    try {
+      await sendReservationConfirmationEmail(
+        userData!.email,
+        userData!.firstName,
+        classInfo // ✅ ahora va “BSC el … a las …”
+      );
+    } catch (emailErr) {
+      console.error("❌ No se pudo enviar el email de reserva:", emailErr);
+    }
+
+    // envio de respuesta
+
+    res
+      .status(201)
+      .json({ message: "Reserva creada correctamente", id: ref.id });
   } catch (error) {
     console.error("Error al crear reserva:", error);
     res.status(500).json({
@@ -92,9 +137,11 @@ export const createReservationController = async (
   }
 };
 
-
 // OBTIENE TODAS LAS RESERVAS
-export const getAllReservationsController = async (_req: Request, res: Response) => {
+export const getAllReservationsController = async (
+  _req: Request,
+  res: Response
+) => {
   try {
     const snapshot = await admin.firestore().collection("reservations").get();
     const reservations = snapshot.docs.map((doc) => ({
@@ -103,7 +150,9 @@ export const getAllReservationsController = async (_req: Request, res: Response)
     }));
     res.status(200).json({ reservations });
   } catch (error) {
-    res.status(500).json({ error: "Error al obtener reservas", details: error });
+    res
+      .status(500)
+      .json({ error: "Error al obtener reservas", details: error });
   }
 };
 
@@ -114,7 +163,11 @@ export const getReservationByIdController = async (
 ): Promise<void> => {
   const { reservationId } = req.params;
   try {
-    const doc = await admin.firestore().collection("reservations").doc(reservationId).get();
+    const doc = await admin
+      .firestore()
+      .collection("reservations")
+      .doc(reservationId)
+      .get();
 
     if (!doc.exists) {
       res.status(404).json({ error: "Reserva no encontrada" });
@@ -145,7 +198,9 @@ export const updateReservationController = async (
     await ref.update(req.body);
     res.status(200).json({ message: "Reserva actualizada correctamente" });
   } catch (error) {
-    res.status(500).json({ error: "Error al actualizar reserva", details: error });
+    res
+      .status(500)
+      .json({ error: "Error al actualizar reserva", details: error });
   }
 };
 
@@ -165,7 +220,10 @@ export const deleteReservationController = async (
       return;
     }
 
-    const { userId, classId } = doc.data() as { userId: string; classId: string };
+    const { userId, classId } = doc.data() as {
+      userId: string;
+      classId: string;
+    };
 
     // Borra la reserva
     await ref.delete();
@@ -193,8 +251,36 @@ export const deleteReservationController = async (
       occupied: Math.max(currentOccupied - 1, 0),
     });
 
+    // envio de email
+    const data = classDoc.data()!;
+    const { discipline, day, hour } = data;
+    const dateStr = new Date(`${day}T00:00:00`).toLocaleDateString("es-MX", {
+      weekday: "long", // jueves
+      day: "numeric", // 10
+      month: "long", // julio
+      year: "numeric", // 2025
+    });
+
+    // ── 2. Formateamos la fecha ‘2025-07-10’ a algo legible en español
+
+    const classInfo = `${discipline} el ${dateStr} a las ${hour}`;
+
+    try {
+      await sendReservationCancelledEmail(
+        userData!.email,
+        userData!.firstName,
+        classInfo
+      );
+    } catch (emailErr) {
+      console.error("❌ No se pudo enviar el email de cancelación:", emailErr);
+    }
+
+    // respuesta
+
     res.status(200).json({ message: "Reserva eliminada correctamente" });
   } catch (error) {
-    res.status(500).json({ error: "Error al eliminar reserva", details: error });
+    res
+      .status(500)
+      .json({ error: "Error al eliminar reserva", details: error });
   }
 };
