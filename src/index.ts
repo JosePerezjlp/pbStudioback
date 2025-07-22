@@ -21,6 +21,7 @@ import contentRouter from "./routes/content";
 import reservationRoutes from "./routes/reservations";
 import contactRouter from "./routes/contact";
 import passwordResetRouter from "./routes/passwordReset";
+import configRouter from "./routes/configRoutes"
 import { initializePersonalAdmin } from "./utils/devadminit";
 import {
   sendClassReminderEmail,
@@ -68,6 +69,7 @@ app.use("/transactions", transactionsRouter);
 app.use("/reservations", reservationRoutes);
 app.use("/contact", contactRouter);
 app.use("/password-reset", passwordResetRouter);
+app.use("/config", configRouter);
 
 const startServer = async () => {
   try {
