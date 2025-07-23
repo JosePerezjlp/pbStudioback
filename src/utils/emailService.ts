@@ -1,4 +1,5 @@
 import { Resend } from "resend";
+import admin from "../config/firebase";
 
 const resend = new Resend(process.env.RESEND_API_KEY); // usa variables de entorno en producción
 
@@ -138,6 +139,23 @@ export const sendClassReminderEmail = async (
    =============================================================== */
 
 /** 1) Notificación interna */
+
+export const getAdminContactEmail = async (): Promise<string | null> => {
+  try {
+    const doc = await admin.firestore()
+      .collection("configurations")
+      .doc("general_settings")
+      .get();
+
+    const data = doc.data();
+    return data?.email || null;
+  } catch (err) {
+    console.error("Error al obtener el correo de contacto:", err);
+    return null;
+  }
+};
+
+
 export const sendContactNotificationEmail = async (payload: {
   name: string;
   phone: string;
@@ -146,9 +164,16 @@ export const sendContactNotificationEmail = async (payload: {
 }) => {
   const { name, phone, email, message } = payload;
 
+  const adminEmail = await getAdminContactEmail();
+
+  if (!adminEmail) {
+    console.error("❌ No se encontró un email de contacto configurado.");
+    return;
+  }
+
   await resend.emails.send({
     from: FROM,
-    to: "admin@pbstudioapp.com",
+    to: adminEmail,
     subject: "📩 Nuevo mensaje de contacto",
     html: `
       <h3>Datos enviados desde el formulario</h3>

@@ -60,3 +60,64 @@ export const getCancellationTimesController = async (
     res.status(500).json({ error: "Error interno", details: String(error) });
   }
 };
+
+// General
+
+export const setGeneralSettingsController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { email, package: pkg, header, footer } = req.body;
+
+    if (!email || !pkg) {
+      res.status(400).json({ error: "Email y paquete son obligatorios" });
+      return;
+    }
+
+    await admin
+      .firestore()
+      .collection("configurations")
+      .doc("general_settings")
+      .set(
+        {
+          email,
+          package: pkg,
+          header,
+          footer,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+
+    res
+      .status(200)
+      .json({ message: "Configuración general guardada correctamente" });
+  } catch (error) {
+    console.error("Error al guardar configuración general:", error);
+    res.status(500).json({ error: "Error interno", details: String(error) });
+  }
+};
+
+export const getGeneralSettingsController = async (
+  _req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const doc = await admin
+      .firestore()
+      .collection("configurations")
+      .doc("general_settings")
+      .get();
+
+    if (!doc.exists) {
+      res.status(404).json({ error: "No hay configuración general guardada" });
+      return;
+    }
+
+    res.status(200).json({ id: doc.id, ...doc.data() });
+  } catch (error) {
+    console.error("Error al obtener configuración general:", error);
+    res.status(500).json({ error: "Error interno", details: String(error) });
+  }
+};
