@@ -121,3 +121,61 @@ export const getGeneralSettingsController = async (
     res.status(500).json({ error: "Error interno", details: String(error) });
   }
 };
+
+// statistics
+
+// POST - Guarda o actualiza la fecha de estadísticas
+export const setStatisticsConfigController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { startDate } = req.body;
+
+    if (!startDate) {
+      res.status(400).json({ error: "La fecha de inicio es requerida" });
+      return;
+    }
+
+    await admin
+      .firestore()
+      .collection("configurations")
+      .doc("statistics_settings")
+      .set(
+        {
+          startDate,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+
+    res.status(200).json({ message: "Configuración guardada correctamente" });
+  } catch (error) {
+    console.error("Error al guardar configuración de estadísticas:", error);
+    res.status(500).json({ error: "Error interno", details: String(error) });
+  }
+};
+
+// GET - Obtiene la fecha guardada
+export const getStatisticsConfigController = async (
+  _req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const doc = await admin
+      .firestore()
+      .collection("configurations")
+      .doc("statistics_settings")
+      .get();
+
+    if (!doc.exists) {
+      res.status(404).json({ error: "No hay configuración de estadísticas guardada" });
+      return;
+    }
+
+    res.status(200).json({ id: doc.id, ...doc.data() });
+  } catch (error) {
+    console.error("Error al obtener configuración de estadísticas:", error);
+    res.status(500).json({ error: "Error interno", details: String(error) });
+  }
+};
