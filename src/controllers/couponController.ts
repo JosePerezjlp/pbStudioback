@@ -7,12 +7,18 @@ const db = admin.firestore();
 const couponsCol = db.collection("coupons");
 const packagesCol = db.collection("packages");
 
+const rangesOverlap = (
+  aStart: Date,
+  aEnd: Date,
+  bStart: Date,
+  bEnd: Date
+): boolean => aStart <= bEnd && bStart <= aEnd;
 
-
-const rangesOverlap = (aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean =>
-  aStart <= bEnd && bStart <= aEnd;
-
-const isCouponActiveAndNotUsedUp = (coupon: Coupon, newStart: Date, newEnd: Date): boolean => {
+const isCouponActiveAndNotUsedUp = (
+  coupon: Coupon,
+  newStart: Date,
+  newEnd: Date
+): boolean => {
   const cStart = new Date(coupon.startDate);
   const cEnd = new Date(coupon.endDate);
   const overlap = rangesOverlap(cStart, cEnd, newStart, newEnd);
@@ -31,6 +37,32 @@ type Conflict = {
   currentCouponCode: string;
 };
 
+// const buildConflictList = (
+//   pkgDocs: FirebaseFirestore.QueryDocumentSnapshot[],
+//   couponsById: Record<string, Coupon>,
+//   newStart: Date,
+//   newEnd: Date,
+//   ignoreCouponId?: string
+// ): Conflict[] =>
+//   pkgDocs
+//     .map((pkgDoc) => {
+//       const data = pkgDoc.data();
+//       const currentCouponId = data.couponId as string | undefined;
+//       if (!currentCouponId) return null;
+//       if (ignoreCouponId && currentCouponId === ignoreCouponId) return null;
+
+//       const coupon = couponsById[currentCouponId];
+//       if (!coupon) return null;
+
+//       return isCouponActiveAndNotUsedUp(coupon, newStart, newEnd)
+//         ? {
+//             packageId: pkgDoc.id,
+//             currentCouponId,
+//             currentCouponCode: coupon.code,
+//           }
+//         : null;
+//     })
+//     .filter((c): c is Conflict => c !== null);
 const buildConflictList = (
   pkgDocs: FirebaseFirestore.QueryDocumentSnapshot[],
   couponsById: Record<string, Coupon>,
@@ -58,10 +90,10 @@ const buildConflictList = (
     })
     .filter((c): c is Conflict => c !== null);
 
-
-// ---------------- Controllers ----------------
-
-export const createCouponController = async (req: Request, res: Response): Promise<void> => {
+export const createCouponController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
     const {
       name,
@@ -71,47 +103,29 @@ export const createCouponController = async (req: Request, res: Response): Promi
       discount,
       totalUses,
       packageIds,
-      applyToSpecialPrice,
-    } = req.body as {
-      name: string;
-      code: string;
-      startDate: string;
-      endDate: string;
-      discount: number;
-      totalUses: number;
-      packageIds: string[];
-      applyToSpecialPrice?: boolean;
-    };
+      applyToSpecialPrice, // 👈 viene del frontend
+    } = req.body;
 
     const newStart = new Date(startDate);
     const newEnd = new Date(endDate);
+    const now = new Date().toISOString();
 
-    // 1) Traer solo los paquetes seleccionados
     const pkgDocs = await fetchPackagesByIds(packageIds);
 
-    // 2) Sacar los cupón IDs actuales (si los hay)
     const couponIdsToCheck = Array.from(
-      new Set(
-        pkgDocs
-          .map((d) => d.data().couponId as string | undefined)
-          .filter(Boolean) as string[]
-      )
+      new Set(pkgDocs.map((d) => d.data().couponId).filter(Boolean))
     );
-
-    // 3) Traer esos cupones
     const couponsById = await fetchCouponsByIds(couponIdsToCheck, couponsCol);
 
-    // 4) Verificar conflictos
     const conflicts = buildConflictList(pkgDocs, couponsById, newStart, newEnd);
     if (conflicts.length > 0) {
       res.status(400).json({
-        error: "Algunos paquetes ya tienen un cupón vigente con usos disponibles.",
+        error: "Algunos paquetes ya tienen un cupón vigente.",
         conflicts,
       });
       return;
     }
 
-    const now = new Date().toISOString();
     const isExpired = newEnd < new Date();
     const isUsedUp = totalUses <= 0;
     const effectiveDiscount = isExpired || isUsedUp ? 0 : discount;
@@ -124,24 +138,44 @@ export const createCouponController = async (req: Request, res: Response): Promi
       discount,
       totalUses,
       packageIds,
-      applyToSpecialPrice: !!applyToSpecialPrice,
+      applyToSpecialPrice: !!applyToSpecialPrice, // ✅ no se invierte
       createdAt: now,
       updatedAt: now,
     };
 
-    // 5) Crear cupón
     const docRef = await couponsCol.add(newCoupon);
 
-    // 6) Actualizar paquetes en paralelo
     await Promise.all(
-      packageIds.map((id) =>
-        packagesCol.doc(id).update({
+      pkgDocs.map((pkgDoc) => {
+        const rawAmount = pkgDoc.data().amount;
+        const amount =
+          typeof rawAmount === "number" ? rawAmount : parseFloat(rawAmount);
+
+        if (amount === null || Number.isNaN(amount)) {
+
+          console.error(
+            `❌ Paquete con ID ${pkgDoc.id} tiene amount inválido:`,
+            rawAmount
+          );
+          throw new Error(`Paquete con ID ${pkgDoc.id} no tiene amount válido`);
+        }
+
+        const specialPrice =
+          effectiveDiscount > 0 && applyToSpecialPrice
+            ? Math.max(0, amount - (amount * effectiveDiscount) / 100)
+            : 0;
+
+        const updateData = {
           couponId: docRef.id,
           discount: effectiveDiscount,
-          applyToSpecialPrice: !!applyToSpecialPrice,
+          discountInfo: effectiveDiscount > 0 ? name : "--",
+          applyToSpecialPrice: !!applyToSpecialPrice, // ✅ se refleja también en el paquete
+          specialPrice,
           updatedAt: now,
-        })
-      )
+        };
+
+        return pkgDoc.ref.update(updateData);
+      })
     );
 
     res.status(201).json({
@@ -154,33 +188,11 @@ export const createCouponController = async (req: Request, res: Response): Promi
   }
 };
 
-export const getAllCouponsController = async (_req: Request, res: Response): Promise<void> => {
-  try {
-    const snapshot = await couponsCol.get();
-    const coupons = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    res.status(200).json({ coupons, total: coupons.length });
-  } catch (error) {
-    res.status(500).json({ error: "Error interno", details: String(error) });
-  }
-};
 
-export const getCouponByIdController = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { couponId } = req.params;
-    const doc = await couponsCol.doc(couponId).get();
-
-    if (!doc.exists) {
-      res.status(404).json({ error: "Cupón no encontrado" });
-      return;
-    }
-
-    res.status(200).json({ id: doc.id, ...doc.data() });
-  } catch (error) {
-    res.status(500).json({ error: "Error interno", details: String(error) });
-  }
-};
-
-export const updateCouponController = async (req: Request, res: Response): Promise<void> => {
+export const updateCouponController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
     const { couponId } = req.params;
     const {
@@ -192,19 +204,11 @@ export const updateCouponController = async (req: Request, res: Response): Promi
       totalUses,
       packageIds,
       applyToSpecialPrice,
-    } = req.body as {
-      name: string;
-      code: string;
-      startDate: string;
-      endDate: string;
-      discount: number;
-      totalUses: number;
-      packageIds: string[];
-      applyToSpecialPrice?: boolean;
-    };
+    } = req.body;
 
     const couponRef = couponsCol.doc(couponId);
     const existing = await couponRef.get();
+
     if (!existing.exists) {
       res.status(404).json({ error: "Cupón no encontrado" });
       return;
@@ -217,19 +221,16 @@ export const updateCouponController = async (req: Request, res: Response): Promi
     const isUsedUp = totalUses <= 0;
     const effectiveDiscount = isExpired || isUsedUp ? 0 : discount;
 
-    // 1) Validar conflictos únicamente en paquetes que NO tienen este cupón
     const pkgDocs = await fetchPackagesByIds(packageIds);
-    const packagesWithOtherCoupon = pkgDocs.filter((d) => {
-      const data = d.data();
-      return data.couponId && data.couponId !== couponId;
-    });
+    const packagesWithOtherCoupon = pkgDocs.filter(
+      (d) => d.data().couponId && d.data().couponId !== couponId
+    );
 
     const couponIdsToCheck = Array.from(
-      new Set(packagesWithOtherCoupon.map((d) => d.data().couponId as string))
+      new Set(packagesWithOtherCoupon.map((d) => d.data().couponId))
     );
 
     const couponsById = await fetchCouponsByIds(couponIdsToCheck, couponsCol);
-
     const conflicts = buildConflictList(
       packagesWithOtherCoupon,
       couponsById,
@@ -240,13 +241,13 @@ export const updateCouponController = async (req: Request, res: Response): Promi
 
     if (conflicts.length > 0) {
       res.status(400).json({
-        error: "Algunos paquetes ya tienen un cupón vigente con usos disponibles.",
+        error: "Conflicto con otros cupones activos",
         conflicts,
       });
       return;
     }
 
-    // 2) Actualizar cupón
+    // Actualiza cupón
     await couponRef.update({
       name,
       code,
@@ -259,28 +260,48 @@ export const updateCouponController = async (req: Request, res: Response): Promi
       updatedAt: now,
     });
 
-    // 3) Limpiar en paquetes que ya NO lo deben tener
-    const oldAssignedSnap = await packagesCol.where("couponId", "==", couponId).get();
+    // Limpia paquetes que ya no deben tener el cupón
+    const oldAssignedSnap = await packagesCol
+      .where("couponId", "==", couponId)
+      .get();
+
     const toClean = oldAssignedSnap.docs
       .filter((d) => !packageIds.includes(d.id))
       .map((doc) =>
         doc.ref.update({
           couponId: admin.firestore.FieldValue.delete(),
           discount: admin.firestore.FieldValue.delete(),
+          discountInfo: admin.firestore.FieldValue.delete(),
           applyToSpecialPrice: admin.firestore.FieldValue.delete(),
+          specialPrice: admin.firestore.FieldValue.delete(),
           updatedAt: now,
         })
       );
 
-    // 4) Asignar a los nuevos paquetes
-    const toAssign = packageIds.map((id) =>
-      packagesCol.doc(id).update({
+    // Asigna el cupón a los paquetes nuevos o existentes
+    const toAssign = pkgDocs.map((pkgDoc) => {
+      const rawAmount = pkgDoc.data().amount;
+      const amount =
+        typeof rawAmount === "number" ? rawAmount : parseFloat(rawAmount);
+
+      if (typeof amount !== "number" || Number.isNaN(amount)) {
+        throw new Error(`❌ El paquete ${pkgDoc.id} tiene un amount inválido`);
+      }
+
+      const specialPrice =
+        effectiveDiscount > 0
+          ? Math.max(0, amount - (amount * effectiveDiscount) / 100)
+          : 0;
+
+      return pkgDoc.ref.update({
         couponId,
         discount: effectiveDiscount,
+        discountInfo: effectiveDiscount > 0 ? name : "--",
         applyToSpecialPrice: !!applyToSpecialPrice,
+        specialPrice,
         updatedAt: now,
-      })
-    );
+      });
+    });
 
     await Promise.all([...toClean, ...toAssign]);
 
@@ -291,7 +312,11 @@ export const updateCouponController = async (req: Request, res: Response): Promi
   }
 };
 
-export const deleteCouponController = async (req: Request, res: Response): Promise<void> => {
+
+export const deleteCouponController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
     const { couponId } = req.params;
     const couponRef = couponsCol.doc(couponId);
@@ -304,14 +329,15 @@ export const deleteCouponController = async (req: Request, res: Response): Promi
 
     const now = new Date().toISOString();
 
-    // Limpiar paquetes que tengan ese cupón (query directa, nada de loops await)
     const pkgsSnap = await packagesCol.where("couponId", "==", couponId).get();
     await Promise.all(
       pkgsSnap.docs.map((doc) =>
         doc.ref.update({
           couponId: admin.firestore.FieldValue.delete(),
           discount: admin.firestore.FieldValue.delete(),
+          discountInfo: admin.firestore.FieldValue.delete(),
           applyToSpecialPrice: admin.firestore.FieldValue.delete(),
+          specialPrice: admin.firestore.FieldValue.delete(),
           updatedAt: now,
         })
       )
@@ -322,6 +348,38 @@ export const deleteCouponController = async (req: Request, res: Response): Promi
     res.status(200).json({ message: "Cupón eliminado correctamente" });
   } catch (error) {
     console.error("Error al eliminar cupón:", error);
+    res.status(500).json({ error: "Error interno", details: String(error) });
+  }
+};
+
+export const getAllCouponsController = async (
+  _req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const snapshot = await couponsCol.get();
+    const coupons = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    res.status(200).json({ coupons, total: coupons.length });
+  } catch (error) {
+    res.status(500).json({ error: "Error interno", details: String(error) });
+  }
+};
+
+export const getCouponByIdController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { couponId } = req.params;
+    const doc = await couponsCol.doc(couponId).get();
+
+    if (!doc.exists) {
+      res.status(404).json({ error: "Cupón no encontrado" });
+      return;
+    }
+
+    res.status(200).json({ id: doc.id, ...doc.data() });
+  } catch (error) {
     res.status(500).json({ error: "Error interno", details: String(error) });
   }
 };

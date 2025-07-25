@@ -30,7 +30,10 @@ export const createPackageController = async (req: Request, res: Response): Prom
 
 export const getAllPackagesController = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const snapshot = await collection.get();
+    const snapshot = await collection
+      .orderBy("createdAt", "desc") // 👈 Ordena por fecha de creación descendente
+      .get();
+
     const packages = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
     res.status(200).json({ packages, total: packages.length });
   } catch (error) {
@@ -39,6 +42,7 @@ export const getAllPackagesController = async (_req: Request, res: Response): Pr
     res.status(500).json({ error: "Error interno del servidor", details: msg });
   }
 };
+
 
 export const getPackageByIdController = async (req: Request, res: Response): Promise<void> => {
   const { packageId } = req.params;
