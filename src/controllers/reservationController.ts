@@ -143,7 +143,11 @@ export const getAllReservationsController = async (
   res: Response
 ) => {
   try {
-    const snapshot = await admin.firestore().collection("reservations").get();
+    const snapshot = await admin
+      .firestore()
+      .collection("reservations")
+      .orderBy("createdAt", "desc")
+      .get();
     const reservations = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),

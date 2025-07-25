@@ -39,7 +39,11 @@ export const getAllDisciplinesController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const snapshot = await admin.firestore().collection("disciplines").get();
+    const snapshot = await admin
+      .firestore()
+      .collection("disciplines")
+      .orderBy("createdAt", "desc")
+      .get();
     const disciplines = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),

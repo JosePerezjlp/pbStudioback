@@ -37,22 +37,20 @@ export const createClassroomController = async (
 
     res.status(201).json({ message: "Salón creado correctamente", id: ref.id });
   } catch (error: unknown) {
-  if (error instanceof Error) {
-    console.error("Error al crear salón:", error.message);
-    res.status(500).json({
-      error: "Error al crear salón",
-      details: error.message,
-    });
-  } else {
-    console.error("Error al crear salón:", error);
-    res.status(500).json({
-      error: "Error al crear salón",
-      details: String(error),
-    });
+    if (error instanceof Error) {
+      console.error("Error al crear salón:", error.message);
+      res.status(500).json({
+        error: "Error al crear salón",
+        details: error.message,
+      });
+    } else {
+      console.error("Error al crear salón:", error);
+      res.status(500).json({
+        error: "Error al crear salón",
+        details: String(error),
+      });
+    }
   }
-}
-
-
 };
 
 export const getAllClassroomsController = async (
@@ -60,7 +58,11 @@ export const getAllClassroomsController = async (
   res: Response
 ) => {
   try {
-    const snapshot = await admin.firestore().collection("classrooms").get();
+    const snapshot = await admin
+      .firestore()
+      .collection("classrooms")
+      .orderBy("createdAt", "desc")
+      .get();
     const classrooms = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),

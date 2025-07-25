@@ -177,7 +177,11 @@ export const getAllUsersController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const usersSnapshot = await admin.firestore().collection("users").get();
+    const usersSnapshot = await admin
+      .firestore()
+      .collection("users")
+      .orderBy("createdAt", "desc")
+      .get();
     const users = usersSnapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),

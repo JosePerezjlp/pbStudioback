@@ -224,7 +224,11 @@ export const getAllTransactionsController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const snap = await admin.firestore().collection("transactions").get();
+    const snap = await admin
+      .firestore()
+      .collection("transactions")
+      .orderBy("createdAt", "desc")
+      .get();
     const transactions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     res.status(200).json({ transactions });
   } catch (err) {

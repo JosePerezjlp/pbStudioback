@@ -108,14 +108,20 @@ export const getAllInstructorsController = async (
   res: Response
 ) => {
   try {
-    const snapshot = await admin.firestore().collection("instructors").get();
+    const snapshot = await admin
+      .firestore()
+      .collection("instructors")
+      .orderBy("createdAt", "desc")
+      .get();
     const instructors = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
     res.status(200).json({ instructors });
   } catch (error) {
-    res.status(500).json({ error: "Error al obtener instructores", details: error });
+    res
+      .status(500)
+      .json({ error: "Error al obtener instructores", details: error });
   }
 };
 
@@ -125,7 +131,11 @@ export const getInstructorByIdController = async (
 ): Promise<void> => {
   const { instructorId } = req.params;
   try {
-    const doc = await admin.firestore().collection("instructors").doc(instructorId).get();
+    const doc = await admin
+      .firestore()
+      .collection("instructors")
+      .doc(instructorId)
+      .get();
 
     if (!doc.exists) {
       res.status(404).json({ error: "Instructor no encontrado" });
@@ -134,7 +144,9 @@ export const getInstructorByIdController = async (
 
     res.status(200).json({ id: doc.id, ...doc.data() });
   } catch (error) {
-    res.status(500).json({ error: "Error al obtener instructor", details: error });
+    res
+      .status(500)
+      .json({ error: "Error al obtener instructor", details: error });
   }
 };
 
@@ -185,7 +197,9 @@ export const updateInstructorController = [
 
       res.status(200).json({ message: "Instructor actualizado correctamente" });
     } catch (error) {
-      res.status(500).json({ error: "Error al actualizar instructor", details: error });
+      res
+        .status(500)
+        .json({ error: "Error al actualizar instructor", details: error });
     }
   },
 ];
@@ -212,6 +226,8 @@ export const deleteInstructorController = async (
 
     res.status(200).json({ message: "Instructor eliminado correctamente" });
   } catch (error) {
-    res.status(500).json({ error: "Error al eliminar instructor", details: error });
+    res
+      .status(500)
+      .json({ error: "Error al eliminar instructor", details: error });
   }
 };

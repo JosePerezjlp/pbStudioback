@@ -76,6 +76,11 @@ export const updatePackageController = async (req: Request, res: Response): Prom
       return;
     }
 
+    // 🧠 ⚠️ Bloquear campos que NO deben ser actualizados por el frontend
+    const nonEditableFields = ["specialPrice", "discountInfo", "couponId", "discount", "applyToSpecialPrice"];
+    nonEditableFields.forEach((field) => delete updateData[field]);
+
+    // 🧹 Eliminar null/undefined del payload
     Object.keys(updateData).forEach((key) => {
       if (updateData[key] === undefined || updateData[key] === null) {
         delete updateData[key];
@@ -83,15 +88,21 @@ export const updatePackageController = async (req: Request, res: Response): Prom
     });
 
     updateData.updatedAt = new Date().toISOString();
+
     await docRef.update(updateData);
 
-    res.status(200).json({ message: "Paquete actualizado correctamente", updatedFields: Object.keys(updateData) });
+    res.status(200).json({
+      message: "Paquete actualizado correctamente",
+      updatedFields: Object.keys(updateData),
+    });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
     console.error("Error al actualizar paquete:", msg);
     res.status(500).json({ error: "Error interno del servidor", details: msg });
   }
 };
+
+
 
 export const deletePackageController = async (req: Request, res: Response): Promise<void> => {
   const { packageId } = req.params;

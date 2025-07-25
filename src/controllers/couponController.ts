@@ -37,32 +37,6 @@ type Conflict = {
   currentCouponCode: string;
 };
 
-// const buildConflictList = (
-//   pkgDocs: FirebaseFirestore.QueryDocumentSnapshot[],
-//   couponsById: Record<string, Coupon>,
-//   newStart: Date,
-//   newEnd: Date,
-//   ignoreCouponId?: string
-// ): Conflict[] =>
-//   pkgDocs
-//     .map((pkgDoc) => {
-//       const data = pkgDoc.data();
-//       const currentCouponId = data.couponId as string | undefined;
-//       if (!currentCouponId) return null;
-//       if (ignoreCouponId && currentCouponId === ignoreCouponId) return null;
-
-//       const coupon = couponsById[currentCouponId];
-//       if (!coupon) return null;
-
-//       return isCouponActiveAndNotUsedUp(coupon, newStart, newEnd)
-//         ? {
-//             packageId: pkgDoc.id,
-//             currentCouponId,
-//             currentCouponCode: coupon.code,
-//           }
-//         : null;
-//     })
-//     .filter((c): c is Conflict => c !== null);
 const buildConflictList = (
   pkgDocs: FirebaseFirestore.QueryDocumentSnapshot[],
   couponsById: Record<string, Coupon>,
@@ -106,6 +80,7 @@ export const createCouponController = async (
       applyToSpecialPrice, // 👈 viene del frontend
     } = req.body;
 
+    
     const newStart = new Date(startDate);
     const newEnd = new Date(endDate);
     const now = new Date().toISOString();
@@ -129,6 +104,7 @@ export const createCouponController = async (
     const isExpired = newEnd < new Date();
     const isUsedUp = totalUses <= 0;
     const effectiveDiscount = isExpired || isUsedUp ? 0 : discount;
+    console.log("TCL: effectiveDiscount", effectiveDiscount);
 
     const newCoupon: Coupon = {
       name,
@@ -138,7 +114,7 @@ export const createCouponController = async (
       discount,
       totalUses,
       packageIds,
-      applyToSpecialPrice: !!applyToSpecialPrice, // ✅ no se invierte
+      applyToSpecialPrice, // ✅ no se invierte
       createdAt: now,
       updatedAt: now,
     };
@@ -152,7 +128,6 @@ export const createCouponController = async (
           typeof rawAmount === "number" ? rawAmount : parseFloat(rawAmount);
 
         if (amount === null || Number.isNaN(amount)) {
-
           console.error(
             `❌ Paquete con ID ${pkgDoc.id} tiene amount inválido:`,
             rawAmount
@@ -161,7 +136,7 @@ export const createCouponController = async (
         }
 
         const specialPrice =
-          effectiveDiscount > 0 && applyToSpecialPrice
+          effectiveDiscount > 0
             ? Math.max(0, amount - (amount * effectiveDiscount) / 100)
             : 0;
 
@@ -169,10 +144,11 @@ export const createCouponController = async (
           couponId: docRef.id,
           discount: effectiveDiscount,
           discountInfo: effectiveDiscount > 0 ? name : "--",
-          applyToSpecialPrice: !!applyToSpecialPrice, // ✅ se refleja también en el paquete
+          applyToSpecialPrice, // ✅ se refleja también en el paquete
           specialPrice,
           updatedAt: now,
         };
+        console.log("TCL: updateData", updateData);
 
         return pkgDoc.ref.update(updateData);
       })
@@ -187,7 +163,6 @@ export const createCouponController = async (
     res.status(500).json({ error: "Error interno", details: String(error) });
   }
 };
-
 
 export const updateCouponController = async (
   req: Request,
@@ -256,7 +231,7 @@ export const updateCouponController = async (
       discount,
       totalUses,
       packageIds,
-      applyToSpecialPrice: !!applyToSpecialPrice,
+      applyToSpecialPrice,
       updatedAt: now,
     });
 
@@ -297,7 +272,7 @@ export const updateCouponController = async (
         couponId,
         discount: effectiveDiscount,
         discountInfo: effectiveDiscount > 0 ? name : "--",
-        applyToSpecialPrice: !!applyToSpecialPrice,
+        applyToSpecialPrice,
         specialPrice,
         updatedAt: now,
       });
@@ -311,7 +286,6 @@ export const updateCouponController = async (
     res.status(500).json({ error: "Error interno", details: String(error) });
   }
 };
-
 
 export const deleteCouponController = async (
   req: Request,
@@ -357,7 +331,7 @@ export const getAllCouponsController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const snapshot = await couponsCol.get();
+    const snapshot = await couponsCol.orderBy("createdAt", "desc").get();
     const coupons = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
     res.status(200).json({ coupons, total: coupons.length });
   } catch (error) {

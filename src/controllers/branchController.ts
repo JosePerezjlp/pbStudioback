@@ -6,7 +6,14 @@ export const createBranchController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { name, location, isPublic = true, area = "", address = "", phone = "" } = req.body;
+    const {
+      name,
+      location,
+      isPublic = true,
+      area = "",
+      address = "",
+      phone = "",
+    } = req.body;
 
     if (!name || typeof name !== "string") {
       res.status(400).json({ error: "Nombre inválido o faltante" });
@@ -25,7 +32,9 @@ export const createBranchController = async (
 
     const ref = await admin.firestore().collection("branches").add(newBranch);
 
-    res.status(201).json({ message: "Sucursal creada correctamente", id: ref.id });
+    res
+      .status(201)
+      .json({ message: "Sucursal creada correctamente", id: ref.id });
   } catch (error) {
     console.error("Error al crear sucursal:", error);
     res.status(500).json({ error: "Error al crear sucursal" });
@@ -37,14 +46,20 @@ export const getAllBranchesController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const snapshot = await admin.firestore().collection("branches").get();
+    const snapshot = await admin
+      .firestore()
+      .collection("branches")
+      .orderBy("createdAt", "desc")
+      .get();
     const branches = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
     res.status(200).json({ branches });
   } catch (error) {
-    res.status(500).json({ error: "Error al obtener sucursales", details: error });
+    res
+      .status(500)
+      .json({ error: "Error al obtener sucursales", details: error });
   }
 };
 
@@ -54,7 +69,11 @@ export const getBranchByIdController = async (
 ): Promise<void> => {
   const { branchId } = req.params;
   try {
-    const doc = await admin.firestore().collection("branches").doc(branchId).get();
+    const doc = await admin
+      .firestore()
+      .collection("branches")
+      .doc(branchId)
+      .get();
 
     if (!doc.exists) {
       res.status(404).json({ error: "Sucursal no encontrada" });
@@ -63,7 +82,9 @@ export const getBranchByIdController = async (
 
     res.status(200).json({ id: doc.id, ...doc.data() });
   } catch (error) {
-    res.status(500).json({ error: "Error al obtener sucursal", details: error });
+    res
+      .status(500)
+      .json({ error: "Error al obtener sucursal", details: error });
   }
 };
 
@@ -92,7 +113,8 @@ export const updateBranchController = async (
 
     if (req.body.name) updateData.name = String(req.body.name);
     if (req.body.location) updateData.location = String(req.body.location);
-    if ("isPublic" in req.body) updateData.isPublic = Boolean(req.body.isPublic);
+    if ("isPublic" in req.body)
+      updateData.isPublic = Boolean(req.body.isPublic);
     if (req.body.area) updateData.area = String(req.body.area);
     if (req.body.address) updateData.address = String(req.body.address);
     if (req.body.phone) updateData.phone = String(req.body.phone);
@@ -101,7 +123,9 @@ export const updateBranchController = async (
 
     res.status(200).json({ message: "Sucursal actualizada correctamente" });
   } catch (error) {
-    res.status(500).json({ error: "Error al actualizar sucursal", details: error });
+    res
+      .status(500)
+      .json({ error: "Error al actualizar sucursal", details: error });
   }
 };
 
@@ -122,6 +146,8 @@ export const deleteBranchController = async (
     await ref.delete();
     res.status(200).json({ message: "Sucursal eliminada correctamente" });
   } catch (error) {
-    res.status(500).json({ error: "Error al eliminar sucursal", details: error });
+    res
+      .status(500)
+      .json({ error: "Error al eliminar sucursal", details: error });
   }
 };

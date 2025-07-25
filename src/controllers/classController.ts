@@ -73,7 +73,11 @@ export const createClassController = async (
 // LISTA TODAS LAS CLASES
 export const getAllClassesController = async (_req: Request, res: Response) => {
   try {
-    const snapshot = await admin.firestore().collection("classes").get();
+    const snapshot = await admin
+      .firestore()
+      .collection("classes")
+      .orderBy("createdAt", "desc")
+      .get();
     const classes = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
@@ -91,7 +95,11 @@ export const getClassByIdController = async (
 ): Promise<void> => {
   const { classId } = req.params;
   try {
-    const doc = await admin.firestore().collection("classes").doc(classId).get();
+    const doc = await admin
+      .firestore()
+      .collection("classes")
+      .doc(classId)
+      .get();
 
     if (!doc.exists) {
       res.status(404).json({ error: "Clase no encontrada" });
@@ -163,7 +171,9 @@ export const updateClassController = async (
     await ref.update(updateData);
     res.status(200).json({ message: "Clase actualizada correctamente" });
   } catch (error) {
-    res.status(500).json({ error: "Error al actualizar clase", details: error });
+    res
+      .status(500)
+      .json({ error: "Error al actualizar clase", details: error });
   }
 };
 
