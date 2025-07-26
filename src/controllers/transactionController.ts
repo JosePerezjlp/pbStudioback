@@ -97,13 +97,15 @@ export const createCashTransactionController = async (
       packageId,
       amount,
       couponCode,
-      paymentMethod = "cash", // ← lee el método
+      couponId,
+      paymentMethod = "cash",
     } = req.body as {
       targetUserId?: string;
       packageId: string;
       amount: number;
       couponCode?: string;
-      paymentMethod?: PaymentMethod; // "cash" | "terminal"
+      couponId?: string;
+      paymentMethod?: PaymentMethod;
     };
 
     if (!["cash", "terminal"].includes(paymentMethod)) {
@@ -117,40 +119,61 @@ export const createCashTransactionController = async (
       return;
     }
 
-    /* --- Referencias ------------------------------------------------------ */
-    const userRef = admin.firestore().doc(`users/${uid}`);
-    const packageRef = admin.firestore().doc(`packages/${packageId}`);
+    const db = admin.firestore();
 
-    const [userSnap, pkgSnap] = await Promise.all([
+    // --- Referencias
+    const userRef = db.doc(`users/${uid}`);
+    const packageRef = db.doc(`packages/${packageId}`);
+    const couponRef = couponCode ? db.doc(`coupons/${couponId}`) : null;
+
+    const [userSnap, pkgSnap, couponSnap] = await Promise.all([
       userRef.get(),
       packageRef.get(),
+      couponRef ? couponRef.get() : Promise.resolve(null),
     ]);
+
     if (!userSnap.exists) {
       res.status(404).json({ error: "Usuario no encontrado" });
       return;
     }
+
     if (!pkgSnap.exists) {
       res.status(404).json({ error: "Paquete no encontrado" });
       return;
     }
-    const userData = userSnap.data()!;
-    const pkgData = pkgSnap.data()! as {
-      totalClasses: number;
-      type: string;
-      modality?: string;
-      isUnlimited?: boolean;
-      daysExpiry?: number;
-    };
 
-    /* --- Transacción ------------------------------------------------------ */
+    const userData = userSnap.data()!;
+    const pkgData = pkgSnap.data()!;
+
+    // Validar cupón si existe
+    let couponIsValid = false;
+    if (couponSnap && couponSnap.exists) {
+      const couponData = couponSnap.data()!;
+      const now = new Date();
+      const start = new Date(couponData.startDate);
+      const end = new Date(couponData.endDate);
+      const usosDisponibles =
+        (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0);
+
+      if (now >= start && now <= end && usosDisponibles > 0) {
+        couponIsValid = true;
+      } else {
+        res
+          .status(400)
+          .json({ error: "Cupón inválido o sin usos disponibles" });
+        return;
+      }
+    }
+
+    // --- Crear transacción
     const tx: TransactionRecord = {
       userId: uid,
-      userEmail: (userData.email as string) ?? "sin-email",
+      userEmail: userData.email ?? "sin-email",
       package: {
         id: packageId,
         totalClasses: pkgData.totalClasses,
         type: pkgData.type,
-        ...(pkgData.modality && { modality: pkgData.modality }), // 👈 solo si existe
+        ...(pkgData.modality && { modality: pkgData.modality }),
       },
       amount,
       currency: "MXN",
@@ -161,7 +184,6 @@ export const createCashTransactionController = async (
       createdAt: new Date().toISOString(),
     };
 
-    /* --- Paquete a asignar al usuario ------------------------------------- */
     const userPackage = {
       id: packageId,
       assignedAt: new Date().toISOString(),
@@ -172,24 +194,30 @@ export const createCashTransactionController = async (
       classesUsed: 0,
       isUnlimited: pkgData.isUnlimited ?? false,
       type: pkgData.type,
-      ...(pkgData.modality && { modality: pkgData.modality }), // 👈 idem
+      ...(pkgData.modality && { modality: pkgData.modality }),
       active: true,
     };
+
     const addTotal = pkgData.isUnlimited ? 0 : pkgData.totalClasses;
 
-    /* --- Transacción de Firestore (todo-atómico) -------------------------- */
-    await admin.firestore().runTransaction(async (t) => {
-      /* 1. historial de transacciones */
-      const txRef = admin.firestore().collection("transactions").doc();
+    // --- Transacción en Firestore
+    await db.runTransaction(async (t) => {
+      const txRef = db.collection("transactions").doc();
       t.set(txRef, cleanUndefined(tx));
 
-      /* 2. paquete y contadores en el usuario */
       t.update(userRef, {
         packages: admin.firestore.FieldValue.arrayUnion(userPackage),
         "classes.total": admin.firestore.FieldValue.increment(addTotal),
         "classes.available": admin.firestore.FieldValue.increment(addTotal),
-        "classes.taken": admin.firestore.FieldValue.increment(0), // crea si no existe
+        "classes.taken": admin.firestore.FieldValue.increment(0),
       });
+
+      if (couponRef && couponIsValid) {
+        t.update(couponRef, {
+          usedCount: admin.firestore.FieldValue.increment(1),
+          updatedAt: new Date().toISOString(),
+        });
+      }
     });
 
     try {
@@ -205,9 +233,8 @@ export const createCashTransactionController = async (
       console.error("❌ No se pudo enviar el email de compra:", emailErr);
     }
 
-    /* --- Respuesta -------------------------------------------------------- */
     res.status(201).json({
-      message: "Transacción en efectivo registrada y paquete asignado",
+      message: "Transacción registrada correctamente",
       tx,
     });
   } catch (err) {

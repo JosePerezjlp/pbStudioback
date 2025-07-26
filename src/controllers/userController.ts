@@ -55,6 +55,7 @@ export const userController = async (
         transactions: [],
         waitlist: { inList: false, position: null },
         classes: { total: 0, available: 0, taken: 0 },
+        createdAt: new Date().toISOString()
       });
 
     try {

@@ -113,6 +113,7 @@ export const createCouponController = async (
       endDate,
       discount,
       totalUses,
+      usedCount: 0,
       packageIds,
       applyToSpecialPrice, // ✅ no se invierte
       createdAt: now,
@@ -189,11 +190,15 @@ export const updateCouponController = async (
       return;
     }
 
+    const existingData = existing.data();
+    const usedCount = existingData?.usedCount ?? 0; // 🔒 Aseguramos que no se pierda
+
     const now = new Date().toISOString();
     const newStart = new Date(startDate);
     const newEnd = new Date(endDate);
+
     const isExpired = newEnd < new Date();
-    const isUsedUp = totalUses <= 0;
+    const isUsedUp = totalUses <= usedCount;
     const effectiveDiscount = isExpired || isUsedUp ? 0 : discount;
 
     const pkgDocs = await fetchPackagesByIds(packageIds);
@@ -222,7 +227,7 @@ export const updateCouponController = async (
       return;
     }
 
-    // Actualiza cupón
+    // ✅ Actualiza cupón preservando `usedCount`
     await couponRef.update({
       name,
       code,
@@ -230,12 +235,13 @@ export const updateCouponController = async (
       endDate,
       discount,
       totalUses,
+      usedCount, // 🔒 no lo toca el frontend
       packageIds,
       applyToSpecialPrice,
       updatedAt: now,
     });
 
-    // Limpia paquetes que ya no deben tener el cupón
+    // Limpia paquetes desvinculados
     const oldAssignedSnap = await packagesCol
       .where("couponId", "==", couponId)
       .get();
@@ -253,7 +259,7 @@ export const updateCouponController = async (
         })
       );
 
-    // Asigna el cupón a los paquetes nuevos o existentes
+    // Asigna a paquetes nuevos o existentes
     const toAssign = pkgDocs.map((pkgDoc) => {
       const rawAmount = pkgDoc.data().amount;
       const amount =
@@ -286,6 +292,7 @@ export const updateCouponController = async (
     res.status(500).json({ error: "Error interno", details: String(error) });
   }
 };
+
 
 export const deleteCouponController = async (
   req: Request,

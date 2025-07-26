@@ -76,6 +76,8 @@ export const createInstructorController = [
           enabled,
           image: imageUrl,
           registrationDate: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+
         });
 
       res.status(201).json({
