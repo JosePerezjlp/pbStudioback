@@ -73,6 +73,7 @@ export interface TransactionRecord {
   currency: string; // p. ej. "MXN"
   couponUsed: boolean;
   couponCode?: string;
+  couponId?: string;
   paymentMethod: PaymentMethod;
   status: TransactionStatus;
   createdAt: string;
@@ -124,7 +125,7 @@ export const createCashTransactionController = async (
     // --- Referencias
     const userRef = db.doc(`users/${uid}`);
     const packageRef = db.doc(`packages/${packageId}`);
-    const couponRef = couponCode ? db.doc(`coupons/${couponId}`) : null;
+    const couponRef = couponId ? db.doc(`coupons/${couponId}`) : null;
 
     const [userSnap, pkgSnap, couponSnap] = await Promise.all([
       userRef.get(),
@@ -147,7 +148,8 @@ export const createCashTransactionController = async (
 
     // Validar cupón si existe
     let couponIsValid = false;
-    if (couponSnap && couponSnap.exists) {
+
+    if (couponId && couponSnap && couponSnap.exists) {
       const couponData = couponSnap.data()!;
       const now = new Date();
       const start = new Date(couponData.startDate);
@@ -177,8 +179,9 @@ export const createCashTransactionController = async (
       },
       amount,
       currency: "MXN",
-      couponUsed: Boolean(couponCode),
+      couponUsed: couponIsValid,
       couponCode,
+      couponId,
       paymentMethod,
       status: "paid",
       createdAt: new Date().toISOString(),
