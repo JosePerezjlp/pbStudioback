@@ -78,6 +78,7 @@ export interface TransactionRecord {
   status: TransactionStatus;
   createdAt: string;
   paypal?: { orderID: string; captureID: string };
+  branchId?:string
 }
 
 /* ---------- Guardar transacción genérica ---------- */
@@ -100,6 +101,7 @@ export const createCashTransactionController = async (
       couponCode,
       couponId,
       paymentMethod = "cash",
+      branchId
     } = req.body as {
       targetUserId?: string;
       packageId: string;
@@ -107,6 +109,7 @@ export const createCashTransactionController = async (
       couponCode?: string;
       couponId?: string;
       paymentMethod?: PaymentMethod;
+      branchId?:string
     };
 
     if (!["cash", "terminal"].includes(paymentMethod)) {
@@ -185,6 +188,7 @@ export const createCashTransactionController = async (
       paymentMethod,
       status: "paid",
       createdAt: new Date().toISOString(),
+      branchId
     };
 
     const userPackage = {

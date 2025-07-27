@@ -9,3 +9,13 @@ export const ERROR_CODES = {
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
+
+export enum StatusTypeEnum {
+  ACTIVE = "Activo",
+  INACTIVE = "Inactivo"
+}
+
+export enum RolTypeEnum {
+  EMPLOYEE = "Employee",
+  ADMIN = "Admin"
+}

@@ -23,6 +23,7 @@ import contactRouter from "./routes/contact";
 import passwordResetRouter from "./routes/passwordReset";
 import configRouter from "./routes/configRoutes";
 import couponsRouter from "./routes/couponRoutes";
+import staffRouter from "./routes/staffRoutes";
 import { initializePersonalAdmin } from "./utils/devadminit";
 import {
   sendClassReminderEmail,
@@ -72,6 +73,7 @@ app.use("/contact", contactRouter);
 app.use("/password-reset", passwordResetRouter);
 app.use("/config", configRouter);
 app.use("/coupons", couponsRouter);
+app.use("/staff", staffRouter);
 
 const startServer = async () => {
   try {
