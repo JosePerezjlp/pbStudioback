@@ -13,7 +13,7 @@ import {
 
 const router = express.Router();
 
-router.get("/staff/check-email",verifyToken, checkStaffEmailExists);
+router.get("/check-email", verifyToken, checkStaffEmailExists);
 router.post("/", verifyToken, createStaffUser);
 router.put("/:id", verifyToken, updateStaffUser);
 router.delete("/:id", verifyToken, deleteStaffUser);

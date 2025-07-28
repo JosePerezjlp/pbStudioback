@@ -10,28 +10,27 @@ export const checkStaffEmailExists = async (
 ): Promise<void> => {
   try {
     const { email } = req.query;
+    console.log("TCL: email", email);
 
     if (!email || typeof email !== "string") {
-      res.status(400).json({ error: "El parámetro 'email' es requerido" });
+      res.status(409).json({ error: "El parámetro 'email' es requerido" });
       return;
     }
 
     const querySnapshot = await staffCollection
-    .where("email", "==", email)
-    .limit(1)
-    .get();
-    
-		console.log("TCL: querySnapshotsssss", querySnapshot)
-    if (!querySnapshot.empty) {
-  res.status(409).json({
-    error: "Este correo ya está registrado en la base de datos",
-    code: "firestore/email-already-exists",
-  });
-  return;
-}
+      .where("email", "==", email)
+      .limit(1)
+      .get();
 
-// Mejor que 204, para evitar problemas con axios
-res.status(200).json({ message: "Correo disponible" });
+    if (!querySnapshot.empty) {
+      res.status(409).json({
+        error: "Este correo ya está registrado en la base de datos",
+        code: "firestore/email-already-exists",
+      });
+      return;
+    }
+
+    res.status(200).json({ message: "Correo disponible" });
   } catch (error) {
     console.error("Error al verificar el email:", error);
     res.status(500).json({
@@ -40,7 +39,6 @@ res.status(200).json({ message: "Correo disponible" });
     });
   }
 };
-
 
 // 🔐 Crear nuevo usuario staff
 export const createStaffUser = async (
