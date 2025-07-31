@@ -10,7 +10,8 @@ const PERSONAL_ADMIN = {
   role: 'admin',
   isAdmin: true,
   phone: '1111111111',
-  branch: 'Desarrollo'
+  branch: 'Desarrollo',
+  permissions: { superuser: true },
 };
 
 export const initializePersonalAdmin = async () => {

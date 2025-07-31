@@ -2,7 +2,22 @@ import { Request, Response } from "express";
 import admin from "../config/firebase";
 import { RolTypeEnum, StatusTypeEnum } from "../types/enums";
 
-const staffCollection = admin.firestore().collection("staff");
+interface StaffUser {
+  id: string;
+  email?: string;
+  role: RolTypeEnum;
+  branches: string[];
+  permissions: Record<string, string[]>;
+  status: StatusTypeEnum;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  branch?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+const staffCollection = admin.firestore().collection("users");
 
 export const checkStaffEmailExists = async (
   req: Request,
@@ -90,7 +105,12 @@ export const createStaffUser = async (
       branches,
       permissions,
       status,
+      firstName: "Staff",
+      lastName: "Fake",
+      phone: "0000000000",
+      branch: branches[0] ?? "",
       createdAt: new Date().toISOString(),
+      isAdmin:true
     });
 
     res.status(201).json({
@@ -123,22 +143,41 @@ export const createStaffUser = async (
 };
 
 // 📋 Listar todos los usuarios staff
+// 📋 Listar todos los usuarios staff (solo admin y employee, excluyendo superusuarios)
 export const getAllStaffUsers = async (
   _req: Request,
   res: Response
 ): Promise<void> => {
   try {
-    const snapshot = await staffCollection.get();
-    const staffList = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const snapshot = await admin
+      .firestore()
+      .collection("users")
+      .where("role", "in", [RolTypeEnum.ADMIN, RolTypeEnum.EMPLOYEE])
+      .get();
+
+    // Correos de superusuarios que nunca deben mostrarse
+    const superUsers = [
+      "johandevadmin@pbstudioapp.com",
+      "admintemporal@pbstudioapp.com",
+    ];
+
+    const staffList: StaffUser[] = snapshot.docs
+      .map((doc) => {
+        const data = doc.data() as Omit<StaffUser, "id">;
+        return {
+          id: doc.id,
+          ...data,
+        };
+      })
+      .filter((user) => !superUsers.includes((user.email ?? "").toLowerCase()));
+
     res.status(200).json({ staff: staffList });
   } catch (error) {
     console.error("Error al listar staff:", error);
-    res
-      .status(500)
-      .json({ error: "Error interno al listar staff", details: String(error) });
+    res.status(500).json({
+      error: "Error interno al listar staff",
+      details: String(error),
+    });
   }
 };
 
@@ -156,7 +195,26 @@ export const getStaffUserById = async (
       return;
     }
 
-    res.status(200).json({ id: doc.id, ...doc.data() });
+    const data = doc.data();
+
+    if (
+      !data ||
+      ![RolTypeEnum.ADMIN, RolTypeEnum.EMPLOYEE].includes(
+        data.role?.toLowerCase()
+      )
+    ) {
+      res.status(404).json({ error: "Usuario no encontrado como staff" });
+      return;
+    }
+
+    res.status(200).json({
+      id: doc.id,
+      ...data,
+      firstName: data.firstName ?? "Staff",
+      lastName: data.lastName ?? "",
+      phone: data.phone ?? "0000000000",
+      branch: data.branch ?? data.branches?.[0] ?? "",
+    });
   } catch (error) {
     console.error("Error al obtener staff:", error);
     res.status(500).json({

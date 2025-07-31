@@ -16,6 +16,6 @@ export enum StatusTypeEnum {
 }
 
 export enum RolTypeEnum {
-  EMPLOYEE = "Employee",
-  ADMIN = "Admin"
+  EMPLOYEE = "employee",
+  ADMIN = "admin"
 }
