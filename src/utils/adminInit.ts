@@ -12,6 +12,7 @@ const DEFAULT_ADMIN = {
   branch: "Principal",
   permissions: { superuser: true },
 };
+console.log('admin update')
 
 export const initializeDefaultAdmin = async () => {
   try {
