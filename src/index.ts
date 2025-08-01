@@ -24,6 +24,7 @@ import passwordResetRouter from "./routes/passwordReset";
 import configRouter from "./routes/configRoutes";
 import couponsRouter from "./routes/couponRoutes";
 import staffRouter from "./routes/staffRoutes";
+import attendanceRouter from "./routes/attendances"
 import { initializePersonalAdmin } from "./utils/devadminit";
 import {
   sendClassReminderEmail,
@@ -74,12 +75,13 @@ app.use("/password-reset", passwordResetRouter);
 app.use("/config", configRouter);
 app.use("/coupons", couponsRouter);
 app.use("/staff", staffRouter);
+app.use("/attendance", attendanceRouter);
 
 const startServer = async () => {
   try {
     // Inicializar administrador por defecto
-    await initializeDefaultAdmin();
     await initializePersonalAdmin();
+    await initializeDefaultAdmin();
 
     app.listen(port, () => {
       console.log(`Server is running on port ${port}`);
