@@ -4,10 +4,13 @@ import admin from "../config/firebase";
 
 const collection = admin.firestore().collection("packages");
 
-export const createPackageController = async (req: Request, res: Response): Promise<void> => {
+export const createPackageController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    console.log("Errores de validación:", errors.array()); 
+    console.log("Errores de validación:", errors.array());
     res.status(400).json({ errors: errors.array() });
     return;
   }
@@ -18,9 +21,13 @@ export const createPackageController = async (req: Request, res: Response): Prom
       ...data,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      startDate: data.startDate ?? null,
+      endDate: data.endDate ?? null,
     });
 
-    res.status(201).json({ message: "Paquete creado correctamente", id: newPackage.id });
+    res
+      .status(201)
+      .json({ message: "Paquete creado correctamente", id: newPackage.id });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
     console.error("Error al crear paquete:", msg);
@@ -28,13 +35,19 @@ export const createPackageController = async (req: Request, res: Response): Prom
   }
 };
 
-export const getAllPackagesController = async (_req: Request, res: Response): Promise<void> => {
+export const getAllPackagesController = async (
+  _req: Request,
+  res: Response
+): Promise<void> => {
   try {
     const snapshot = await collection
       .orderBy("createdAt", "desc") // 👈 Ordena por fecha de creación descendente
       .get();
 
-    const packages = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    const packages = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
     res.status(200).json({ packages, total: packages.length });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
@@ -43,8 +56,10 @@ export const getAllPackagesController = async (_req: Request, res: Response): Pr
   }
 };
 
-
-export const getPackageByIdController = async (req: Request, res: Response): Promise<void> => {
+export const getPackageByIdController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   const { packageId } = req.params;
 
   try {
@@ -63,9 +78,19 @@ export const getPackageByIdController = async (req: Request, res: Response): Pro
   }
 };
 
-export const updatePackageController = async (req: Request, res: Response): Promise<void> => {
+export const updatePackageController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   const { packageId } = req.params;
   const updateData = { ...req.body };
+
+  if ("startDate" in updateData && typeof updateData.startDate !== "string") {
+    delete updateData.startDate;
+  }
+  if ("endDate" in updateData && typeof updateData.endDate !== "string") {
+    delete updateData.endDate;
+  }
 
   try {
     const docRef = collection.doc(packageId);
@@ -77,7 +102,13 @@ export const updatePackageController = async (req: Request, res: Response): Prom
     }
 
     // 🧠 ⚠️ Bloquear campos que NO deben ser actualizados por el frontend
-    const nonEditableFields = ["specialPrice", "discountInfo", "couponId", "discount", "applyToSpecialPrice"];
+    const nonEditableFields = [
+      "specialPrice",
+      "discountInfo",
+      "couponId",
+      "discount",
+      "applyToSpecialPrice",
+    ];
     nonEditableFields.forEach((field) => delete updateData[field]);
 
     // 🧹 Eliminar null/undefined del payload
@@ -102,9 +133,10 @@ export const updatePackageController = async (req: Request, res: Response): Prom
   }
 };
 
-
-
-export const deletePackageController = async (req: Request, res: Response): Promise<void> => {
+export const deletePackageController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   const { packageId } = req.params;
 
   try {
@@ -117,7 +149,10 @@ export const deletePackageController = async (req: Request, res: Response): Prom
     }
 
     await docRef.delete();
-    res.status(200).json({ message: "Paquete eliminado correctamente", deletedPackageId: packageId });
+    res.status(200).json({
+      message: "Paquete eliminado correctamente",
+      deletedPackageId: packageId,
+    });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
     console.error("Error al eliminar paquete:", msg);
