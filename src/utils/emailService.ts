@@ -34,7 +34,9 @@ export const sendPackagePurchaseEmail = async (
       })
     : "Sin vencimiento";
 
-  const formattedModality = modality ? modality.charAt(0).toUpperCase() + modality.slice(1) : packageName;
+  const formattedModality = modality
+    ? modality.charAt(0).toUpperCase() + modality.slice(1)
+    : packageName;
 
   try {
     await resend.emails.send({
@@ -56,7 +58,6 @@ export const sendPackagePurchaseEmail = async (
     console.error("Error enviando email de compra de paquete:", error);
   }
 };
-
 
 export const sendReservationConfirmationEmail = async (
   to: string,
@@ -142,7 +143,8 @@ export const sendClassReminderEmail = async (
 
 export const getAdminContactEmail = async (): Promise<string | null> => {
   try {
-    const doc = await admin.firestore()
+    const doc = await admin
+      .firestore()
       .collection("configurations")
       .doc("general_settings")
       .get();
@@ -154,7 +156,6 @@ export const getAdminContactEmail = async (): Promise<string | null> => {
     return null;
   }
 };
-
 
 export const sendContactNotificationEmail = async (payload: {
   name: string;
@@ -206,7 +207,7 @@ export const sendContactAutoReplyEmail = async (payload: {
     `,
   });
 };
-// Restablecer password 
+// Restablecer password
 
 /* Envía un código de 6 dígitos para restablecer contraseña */
 export const sendPasswordResetCodeEmail = async (
@@ -225,4 +226,99 @@ export const sendPasswordResetCodeEmail = async (
       <p>Caduca en 2&nbsp;horas. Si no pediste este código, ignora este correo.</p>
     `,
   });
+};
+
+async function getClassInfo(classId: string) {
+  const doc = await admin.firestore().collection("classes").doc(classId).get();
+  if (!doc.exists) throw new Error("Clase no encontrada para email");
+  const { discipline, day, hour } = doc.data() as {
+    discipline: string;
+    day: string;
+    hour: string;
+  };
+  const dateStr = new Date(`${day}T00:00:00`).toLocaleDateString("es-CO", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+  return { discipline, dateStr, hour };
+}
+
+/**
+ * Al entrar en lista de espera.
+ */
+export const sendWaitlistEntryEmail = async (
+  to: string,
+  name: string,
+  classId: string
+) => {
+  try {
+    const { discipline, dateStr, hour } = await getClassInfo(classId);
+    await resend.emails.send({
+      from: FROM,
+      to,
+      subject: "Estás en la lista de espera",
+      html: `
+        <p>Hola ${name},</p>
+        <p>Has ingresado en la lista de espera para la clase <strong>${discipline}</strong> el ${dateStr} a las ${hour}.</p>
+        <p>Te notificaremos tan pronto como se libere un cupo. ¡Gracias por tu paciencia!</p>
+      `,
+    });
+  } catch (error) {
+    console.error("Error enviando email de lista de espera:", error);
+  }
+};
+
+/**
+ * Cuando se libera un cupo y aceptamos al usuario.
+ */
+export const sendWaitlistAcceptedEmail = async (
+  to: string,
+  name: string,
+  classId: string
+) => {
+  try {
+    const { discipline, dateStr, hour } = await getClassInfo(classId);
+    await resend.emails.send({
+      from: FROM,
+      to,
+      subject: "¡Cupo disponible en tu lista de espera!",
+      html: `
+        <p>Hola ${name},</p>
+        <p>¡Buenas noticias! Se ha liberado un cupo para la clase <strong>${discipline}</strong> el ${dateStr} a las ${hour}.</p>
+        <p>Tu reserva ha sido creada automáticamente. ¡Nos vemos en clase!</p>
+      `,
+    });
+  } catch (error) {
+    console.error(
+      "Error enviando email de aceptación de lista de espera:",
+      error
+    );
+  }
+};
+
+/**
+ * Cuando la ventana de espera finaliza sin cupo.
+ */
+export const sendWaitlistRejectedEmail = async (
+  to: string,
+  name: string,
+  classId: string
+) => {
+  try {
+    const { discipline, dateStr, hour } = await getClassInfo(classId);
+    await resend.emails.send({
+      from: FROM,
+      to,
+      subject: "Tu solicitud en lista de espera ha finalizado",
+      html: `
+        <p>Hola ${name},</p>
+        <p>Lamentablemente no se liberó ningún cupo para la clase <strong>${discipline}</strong> el ${dateStr} a las ${hour}.</p>
+        <p>Tu solicitud ha sido rechazada, pero podrás intentarlo de nuevo en futuras ocasiones.</p>
+      `,
+    });
+  } catch (error) {
+    console.error("Error enviando email de rechazo de lista de espera:", error);
+  }
 };

@@ -24,12 +24,20 @@ import passwordResetRouter from "./routes/passwordReset";
 import configRouter from "./routes/configRoutes";
 import couponsRouter from "./routes/couponRoutes";
 import staffRouter from "./routes/staffRoutes";
-import attendanceRouter from "./routes/attendances"
+import attendanceRouter from "./routes/attendances";
+import waitListRouter from "./routes/waitlist";
 import { initializePersonalAdmin } from "./utils/devadminit";
 import {
   sendClassReminderEmail,
   sendPackageExpiryWarningEmail,
+  sendWaitlistRejectedEmail,
 } from "./utils/emailService";
+
+const db = admin.firestore();
+const { increment } = admin.firestore.FieldValue;
+const waitlistsCol = db.collection("waitlists");
+const classesCol = db.collection("classes");
+const usersCol = db.collection("users");
 
 dotenv.config();
 
@@ -76,6 +84,7 @@ app.use("/config", configRouter);
 app.use("/coupons", couponsRouter);
 app.use("/staff", staffRouter);
 app.use("/attendance", attendanceRouter);
+app.use("/waitlist", waitListRouter);
 
 const startServer = async () => {
   try {
@@ -348,5 +357,96 @@ cron.schedule("30 8 * * *", async () => {
     await Promise.all(updatePromises);
   } catch (err) {
     console.error("❌ Error en el CRON de expiración de paquetes:", err);
+  }
+});
+
+/* ────────────────────────────────────────────────────────────────
+   CRON 5: Devolver crédito de waitlist expiradas
+   Cada hora en horario 06:00–20:00
+──────────────────────────────────────────────────────────────── */
+cron.schedule("0 * * * *", async () => {
+  try {
+    const now = DateTime.now().setZone("America/Mexico_City");
+    const { hour } = now;
+    if (hour < 6 || hour > 20) return; // sólo entre 06:00 y 20:00
+
+    const todayStr = now.toISODate()!; // "YYYY-MM-DD"
+    const currentTime = now.toFormat("HH:mm");
+
+    // 1) Traer todas las waitlists pendientes
+    const snap = await waitlistsCol.where("status", "==", "pending").get();
+    if (snap.empty) return;
+
+    const batch = db.batch();
+    let processed = 0;
+
+    // 2) Para cada entrada, comprobar si la clase ya empezó
+    await Promise.all(
+      snap.docs.map(async (waitDoc) => {
+        const { classId, userId } = waitDoc.data() as {
+          classId: string;
+          userId: string;
+          createdAt: string;
+        };
+
+        const classSnap = await classesCol.doc(classId).get();
+        if (!classSnap.exists) return;
+
+        const { day, hour: clsHour } = classSnap.data() as {
+          day: string;
+          hour: string;
+        };
+        const classStarted =
+          day < todayStr || (day === todayStr && clsHour <= currentTime);
+
+        if (!classStarted) return;
+
+        // 3) Cargar usuario y revertir crédito si no es ilimitado
+        const userRef = usersCol.doc(userId);
+        const userSnap = await userRef.get();
+        if (!userSnap.exists) return;
+
+        // Sólo tomamos paquetes; no necesitamos userClasses
+        const { packages: userPkgs } = userSnap.data() as {
+          packages?: Array<{
+            active: boolean;
+            isUnlimited: boolean;
+            expiresAt?: string;
+          }>;
+        };
+
+        const hasUnlimited = (userPkgs ?? []).some(
+          ({ active, isUnlimited, expiresAt }) =>
+            active &&
+            isUnlimited &&
+            (!expiresAt || new Date(expiresAt) > now.toJSDate())
+        );
+
+        if (!hasUnlimited) {
+          batch.update(userRef, {
+            "classes.available": increment(1),
+            "classes.taken": increment(-1),
+          });
+        }
+
+        // 4) Marcar waitlist como rechazada
+        batch.update(waitDoc.ref, { status: "rejected" });
+        processed += 1;
+
+        // 5) Enviar email de rechazo (no bloquea el batch)
+        const { email, firstName } = userSnap.data()!;
+        await sendWaitlistRejectedEmail(email, firstName, classId);
+      })
+    );
+
+    // 6) Commit de los cambios de una sola vez
+    if (processed > 0) {
+      await batch.commit();
+      console.log(
+        `🔄 Devolvieron crédito y rechazaron ${processed} waitlists expiradas.`
+      );
+    }
+  } catch (err) {
+    console.error("❌ Error en el CRON de expiración de waitlists:", err);
   }
 });
