@@ -290,3 +290,46 @@ export const getUserTransactionsController = async (
     res.status(500).json({ error: "Error al obtener transacciones" });
   }
 };
+
+/**
+ * 3) Cambiar estado de una transacción
+ */
+export const updateTransactionStatusController = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    // Esperamos un body { status: "paid" | "pending" | "rejected" }
+    const { status } = req.body as { status: TransactionStatus };
+
+    // 1) Validar status
+    const validStatuses: TransactionStatus[] = ["paid", "pending", "rejected"];
+    if (!validStatuses.includes(status)) {
+      res.status(400).json({ error: "Estado inválido" });
+      return;
+    }
+
+    const db = admin.firestore();
+    const txRef = db.collection("transactions").doc(id);
+    const txSnap = await txRef.get();
+
+    // 2) Verificar que exista
+    if (!txSnap.exists) {
+      res.status(404).json({ error: "Transacción no encontrada" });
+      return;
+    }
+
+    // 3) Actualizar el campo `status`
+    await txRef.update({ status });
+
+    res
+      .status(200)
+      .json({ message: `Transacción ${id} actualizada a '${status}'` });
+  } catch (err) {
+    console.error("❌ Error actualizando transacción:", err);
+    res
+      .status(500)
+      .json({ error: "Error interno al actualizar la transacción" });
+  }
+};

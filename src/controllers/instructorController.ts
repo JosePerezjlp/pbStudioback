@@ -4,6 +4,12 @@ import multer from "multer";
 import { uploadToFirebase } from "../utils/uploadToFirebase";
 import admin from "../config/firebase";
 
+interface UpdateInstructorBody {
+  branch?: string;
+  disciplines?: string | string[];
+  [key: string]: unknown; 
+}
+
 const deleteFromFirebase = async (url: string) => {
   try {
     const bucket = admin.storage().bucket();
@@ -33,6 +39,7 @@ export const createInstructorController = [
         description,
         joinDate,
         enabled = true,
+        branch,
       } = req.body;
 
       const userRecord = await admin.auth().createUser({ email, password });
@@ -74,10 +81,10 @@ export const createInstructorController = [
           joinDate,
           disciplines: disciplinesParsed,
           enabled,
+          branch,
           image: imageUrl,
           registrationDate: new Date().toISOString(),
           createdAt: new Date().toISOString(),
-
         });
 
       res.status(201).json({
@@ -165,14 +172,14 @@ export const updateInstructorController = [
         return;
       }
 
-      const updateData = { ...req.body };
-      delete updateData.password;
+      // Tipamos req.body
+      const body = req.body as UpdateInstructorBody;
+      const { branch, disciplines: rawDisciplines, ...restFields } = body;
 
-      const rawDisciplines: unknown = updateData.disciplines;
+      // Parseo de disciplinas
       let disciplinesParsed: string[] = [];
-
       if (Array.isArray(rawDisciplines)) {
-        disciplinesParsed = rawDisciplines as string[];
+        disciplinesParsed = rawDisciplines;
       } else if (typeof rawDisciplines === "string") {
         try {
           disciplinesParsed = JSON.parse(rawDisciplines);
@@ -181,10 +188,16 @@ export const updateInstructorController = [
         }
       }
 
-      updateData.disciplines = disciplinesParsed;
+      // Construcción del objeto de actualización
+      const updateData: Record<string, unknown> = {
+        ...restFields,
+        branch,
+        disciplines: disciplinesParsed,
+      };
 
+      // Imagen (si existe)
       if (req.file) {
-        const oldUrl = doc.data()?.image;
+        const oldUrl = doc.data()?.image as string | undefined;
         const newUrl = await uploadToFirebase(
           req.file,
           `instructor/${instructorId}`
@@ -195,10 +208,12 @@ export const updateInstructorController = [
         }
       }
 
+      // Aplicar cambios
       await ref.update(updateData);
 
       res.status(200).json({ message: "Instructor actualizado correctamente" });
     } catch (error) {
+      console.error("Error al actualizar instructor:", error);
       res
         .status(500)
         .json({ error: "Error al actualizar instructor", details: error });

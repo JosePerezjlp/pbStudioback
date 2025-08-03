@@ -4,6 +4,7 @@ import {
   createCashTransactionController,
   getAllTransactionsController,
   getUserTransactionsController,
+  updateTransactionStatusController,
 } from "../controllers/transactionController";
 
 const router = express.Router();
@@ -12,5 +13,6 @@ const router = express.Router();
 router.post("/cash", verifyToken, createCashTransactionController);
 router.get("/", verifyToken, getAllTransactionsController);
 router.get("/user/:userId", verifyToken, getUserTransactionsController);
+router.patch("/:id", verifyToken, updateTransactionStatusController);
 
 export default router;
