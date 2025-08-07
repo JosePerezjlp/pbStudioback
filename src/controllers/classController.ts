@@ -1,5 +1,34 @@
 import { Request, Response } from "express";
 import admin from "../config/firebase";
+import {getRoomTypeById } from "../utils/getRoomType";
+
+type ClassType = "groups" | "individual";
+
+interface ClassDoc {
+  day: string;
+  hour: string;
+  branch: string;
+  room: string;
+  discipline: string;
+  instructor: string;
+  info: string;
+  capacity: number;
+  occupied: number;
+  status: "abierta" | "cerrada";
+  createdAt?: string;
+  type?: ClassType;
+}
+
+const parseNumberOrFail = (value: unknown): number => {
+  const n = Number(value);
+  if (Number.isNaN(n)) {
+    throw new Error("INVALID_NUMBER");
+  }
+  return n;
+};
+
+const asStringOrUndefined = (value: unknown): string | undefined =>
+  typeof value === "string" ? value : undefined;
 
 // CREA UNA CLASE, VERIFICANDO DUPLICADOS
 export const createClassController = async (
@@ -11,7 +40,7 @@ export const createClassController = async (
       day,
       hour,
       branch,
-      room,
+      room,         // ← ID del salón
       discipline,
       instructor,
       info,
@@ -22,20 +51,19 @@ export const createClassController = async (
 
     const parsedCapacity = Number(capacity);
     const parsedOccupied = Number(occupied);
-
     if (Number.isNaN(parsedCapacity) || Number.isNaN(parsedOccupied)) {
       res.status(400).json({ error: "Los campos numéricos no son válidos" });
       return;
     }
 
-    // Verificar que no exista una clase con la misma sede, día, hora y salón
+    // Evitar duplicados
     const conflictQuery = await admin
       .firestore()
       .collection("classes")
       .where("day", "==", day)
       .where("hour", "==", hour)
       .where("branch", "==", branch)
-      .where("room", "==", room)
+      .where("room", "==", room) // ← seguimos guardando el ID
       .get();
 
     if (!conflictQuery.empty) {
@@ -46,17 +74,21 @@ export const createClassController = async (
       return;
     }
 
+    // Obtener type desde el salón por ID
+    const roomType = (await getRoomTypeById(String(room))) ?? "individual";
+
     const ref = await admin.firestore().collection("classes").add({
       day,
       hour,
       branch,
-      room,
+      room, // id del salón
       discipline,
       instructor,
       info,
       capacity: parsedCapacity,
       occupied: parsedOccupied,
       status,
+      type: roomType, // ← se guarda el tipo
       createdAt: new Date().toISOString(),
     });
 
@@ -118,44 +150,86 @@ export const updateClassController = async (
   res: Response
 ): Promise<void> => {
   const { classId } = req.params;
+
   try {
     const ref = admin.firestore().collection("classes").doc(classId);
-    const doc = await ref.get();
+    const snap = await ref.get();
 
-    if (!doc.exists) {
+    if (!snap.exists) {
       res.status(404).json({ error: "Clase no encontrada" });
       return;
     }
 
-    const updateData = { ...req.body };
-    if ("capacity" in updateData) {
-      updateData.capacity = Number(updateData.capacity);
-    }
-    if ("occupied" in updateData) {
-      updateData.occupied = Number(updateData.occupied);
+    const current = snap.data() as ClassDoc | undefined;
+    if (!current) {
+      res.status(500).json({ error: "Documento de clase inválido" });
+      return;
     }
 
-    // Solo chequeamos conflicto si se va a modificar alguno de los campos clave
-    if (
-      updateData.day ||
-      updateData.hour ||
-      updateData.branch ||
-      updateData.room
-    ) {
-      // Toma los nuevos valores, o los originales si no cambiaron
-      const dayToCheck = updateData.day ?? doc.data()?.day;
-      const hourToCheck = updateData.hour ?? doc.data()?.hour;
-      const branchToCheck = updateData.branch ?? doc.data()?.branch;
-      const roomToCheck = updateData.room ?? doc.data()?.room;
+    const body = req.body as Record<string, unknown>;
+    const updateData: Partial<ClassDoc> = {};
 
-      // Busca clases distintas a esta, pero con mismos valores clave
+    // Strings
+    const dayBody = asStringOrUndefined(body.day);
+    const hourBody = asStringOrUndefined(body.hour);
+    const branchBody = asStringOrUndefined(body.branch);
+    const roomBody = asStringOrUndefined(body.room); // ID del salón
+    const disciplineBody = asStringOrUndefined(body.discipline);
+    const instructorBody = asStringOrUndefined(body.instructor);
+    const infoBody = asStringOrUndefined(body.info);
+
+    if (dayBody !== undefined) updateData.day = dayBody;
+    if (hourBody !== undefined) updateData.hour = hourBody;
+    if (branchBody !== undefined) updateData.branch = branchBody;
+    if (roomBody !== undefined) updateData.room = roomBody;
+    if (disciplineBody !== undefined) updateData.discipline = disciplineBody;
+    if (instructorBody !== undefined) updateData.instructor = instructorBody;
+    if (infoBody !== undefined) updateData.info = infoBody;
+
+    // Status
+    if (body.status === "abierta" || body.status === "cerrada") {
+      updateData.status = body.status;
+    }
+
+    // Numéricos
+    if (body.capacity !== undefined) {
+      try {
+        updateData.capacity = parseNumberOrFail(body.capacity);
+      } catch {
+        res.status(400).json({ error: "capacity no es un número válido" });
+        return;
+      }
+    }
+    if (body.occupied !== undefined) {
+      try {
+        updateData.occupied = parseNumberOrFail(body.occupied);
+      } catch {
+        res.status(400).json({ error: "occupied no es un número válido" });
+        return;
+      }
+    }
+
+    // ¿Cambian campos clave?
+    const willChangeKeyFields =
+      dayBody !== undefined ||
+      hourBody !== undefined ||
+      branchBody !== undefined ||
+      roomBody !== undefined;
+
+    const dayToCheck = updateData.day ?? current.day;
+    const hourToCheck = updateData.hour ?? current.hour;
+    const branchToUse = updateData.branch ?? current.branch;
+    const roomToUse = updateData.room ?? current.room; // ID del salón
+
+    if (willChangeKeyFields) {
+      // Chequeo de conflicto
       const conflictQuery = await admin
         .firestore()
         .collection("classes")
         .where("day", "==", dayToCheck)
         .where("hour", "==", hourToCheck)
-        .where("branch", "==", branchToCheck)
-        .where("room", "==", roomToCheck)
+        .where("branch", "==", branchToUse)
+        .where("room", "==", roomToUse)
         .get();
 
       const conflict = conflictQuery.docs.find((d) => d.id !== classId);
@@ -168,12 +242,28 @@ export const updateClassController = async (
       }
     }
 
+    // Si cambió room o branch, recalcular type desde el salón por ID
+    if (branchBody !== undefined || roomBody !== undefined) {
+      const resolvedType =
+        (await getRoomTypeById(roomToUse)) ??
+        current.type ??
+        "individual";
+      updateData.type = resolvedType;
+    }
+
+    // Ignoramos 'type' si viene del cliente: lo calculamos nosotros
+    if ("type" in body) {
+      // no hacemos nada; simplemente no lo copiamos a updateData
+    }
+
     await ref.update(updateData);
     res.status(200).json({ message: "Clase actualizada correctamente" });
   } catch (error) {
-    res
-      .status(500)
-      .json({ error: "Error al actualizar clase", details: error });
+    console.error("Error al actualizar clase:", error);
+    res.status(500).json({
+      error: "Error al actualizar clase",
+      details: error instanceof Error ? error.message : String(error),
+    });
   }
 };
 
