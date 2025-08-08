@@ -4,6 +4,159 @@ import { validationResult } from "express-validator";
 import admin from "../config/firebase";
 import { sendWelcomeEmail } from "../utils/emailService";
 
+export const completeProfileFromAuthController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  // Helper local para extraer Bearer token
+  const getBearer = (r: Request): string | null => {
+    const h = r.headers.authorization || "";
+    const m = h.match(/^Bearer\s+(.+)$/i);
+    return m ? m[1] : null;
+  };
+
+  try {
+    // 1) Verificar ID token -> obtener uid y email confiables
+    const idToken = getBearer(req);
+    if (!idToken) {
+      res
+        .status(401)
+        .json({
+          error: "UNAUTHORIZED",
+          message: "Falta Authorization Bearer token",
+        });
+      return;
+    }
+
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    const { uid } = decoded;
+    const emailFromToken = decoded.email ?? "";
+
+    if (!uid || !emailFromToken) {
+      res
+        .status(401)
+        .json({ error: "UNAUTHORIZED", message: "Token inválido" });
+      return;
+    }
+
+    // 2) Body de perfil
+    const {
+      firstName,
+      lastName,
+      phone = "",
+      branch = "",
+      birthDate = "",
+      emergencyContact,
+      password, // opcional: si llega, se configura en Auth
+      // enabled, // ignorado si llega: no lo forzamos desde cliente
+      // freeSession, // ignorado si llega: no lo forzamos desde cliente
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      email, // si llega en el body se ignora; usamos el del token
+    } = req.body as {
+      firstName: string;
+      lastName: string;
+      phone?: string;
+      branch?: string;
+      birthDate?: string;
+      emergencyContact?: { name?: string | null; phone?: string | null } | null;
+      password?: string;
+      enabled?: unknown;
+      freeSession?: unknown;
+      email?: string;
+    };
+
+    if (!firstName || !lastName) {
+      res.status(400).json({
+        error: "VALIDATION_ERROR",
+        message: "firstName y lastName son requeridos",
+      });
+      return;
+    }
+
+    // 3) Upsert en Firestore (users/{uid})
+    const db = admin.firestore();
+    const userRef = db.collection("users").doc(uid);
+    const snap = await userRef.get();
+    const nowIso = new Date().toISOString();
+
+    const baseDoc = {
+      firstName,
+      lastName,
+      email: emailFromToken,
+      phone,
+      branch,
+      role: "user" as const,
+      isAdmin: false,
+      birthDate: birthDate || null,
+      emergencyContact: {
+        name: emergencyContact?.name ?? null,
+        phone: emergencyContact?.phone ?? null,
+      },
+    };
+
+    if (!snap.exists) {
+      // Crear doc inicial con estructuras por defecto
+      await userRef.set({
+        ...baseDoc,
+        isNew: true,
+        enabled: true,
+        freeSession: false,
+        registrationDate: nowIso,
+        createdAt: nowIso,
+        packages: [],
+        transactions: [],
+        waitlist: { inList: false, position: null },
+        classes: { total: 0, available: 0, taken: 0 },
+      });
+      // (Opcional) correo de bienvenida
+      try {
+        await sendWelcomeEmail(emailFromToken, firstName);
+      } catch (emailErr) {
+        // eslint-disable-next-line no-console
+        console.error("No se pudo enviar el correo de bienvenida:", emailErr);
+      }
+    } else {
+      // Actualizar solo campos de perfil
+      await userRef.update({
+        ...baseDoc,
+        updatedAt: nowIso,
+      });
+    }
+
+    // 4) Si viene password, habilitar login por email+password para ESTE uid
+    if (typeof password === "string" && password.trim()) {
+      // Firebase valida políticas de contraseña; si no cumple, lanzará error
+      await admin.auth().updateUser(uid, { password: password.trim() });
+      // Si quieres marcar verificado (normalmente Google ya lo está):
+      // await admin.auth().updateUser(uid, { emailVerified: true });
+    }
+
+    // 5) Responder con el doc fresco
+    const fresh = await userRef.get();
+    res.status(200).json({ id: uid, uid, ...fresh.data() });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("completeProfileFromAuthController error:", err);
+
+    // Mapear algunos errores comunes de Auth
+    let status = 500;
+    let code = "INTERNAL_ERROR";
+    let message =
+      err instanceof Error ? err.message : "Error al completar el perfil";
+
+    if (typeof err === "object" && err && "code" in err) {
+      const fbErr = err as { code?: string; message?: string };
+      if (fbErr.code?.startsWith("auth/")) {
+        status = 400;
+        code = fbErr.code.toUpperCase().replace(/\//g, "_");
+        message = fbErr.message || message;
+      }
+    }
+
+    res.status(status).json({ error: code, message });
+  }
+};
+
 export const userController = async (
   req: Request,
   res: Response

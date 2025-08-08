@@ -1,5 +1,5 @@
-// src/services/packageSelection.ts
-export type ClassType = "groups" | "individual";
+// src/utils/packageSelection.ts
+import { ClassType } from "../types/enums";
 
 export interface UserPackage {
   id: string;
@@ -7,7 +7,8 @@ export interface UserPackage {
   totalClasses: number;
   classesUsed: number;
   isUnlimited: boolean;
-  type: string;            // "Grupal" | "Individual" | "groups" | "individual"
+  /** Debe ser EXACTAMENTE "groups" o "individual" */
+  type: ClassType | string;
   assignedAt?: string;
   expiresAt?: string | null;
   modality?: string;
@@ -15,8 +16,8 @@ export interface UserPackage {
 
 export const normalizeClassType = (raw?: string): ClassType | null => {
   const t = (raw ?? "").trim().toLowerCase();
-  if (t === "groups" || t === "group" || t.includes("grup")) return "groups";
-  if (t === "individual" || t === "solo") return "individual";
+  if (t === ClassType.GROUPS) return ClassType.GROUPS;
+  if (t === ClassType.INDIVIDUAL) return ClassType.INDIVIDUAL;
   return null;
 };
 
@@ -26,8 +27,22 @@ const isExpired = (iso?: string | null): boolean => {
   return Number.isFinite(ts) && ts < Date.now();
 };
 
-/** Elige paquete por modalidad, no vencido, con cupo o ilimitado.
- *  Prioriza: finitos que vencen antes; luego por asignación más antigua; ilimitados al final. */
+export const isActiveUnlimited = (p: UserPackage): boolean => {
+  if (!p.active || !p.isUnlimited) return false;
+  if (!p.expiresAt) return true;
+  return new Date(p.expiresAt).getTime() > Date.now();
+};
+
+/** Selecciona un paquete que:
+ *   - esté activo
+ *   - no esté vencido
+ *   - coincida con la modalidad EXACTA
+ *   - tenga cupo o sea ilimitado
+ * Prioridad:
+ *   1) finitos que vencen antes
+ *   2) luego por assignedAt más antiguo
+ *   3) ilimitados al final (entre ellos por assignedAt)
+ */
 export const selectPackageForClass = (
   packages: UserPackage[],
   classType: ClassType
@@ -35,17 +50,21 @@ export const selectPackageForClass = (
   const candidates = packages
     .map((p, index) => ({ index, pkg: p }))
     .filter(({ pkg }) => pkg.active && !isExpired(pkg.expiresAt))
-    .filter(({ pkg }) => normalizeClassType(pkg.type) === classType)
-    .filter(({ pkg }) => pkg.isUnlimited || pkg.classesUsed < pkg.totalClasses);
+    .filter(({ pkg }) => normalizeClassType(String(pkg.type)) === classType)
+    .filter(
+      ({ pkg }) => pkg.isUnlimited || (pkg.classesUsed ?? 0) < (pkg.totalClasses ?? 0)
+    );
 
   if (candidates.length === 0) return null;
 
   candidates.sort((a, b) => {
     if (a.pkg.isUnlimited && !b.pkg.isUnlimited) return 1;
     if (!a.pkg.isUnlimited && b.pkg.isUnlimited) return -1;
+
     const aExp = a.pkg.expiresAt ? new Date(a.pkg.expiresAt).getTime() : Infinity;
     const bExp = b.pkg.expiresAt ? new Date(b.pkg.expiresAt).getTime() : Infinity;
     if (aExp !== bExp) return aExp - bExp;
+
     const aAss = a.pkg.assignedAt ? new Date(a.pkg.assignedAt).getTime() : 0;
     const bAss = b.pkg.assignedAt ? new Date(b.pkg.assignedAt).getTime() : 0;
     return aAss - bAss;

@@ -1,14 +1,14 @@
+// src/controllers/classController.ts
 import { Request, Response } from "express";
 import admin from "../config/firebase";
-import {getRoomTypeById } from "../utils/getRoomType";
-
-type ClassType = "groups" | "individual";
+import { ClassType } from "../types/enums";
+import { getRoomTypeById } from "../utils/getRoomType";
 
 interface ClassDoc {
   day: string;
   hour: string;
   branch: string;
-  room: string;
+  room: string; // ID del salón
   discipline: string;
   instructor: string;
   info: string;
@@ -16,7 +16,8 @@ interface ClassDoc {
   occupied: number;
   status: "abierta" | "cerrada";
   createdAt?: string;
-  type?: ClassType;
+  updatedAt?: string;
+  type?: ClassType; // enum estricto
 }
 
 const parseNumberOrFail = (value: unknown): number => {
@@ -30,7 +31,9 @@ const parseNumberOrFail = (value: unknown): number => {
 const asStringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" ? value : undefined;
 
-// CREA UNA CLASE, VERIFICANDO DUPLICADOS
+/* ============================================================
+   CREATE – crea clase usando type del salón (enum)
+   ============================================================ */
 export const createClassController = async (
   req: Request,
   res: Response
@@ -40,30 +43,34 @@ export const createClassController = async (
       day,
       hour,
       branch,
-      room,         // ← ID del salón
+      room, // ID del salón
       discipline,
       instructor,
       info,
       capacity,
       occupied,
       status = "abierta",
-    } = req.body;
+    } = req.body as Record<string, unknown>;
 
-    const parsedCapacity = Number(capacity);
-    const parsedOccupied = Number(occupied);
-    if (Number.isNaN(parsedCapacity) || Number.isNaN(parsedOccupied)) {
+    // Números válidos
+    let parsedCapacity: number;
+    let parsedOccupied: number;
+    try {
+      parsedCapacity = parseNumberOrFail(capacity);
+      parsedOccupied = parseNumberOrFail(occupied);
+    } catch {
       res.status(400).json({ error: "Los campos numéricos no son válidos" });
       return;
     }
 
-    // Evitar duplicados
+    // Evitar duplicados (mismo día/hora/sede/salón)
     const conflictQuery = await admin
       .firestore()
       .collection("classes")
       .where("day", "==", day)
       .where("hour", "==", hour)
       .where("branch", "==", branch)
-      .where("room", "==", room) // ← seguimos guardando el ID
+      .where("room", "==", room)
       .get();
 
     if (!conflictQuery.empty) {
@@ -74,21 +81,22 @@ export const createClassController = async (
       return;
     }
 
-    // Obtener type desde el salón por ID
-    const roomType = (await getRoomTypeById(String(room))) ?? "individual";
+    // Obtener tipo desde el salón, con fallback al enum
+    const roomType =
+      (await getRoomTypeById(String(room))) ?? ClassType.INDIVIDUAL;
 
     const ref = await admin.firestore().collection("classes").add({
       day,
       hour,
       branch,
-      room, // id del salón
+      room,
       discipline,
       instructor,
       info,
       capacity: parsedCapacity,
       occupied: parsedOccupied,
       status,
-      type: roomType, // ← se guarda el tipo
+      type: roomType, // enum
       createdAt: new Date().toISOString(),
     });
 
@@ -102,7 +110,9 @@ export const createClassController = async (
   }
 };
 
-// LISTA TODAS LAS CLASES
+/* ============================================================
+   LIST – todas las clases
+   ============================================================ */
 export const getAllClassesController = async (_req: Request, res: Response) => {
   try {
     const snapshot = await admin
@@ -110,17 +120,23 @@ export const getAllClassesController = async (_req: Request, res: Response) => {
       .collection("classes")
       .orderBy("createdAt", "desc")
       .get();
+
     const classes = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
+
     res.status(200).json({ classes });
   } catch (error) {
-    res.status(500).json({ error: "Error al obtener clases", details: error });
+    res
+      .status(500)
+      .json({ error: "Error al obtener clases", details: String(error) });
   }
 };
 
-// OBTIENE UNA CLASE POR ID
+/* ============================================================
+   GET ONE – clase por id
+   ============================================================ */
 export const getClassByIdController = async (
   req: Request,
   res: Response
@@ -140,11 +156,15 @@ export const getClassByIdController = async (
 
     res.status(200).json({ id: doc.id, ...doc.data() });
   } catch (error) {
-    res.status(500).json({ error: "Error al obtener clase", details: error });
+    res
+      .status(500)
+      .json({ error: "Error al obtener clase", details: String(error) });
   }
 };
 
-// ACTUALIZA UNA CLASE, VERIFICANDO DUPLICADOS
+/* ============================================================
+   UPDATE – recalcula type (enum) si cambia room/branch
+   ============================================================ */
 export const updateClassController = async (
   req: Request,
   res: Response
@@ -219,7 +239,7 @@ export const updateClassController = async (
     const dayToCheck = updateData.day ?? current.day;
     const hourToCheck = updateData.hour ?? current.hour;
     const branchToUse = updateData.branch ?? current.branch;
-    const roomToUse = updateData.room ?? current.room; // ID del salón
+    const roomToUse = updateData.room ?? current.room;
 
     if (willChangeKeyFields) {
       // Chequeo de conflicto
@@ -242,19 +262,21 @@ export const updateClassController = async (
       }
     }
 
-    // Si cambió room o branch, recalcular type desde el salón por ID
+    // Si cambió room o branch, recalcular type desde el salón (enum)
     if (branchBody !== undefined || roomBody !== undefined) {
       const resolvedType =
         (await getRoomTypeById(roomToUse)) ??
         current.type ??
-        "individual";
+        ClassType.INDIVIDUAL;
       updateData.type = resolvedType;
     }
 
-    // Ignoramos 'type' si viene del cliente: lo calculamos nosotros
+    // Ignoramos 'type' si viene del cliente (lo calculamos nosotros)
     if ("type" in body) {
-      // no hacemos nada; simplemente no lo copiamos a updateData
+      // noop
     }
+
+    updateData.updatedAt = new Date().toISOString();
 
     await ref.update(updateData);
     res.status(200).json({ message: "Clase actualizada correctamente" });
@@ -267,7 +289,9 @@ export const updateClassController = async (
   }
 };
 
-// ELIMINA UNA CLASE
+/* ============================================================
+   DELETE – elimina clase
+   ============================================================ */
 export const deleteClassController = async (
   req: Request,
   res: Response
@@ -285,6 +309,8 @@ export const deleteClassController = async (
     await ref.delete();
     res.status(200).json({ message: "Clase eliminada correctamente" });
   } catch (error) {
-    res.status(500).json({ error: "Error al eliminar clase", details: error });
+    res
+      .status(500)
+      .json({ error: "Error al eliminar clase", details: String(error) });
   }
 };

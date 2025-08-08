@@ -1,16 +1,15 @@
 // src/controllers/waitlistController.ts
 import { Request, Response } from "express";
 import admin from "../config/firebase";
-import { ERROR_CODES } from "../types/enums";
+import { ERROR_CODES, ClassType } from "../types/enums";
 import {
   sendWaitlistEntryEmail,
   sendWaitlistAcceptedEmail,
   sendWaitlistRejectedEmail,
 } from "../utils/emailService";
 import {
-  ClassType,
-  normalizeClassType,
   selectPackageForClass,
+  normalizeClassType, // ← usa enum
   UserPackage,
 } from "../utils/packageSelection";
 
@@ -27,7 +26,6 @@ interface WaitlistDoc {
   classId: string;
   status: WaitlistStatus;
   createdAt: string;
-  // Nuevos campos para “captura”:
   consumedClass?: boolean;
   packageId?: string | null;
 }
@@ -46,12 +44,12 @@ interface UserDoc {
 }
 
 interface ClassDoc {
-  day: string;        // "YYYY-MM-DD"
-  hour: string;       // "HH:mm"
+  day: string; // "YYYY-MM-DD"
+  hour: string; // "HH:mm"
   capacity: number;
   occupied: number;
   discipline: string;
-  type?: string;      // "groups" | "individual" (o variantes)
+  type?: ClassType | string; // ← enum o string viejo
 }
 
 interface ReservationDoc {
@@ -60,8 +58,8 @@ interface ReservationDoc {
   classId: string;
   seat: number | null;
   status: "active" | "cancelled";
-  classDay: string;   // "YYYY-MM-DD"
-  createdAt: string;  // ISO
+  classDay: string; // "YYYY-MM-DD"
+  createdAt: string; // ISO
   consumedClass: boolean;
   packageId?: string | null;
 }
@@ -72,9 +70,9 @@ const isActiveUnlimited = (p: UserPackage): boolean => {
   return new Date(p.expiresAt) > new Date();
 };
 
-/**
- * 1) Entrar en lista de espera (captura clase si NO es ilimitado)
- */
+/* ===============================================================
+   1) Crear entrada en waitlist (captura clase si NO es ilimitado)
+   =============================================================== */
 export const createWaitlistController = async (
   req: Request,
   res: Response
@@ -83,7 +81,6 @@ export const createWaitlistController = async (
     const { userId, classId } = req.body as { userId: string; classId: string };
 
     const newId = await db.runTransaction(async (t) => {
-      // Usuario y clase
       const userRef = usersCol.doc(userId);
       const classRef = classesCol.doc(classId);
       const [userSnap, classSnap] = await t.getAll(userRef, classRef);
@@ -96,9 +93,7 @@ export const createWaitlistController = async (
 
       // Si hay cupos, debe reservar directo
       const available = (cls.capacity ?? 0) - (cls.occupied ?? 0);
-      if (available > 0) {
-        throw new Error(ERROR_CODES.NO_SLOTS_AVAILABLE);
-      }
+      if (available > 0) throw new Error(ERROR_CODES.NO_SLOTS_AVAILABLE);
 
       // Evitar duplicado pendiente
       const dup = await waitlistCol
@@ -107,13 +102,15 @@ export const createWaitlistController = async (
         .where("status", "==", "pending")
         .limit(1)
         .get();
-      if (!dup.empty) {
-        throw new Error(ERROR_CODES.DUPLICATE_RESERVATION);
-      }
+      if (!dup.empty) throw new Error(ERROR_CODES.DUPLICATE_RESERVATION);
 
-      // Tipo de clase normalizado
+      // Tipo de clase (enum con fallback a normalizador, y default)
       const classType: ClassType =
-        (normalizeClassType(cls.type) ?? "individual") as ClassType;
+        (cls.type === ClassType.GROUPS || cls.type === ClassType.INDIVIDUAL
+          ? (cls.type as ClassType)
+          : normalizeClassType(
+              typeof cls.type === "string" ? cls.type : undefined
+            )) ?? ClassType.INDIVIDUAL;
 
       // Normalizar packages a array
       const rawPkgs = user.packages ?? [];
@@ -135,7 +132,7 @@ export const createWaitlistController = async (
         packageId = pkg.id;
         consumedClass = true;
 
-        // Descontar del paquete específico
+        // Descontar del paquete específico (si es finito)
         if (!pkg.isUnlimited) {
           pkgs[index] = { ...pkg, classesUsed: pkg.classesUsed + 1 };
         }
@@ -174,12 +171,9 @@ export const createWaitlistController = async (
       return wlRef.id;
     });
 
-    // email fuera de la transacción
+    // Email (solo necesita el user)
     try {
-      const [userSnap] = await Promise.all([
-        usersCol.doc(req.body.userId).get(),
-        classesCol.doc(req.body.classId).get(),
-      ]);
+      const userSnap = await usersCol.doc(req.body.userId).get();
       const u = userSnap.data() as UserDoc | undefined;
       if (u) {
         await sendWaitlistEntryEmail(u.email, u.firstName, req.body.classId);
@@ -203,9 +197,9 @@ export const createWaitlistController = async (
   }
 };
 
-/**
- * 2) Listar todas las waitlists
- */
+/* ===============================================================
+   2) Listar todas
+   =============================================================== */
 export const getAllWaitlistsController = async (
   _req: Request,
   res: Response
@@ -218,14 +212,14 @@ export const getAllWaitlistsController = async (
     }));
     res.status(200).json({ waitlists: list });
   } catch (err) {
-		console.log("TCL: err", err)
+    console.error("getAllWaitlists error:", err);
     res.status(500).json({ error: "Error interno al listar waitlists" });
   }
 };
 
-/**
- * 3) Listar pendientes por clase
- */
+/* ===============================================================
+   3) Listar pendientes por clase
+   =============================================================== */
 export const getWaitlistsByClassController = async (
   req: Request,
   res: Response
@@ -241,20 +235,21 @@ export const getWaitlistsByClassController = async (
       .where("status", "==", "pending")
       .orderBy("createdAt", "asc")
       .get();
+
     const list = snap.docs.map((d) => ({
       id: d.id,
       ...(d.data() as WaitlistDoc),
     }));
     res.status(200).json({ waitlists: list });
   } catch (err) {
-		console.log("TCL: err", err)
+    console.error("getWaitlistsByClass error:", err);
     res.status(500).json({ error: "Error interno al obtener waitlists" });
   }
 };
 
-/**
- * 4) Obtener una entrada por ID
- */
+/* ===============================================================
+   4) Obtener por ID
+   =============================================================== */
 export const getWaitlistByIdController = async (
   req: Request,
   res: Response
@@ -268,16 +263,16 @@ export const getWaitlistByIdController = async (
     }
     res.status(200).json({ id: doc.id, ...(doc.data() as WaitlistDoc) });
   } catch (err) {
-		console.log("TCL: err", err)
+    console.error("getWaitlistById error:", err);
     res.status(500).json({ error: "Error interno al obtener waitlist" });
   }
 };
 
-/**
- * 5) Aceptar o rechazar
- *  - accepted: crea reserva SIN volver a consumir (usa marca de waitlist)
- *  - rejected: reembolsa si se había consumido al entrar
- */
+/* ===============================================================
+   5) Aceptar / Rechazar
+   - accepted: crea reserva SIN volver a consumir
+   - rejected: reembolsa si se había consumido al entrar
+   =============================================================== */
 export const updateWaitlistController = async (
   req: Request,
   res: Response
@@ -291,11 +286,11 @@ export const updateWaitlistController = async (
       return;
     }
 
-    // Ejecutar en transacción para consistencia
     const result = await db.runTransaction(async (t) => {
       const wlRef = waitlistCol.doc(waitlistId);
       const wlSnap = await t.get(wlRef);
       if (!wlSnap.exists) throw new Error("WAITLIST_NOT_FOUND");
+
       const wl = wlSnap.data() as WaitlistDoc;
       if (wl.status !== "pending") throw new Error("WAITLIST_NOT_PENDING");
 
@@ -313,16 +308,15 @@ export const updateWaitlistController = async (
         const available = (cls.capacity ?? 0) - (cls.occupied ?? 0);
         if (available <= 0) throw new Error(ERROR_CODES.NO_SLOTS_AVAILABLE);
 
-        // Si NO se consumió en waitlist, es ilimitado: validar límite diario (2)
+        // Si NO se consumió en waitlist, era ilimitado → límite diario (2)
         if (!wl.consumedClass) {
           const sameDay = await reservationsCol
             .where("userId", "==", wl.userId)
             .where("status", "==", "active")
             .where("classDay", "==", (cls.day ?? "").slice(0, 10))
             .get();
-          if (sameDay.size >= 2) {
+          if (sameDay.size >= 2)
             throw new Error(ERROR_CODES.UNLIMITED_DAILY_LIMIT);
-          }
         }
 
         // Crear reserva con la marca de waitlist
@@ -336,7 +330,7 @@ export const updateWaitlistController = async (
           classDay: (cls.day ?? "").slice(0, 10),
           createdAt: new Date().toISOString(),
           consumedClass: Boolean(wl.consumedClass),
-          packageId: wl.consumedClass ? wl.packageId ?? null : null,
+          packageId: wl.consumedClass ? (wl.packageId ?? null) : null,
         };
         t.set(resRef, payload);
 
@@ -346,11 +340,14 @@ export const updateWaitlistController = async (
         // Marcar waitlist aceptada
         t.update(wlRef, { status: "accepted" });
 
-        return { userId: wl.userId, classId: wl.classId, action: "accepted" as const };
+        return {
+          userId: wl.userId,
+          classId: wl.classId,
+          action: "accepted" as const,
+        };
       }
 
       // status === "rejected"
-      // Si se consumió al entrar, reembolsar (paquete + agregados)
       if (wl.consumedClass) {
         // Normalizar packages
         const rawPkgs = user.packages ?? [];
@@ -368,7 +365,9 @@ export const updateWaitlistController = async (
           }
         } else {
           // Fallback: primer paquete finito con classesUsed > 0
-          const idx = pkgs.findIndex((p) => !p.isUnlimited && p.classesUsed > 0);
+          const idx = pkgs.findIndex(
+            (p) => !p.isUnlimited && p.classesUsed > 0
+          );
           if (idx >= 0) {
             const pkg = pkgs[idx];
             pkgs[idx] = { ...pkg, classesUsed: pkg.classesUsed - 1 };
@@ -396,12 +395,16 @@ export const updateWaitlistController = async (
       // Marcar waitlist rechazada
       t.update(waitlistCol.doc(waitlistId), { status: "rejected" });
 
-      return { userId: wl.userId, classId: wl.classId, action: "rejected" as const };
+      return {
+        userId: wl.userId,
+        classId: wl.classId,
+        action: "rejected" as const,
+      };
     });
 
     // Emails fuera de la transacción
     try {
-      const [userSnap] = await Promise.all([usersCol.doc(result.userId).get()]);
+      const userSnap = await usersCol.doc(result.userId).get();
       const u = userSnap.data() as UserDoc | undefined;
       if (u) {
         if (result.action === "accepted") {
@@ -411,7 +414,6 @@ export const updateWaitlistController = async (
         }
       }
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.error("Email waitlist update falló:", e);
     }
 
@@ -430,10 +432,9 @@ export const updateWaitlistController = async (
   }
 };
 
-/**
- * 6) Eliminar una entrada de waitlist
- *    - Si estaba pending y consumida, reembolsar
- */
+/* ===============================================================
+   6) Eliminar entrada (reembolsa si estaba pending+consumida)
+   =============================================================== */
 export const deleteWaitlistController = async (
   req: Request,
   res: Response
@@ -454,7 +455,6 @@ export const deleteWaitlistController = async (
         if (userSnap.exists) {
           const user = userSnap.data() as UserDoc;
 
-          // Normalizar packages
           const rawPkgs = user.packages ?? [];
           const pkgs: UserPackage[] = Array.isArray(rawPkgs)
             ? rawPkgs
@@ -497,16 +497,13 @@ export const deleteWaitlistController = async (
         }
       }
 
-      // Eliminar la waitlist
       t.delete(wlRef);
     });
 
     res.status(200).json({ message: "Entrada de waitlist eliminada" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    const map: Record<string, number> = {
-      WAITLIST_NOT_FOUND: 404,
-    };
+    const map: Record<string, number> = { WAITLIST_NOT_FOUND: 404 };
     res.status(map[msg] ?? 500).json({ error: msg, code: msg });
   }
 };

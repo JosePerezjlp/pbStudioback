@@ -20,3 +20,8 @@ export enum RolTypeEnum {
   EMPLOYEE = "employee",
   ADMIN = "admin",
 }
+
+export enum ClassType {
+  GROUPS = "groups",
+  INDIVIDUAL = "individual",
+}

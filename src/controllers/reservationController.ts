@@ -1,13 +1,12 @@
 // src/controllers/reservationController.ts
 import { Request, Response } from "express";
 import admin from "../config/firebase";
-import { ERROR_CODES } from "../types/enums";
+import { ERROR_CODES, ClassType } from "../types/enums";
 import {
   sendReservationCancelledEmail,
   sendReservationConfirmationEmail,
 } from "../utils/emailService";
 import {
-  ClassType,
   normalizeClassType,
   selectPackageForClass,
   UserPackage,
@@ -33,7 +32,7 @@ interface ClassDoc {
   capacity: number;
   occupied: number;
   discipline: string;
-  type?: string; // "groups" | "individual"
+  type?: string; 
 }
 
 type ReservationStatus = "active" | "cancelled";
@@ -68,8 +67,8 @@ const diffMinutesFromNow = (day: string, hour: string): number => {
 };
 
 const canCancelByConfig = (cls: ClassDoc, cfg: CancellationTimes): boolean => {
-  const t = normalizeClassType(cls.type) ?? "individual";
-  const windowMin = t === "groups" ? cfg.groups : cfg.individual;
+  const t = normalizeClassType(cls.type) ?? ClassType.INDIVIDUAL;
+  const windowMin = t === ClassType.GROUPS ? cfg.groups : cfg.individual;
   return diffMinutesFromNow(cls.day, cls.hour) >= windowMin;
 };
 
@@ -114,9 +113,8 @@ export const createReservationController = async (
       const available = (cls.capacity ?? 0) - (cls.occupied ?? 0);
       if (available <= 0) throw new Error(ERROR_CODES.NO_SLOTS_AVAILABLE);
 
-      // Tipo de clase normalizado
-      const classType: ClassType = (normalizeClassType(cls.type) ??
-        "individual") as ClassType;
+      // Tipo de clase normalizado (enum estricto)
+      const classType = normalizeClassType(cls.type) ?? ClassType.INDIVIDUAL;
 
       // Selección de paquete
       const pkgs = (user.packages ?? []) as UserPackage[];
