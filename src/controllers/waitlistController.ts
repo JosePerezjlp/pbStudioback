@@ -1,3 +1,4 @@
+// src/controllers/waitlistController.ts
 import { Request, Response } from "express";
 import admin from "../config/firebase";
 import { ERROR_CODES } from "../types/enums";
@@ -6,9 +7,14 @@ import {
   sendWaitlistAcceptedEmail,
   sendWaitlistRejectedEmail,
 } from "../utils/emailService";
+import {
+  ClassType,
+  normalizeClassType,
+  selectPackageForClass,
+  UserPackage,
+} from "../utils/packageSelection";
 
 const db = admin.firestore();
-const { FieldValue } = admin.firestore;
 const waitlistCol = db.collection("waitlists");
 const usersCol = db.collection("users");
 const classesCol = db.collection("classes");
@@ -21,170 +27,179 @@ interface WaitlistDoc {
   classId: string;
   status: WaitlistStatus;
   createdAt: string;
+  // Nuevos campos para “captura”:
+  consumedClass?: boolean;
+  packageId?: string | null;
 }
 
-interface UserClasses {
+interface UserClassesAgg {
   available: number;
   taken: number;
   total: number;
 }
 
-interface UserPackage {
-  active: boolean;
-  isUnlimited: boolean;
-  expiresAt?: string;
-  totalClasses?: number;
-  classesUsed?: number;
-}
-
 interface UserDoc {
   email: string;
   firstName: string;
-  classes?: UserClasses;
+  classes?: UserClassesAgg;
   packages?: UserPackage[] | Record<string, UserPackage>;
 }
 
 interface ClassDoc {
+  day: string;        // "YYYY-MM-DD"
+  hour: string;       // "HH:mm"
   capacity: number;
   occupied: number;
+  discipline: string;
+  type?: string;      // "groups" | "individual" (o variantes)
 }
 
+interface ReservationDoc {
+  id: string;
+  userId: string;
+  classId: string;
+  seat: number | null;
+  status: "active" | "cancelled";
+  classDay: string;   // "YYYY-MM-DD"
+  createdAt: string;  // ISO
+  consumedClass: boolean;
+  packageId?: string | null;
+}
+
+const isActiveUnlimited = (p: UserPackage): boolean => {
+  if (!p.active || !p.isUnlimited) return false;
+  if (!p.expiresAt) return true;
+  return new Date(p.expiresAt) > new Date();
+};
+
 /**
- * 1) Entrar en lista de espera
+ * 1) Entrar en lista de espera (captura clase si NO es ilimitado)
  */
 export const createWaitlistController = async (
   req: Request,
   res: Response
 ): Promise<void> => {
   try {
-    const { userId, classId } = req.body as {
-      userId: string;
-      classId: string;
-    };
+    const { userId, classId } = req.body as { userId: string; classId: string };
 
-    // 1. Verificar usuario
-    const userRef = usersCol.doc(userId);
-    const userSnap = await userRef.get();
-    if (!userSnap.exists) {
-      res.status(404).json({
-        error: "Usuario no encontrado",
-        code: ERROR_CODES.USER_NOT_FOUND,
-      });
-      return;
-    }
-    const userData = userSnap.data() as UserDoc;
+    const newId = await db.runTransaction(async (t) => {
+      // Usuario y clase
+      const userRef = usersCol.doc(userId);
+      const classRef = classesCol.doc(classId);
+      const [userSnap, classSnap] = await t.getAll(userRef, classRef);
 
-    // 2. Verificar clase
-    const classRef = classesCol.doc(classId);
-    const classSnap = await classRef.get();
-    if (!classSnap.exists) {
-      res.status(404).json({
-        error: "Clase no encontrada",
-        code: ERROR_CODES.CLASS_NOT_FOUND,
-      });
-      return;
-    }
-    const { capacity, occupied } = classSnap.data() as ClassDoc;
+      if (!userSnap.exists) throw new Error(ERROR_CODES.USER_NOT_FOUND);
+      if (!classSnap.exists) throw new Error(ERROR_CODES.CLASS_NOT_FOUND);
 
-    // 3. Sólo si está llena
-    if (capacity - occupied > 0) {
-      res.status(400).json({
-        error: "Aún hay cupos disponibles, reserva directamente.",
-        code: ERROR_CODES.NO_SLOTS_AVAILABLE,
-      });
-      return;
-    }
+      const user = userSnap.data() as UserDoc;
+      const cls = classSnap.data() as ClassDoc;
 
-    // 4. Evitar duplicados
-    const dupSnap = await waitlistCol
-      .where("userId", "==", userId)
-      .where("classId", "==", classId)
-      .where("status", "==", "pending")
-      .get();
-    if (!dupSnap.empty) {
-      res.status(409).json({
-        error: "Ya estás en la lista de espera de esta clase",
-        code: ERROR_CODES.DUPLICATE_RESERVATION,
-      });
-      return;
-    }
-
-    // 5. Verificar y “capturar” crédito desde un paquete no ilimitado
-    const now = new Date();
-    const rawPkgs = userData.packages ?? [];
-
-    // Asegurar packages como array, sin nested ternary
-    let packages: UserPackage[];
-    if (Array.isArray(rawPkgs)) {
-      packages = rawPkgs;
-    } else if (rawPkgs && typeof rawPkgs === "object") {
-      packages = Object.values(rawPkgs);
-    } else {
-      packages = [];
-    }
-
-    // ¿Tiene paquete ilimitado activo?
-    const hasUnlimited = packages.some(
-      ({ active, isUnlimited, expiresAt }) =>
-        active && isUnlimited && (!expiresAt || new Date(expiresAt) > now)
-    );
-
-    if (!hasUnlimited) {
-      // Buscar primer paquete no ilimitado con crédito restante
-      const consumibleIdx = packages.findIndex(
-        ({ active, isUnlimited, totalClasses, classesUsed }) =>
-          active &&
-          !isUnlimited &&
-          typeof totalClasses === "number" &&
-          totalClasses - (classesUsed ?? 0) > 0
-      );
-
-      if (consumibleIdx < 0) {
-        res.status(409).json({
-          error:
-            "Necesitas al menos una clase disponible para entrar a lista de espera",
-          code: ERROR_CODES.NO_CLASSES_AVAILABLE,
-        });
-        return;
+      // Si hay cupos, debe reservar directo
+      const available = (cls.capacity ?? 0) - (cls.occupied ?? 0);
+      if (available > 0) {
+        throw new Error(ERROR_CODES.NO_SLOTS_AVAILABLE);
       }
 
-      // Construir nuevo array con classesUsed incrementado
-      const updatedPackages = packages.map((pkg, idx) =>
-        idx === consumibleIdx
-          ? { ...pkg, classesUsed: (pkg.classesUsed ?? 0) + 1 }
-          : pkg
-      );
+      // Evitar duplicado pendiente
+      const dup = await waitlistCol
+        .where("userId", "==", userId)
+        .where("classId", "==", classId)
+        .where("status", "==", "pending")
+        .limit(1)
+        .get();
+      if (!dup.empty) {
+        throw new Error(ERROR_CODES.DUPLICATE_RESERVATION);
+      }
 
-      // Actualizar TODO el campo `packages`
-      await userRef.update({
-        packages: updatedPackages,
-        "classes.available": FieldValue.increment(-1),
-        "classes.taken": FieldValue.increment(1),
-      });
+      // Tipo de clase normalizado
+      const classType: ClassType =
+        (normalizeClassType(cls.type) ?? "individual") as ClassType;
+
+      // Normalizar packages a array
+      const rawPkgs = user.packages ?? [];
+      const pkgs: UserPackage[] = Array.isArray(rawPkgs)
+        ? rawPkgs
+        : Object.values(rawPkgs);
+
+      const hasUnlimited = pkgs.some(isActiveUnlimited);
+
+      let consumedClass = false;
+      let packageId: string | null = null;
+
+      if (!hasUnlimited) {
+        // Seleccionar paquete finito compatible y descontar
+        const pick = selectPackageForClass(pkgs, classType);
+        if (!pick) throw new Error(ERROR_CODES.NO_CLASSES_AVAILABLE);
+
+        const { index, pkg } = pick;
+        packageId = pkg.id;
+        consumedClass = true;
+
+        // Descontar del paquete específico
+        if (!pkg.isUnlimited) {
+          pkgs[index] = { ...pkg, classesUsed: pkg.classesUsed + 1 };
+        }
+
+        // Actualizar agregados del usuario
+        const agg: UserClassesAgg = user.classes ?? {
+          total: 0,
+          taken: 0,
+          available: 0,
+        };
+        const newTaken = (agg.taken ?? 0) + 1;
+        const newAvailable = Math.max(0, (agg.total ?? 0) - newTaken);
+
+        t.update(userRef, {
+          packages: pkgs,
+          classes: {
+            total: agg.total ?? 0,
+            taken: newTaken,
+            available: newAvailable,
+          },
+        });
+      }
+
+      // Crear entrada en waitlist con marca de captura
+      const wlRef = waitlistCol.doc();
+      const payload: WaitlistDoc = {
+        userId,
+        classId,
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        consumedClass,
+        packageId,
+      };
+      t.set(wlRef, payload);
+
+      return wlRef.id;
+    });
+
+    // email fuera de la transacción
+    try {
+      const [userSnap] = await Promise.all([
+        usersCol.doc(req.body.userId).get(),
+        classesCol.doc(req.body.classId).get(),
+      ]);
+      const u = userSnap.data() as UserDoc | undefined;
+      if (u) {
+        await sendWaitlistEntryEmail(u.email, u.firstName, req.body.classId);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("Email waitlist entry falló:", e);
     }
 
-    // 6. Crear entrada en waitlist
-    const payload: WaitlistDoc = {
-      userId,
-      classId,
-      status: "pending",
-      createdAt: new Date().toISOString(),
-    };
-    const wlRef = await waitlistCol.add(payload);
-
-    // 7. Email de confirmación
-    await sendWaitlistEntryEmail(userData.email, userData.firstName, classId);
-
-    res
-      .status(201)
-      .json({ message: "Entraste en lista de espera", id: wlRef.id });
+    res.status(201).json({ message: "Entraste en lista de espera", id: newId });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("createWaitlist:", msg);
-    res.status(500).json({
-      error: "Error interno al entrar en lista",
-      details: msg,
-    });
+    const map: Record<string, number> = {
+      [ERROR_CODES.USER_NOT_FOUND]: 404,
+      [ERROR_CODES.CLASS_NOT_FOUND]: 404,
+      [ERROR_CODES.NO_SLOTS_AVAILABLE]: 400,
+      [ERROR_CODES.DUPLICATE_RESERVATION]: 409,
+      [ERROR_CODES.NO_CLASSES_AVAILABLE]: 409,
+    };
+    res.status(map[msg] ?? 500).json({ error: msg, code: msg });
   }
 };
 
@@ -203,13 +218,13 @@ export const getAllWaitlistsController = async (
     }));
     res.status(200).json({ waitlists: list });
   } catch (err) {
-    console.error("getAllWaitlists:", err);
+		console.log("TCL: err", err)
     res.status(500).json({ error: "Error interno al listar waitlists" });
   }
 };
 
 /**
- * 3) Listar waitlists por clase
+ * 3) Listar pendientes por clase
  */
 export const getWaitlistsByClassController = async (
   req: Request,
@@ -232,7 +247,7 @@ export const getWaitlistsByClassController = async (
     }));
     res.status(200).json({ waitlists: list });
   } catch (err) {
-    console.error("getWaitlistsByClass:", err);
+		console.log("TCL: err", err)
     res.status(500).json({ error: "Error interno al obtener waitlists" });
   }
 };
@@ -253,13 +268,15 @@ export const getWaitlistByIdController = async (
     }
     res.status(200).json({ id: doc.id, ...(doc.data() as WaitlistDoc) });
   } catch (err) {
-    console.error("getWaitlistById:", err);
+		console.log("TCL: err", err)
     res.status(500).json({ error: "Error interno al obtener waitlist" });
   }
 };
 
 /**
- * 5) Aceptar o rechazar una entrada
+ * 5) Aceptar o rechazar
+ *  - accepted: crea reserva SIN volver a consumir (usa marca de waitlist)
+ *  - rejected: reembolsa si se había consumido al entrar
  */
 export const updateWaitlistController = async (
   req: Request,
@@ -274,91 +291,148 @@ export const updateWaitlistController = async (
       return;
     }
 
-    const wlRef = waitlistCol.doc(waitlistId);
-    const wlSnap = await wlRef.get();
-    if (!wlSnap.exists) {
-      res.status(404).json({ error: "Waitlist no encontrada" });
-      return;
-    }
-    const wl = wlSnap.data() as WaitlistDoc;
+    // Ejecutar en transacción para consistencia
+    const result = await db.runTransaction(async (t) => {
+      const wlRef = waitlistCol.doc(waitlistId);
+      const wlSnap = await t.get(wlRef);
+      if (!wlSnap.exists) throw new Error("WAITLIST_NOT_FOUND");
+      const wl = wlSnap.data() as WaitlistDoc;
+      if (wl.status !== "pending") throw new Error("WAITLIST_NOT_PENDING");
 
-    // Cargar usuario
-    const userRef = usersCol.doc(wl.userId);
-    const userSnap = await userRef.get();
-    if (!userSnap.exists) {
-      res.status(404).json({ error: "Usuario no encontrado" });
-      return;
-    }
-    const userData = userSnap.data() as UserDoc;
+      const userRef = usersCol.doc(wl.userId);
+      const classRef = classesCol.doc(wl.classId);
+      const [userSnap, classSnap] = await t.getAll(userRef, classRef);
+      if (!userSnap.exists) throw new Error("USER_NOT_FOUND");
+      if (!classSnap.exists) throw new Error("CLASS_NOT_FOUND");
 
-    if (status === "accepted") {
-      // Crear reserva automática
-      await reservationsCol.add({
-        userId: wl.userId,
-        classId: wl.classId,
-        seat: null,
-        status: "active",
-        classDay: wl.createdAt.slice(0, 10),
-        createdAt: new Date().toISOString(),
-      });
-      await classesCol.doc(wl.classId).update({
-        occupied: FieldValue.increment(1),
-      });
-      await sendWaitlistAcceptedEmail(
-        userData.email,
-        userData.firstName,
-        wl.classId
-      );
-    } else {
-      // Rechazo → devolver crédito si no es ilimitado
+      const user = userSnap.data() as UserDoc;
+      const cls = classSnap.data() as ClassDoc;
 
-      // 1) Normalizar packages a array
-      const rawPkgs = userData.packages ?? {};
-      let packagesArr: UserPackage[];
-      if (Array.isArray(rawPkgs)) {
-        packagesArr = rawPkgs;
-      } else {
-        packagesArr = Object.values(rawPkgs);
+      if (status === "accepted") {
+        // Validar cupo disponible
+        const available = (cls.capacity ?? 0) - (cls.occupied ?? 0);
+        if (available <= 0) throw new Error(ERROR_CODES.NO_SLOTS_AVAILABLE);
+
+        // Si NO se consumió en waitlist, es ilimitado: validar límite diario (2)
+        if (!wl.consumedClass) {
+          const sameDay = await reservationsCol
+            .where("userId", "==", wl.userId)
+            .where("status", "==", "active")
+            .where("classDay", "==", (cls.day ?? "").slice(0, 10))
+            .get();
+          if (sameDay.size >= 2) {
+            throw new Error(ERROR_CODES.UNLIMITED_DAILY_LIMIT);
+          }
+        }
+
+        // Crear reserva con la marca de waitlist
+        const resRef = reservationsCol.doc();
+        const payload: ReservationDoc = {
+          id: resRef.id,
+          userId: wl.userId,
+          classId: wl.classId,
+          seat: null,
+          status: "active",
+          classDay: (cls.day ?? "").slice(0, 10),
+          createdAt: new Date().toISOString(),
+          consumedClass: Boolean(wl.consumedClass),
+          packageId: wl.consumedClass ? wl.packageId ?? null : null,
+        };
+        t.set(resRef, payload);
+
+        // Ocupar cupo
+        t.update(classRef, { occupied: (cls.occupied ?? 0) + 1 });
+
+        // Marcar waitlist aceptada
+        t.update(wlRef, { status: "accepted" });
+
+        return { userId: wl.userId, classId: wl.classId, action: "accepted" as const };
       }
 
-      // 2) Comprobar si tiene paquete ilimitado activo
-      const now = new Date();
-      const hasUnlimited = packagesArr.some(
-        ({ active, isUnlimited, expiresAt }) =>
-          active &&
-          isUnlimited &&
-          (!expiresAt || new Date(expiresAt) > now)
-      );
+      // status === "rejected"
+      // Si se consumió al entrar, reembolsar (paquete + agregados)
+      if (wl.consumedClass) {
+        // Normalizar packages
+        const rawPkgs = user.packages ?? [];
+        const pkgs: UserPackage[] = Array.isArray(rawPkgs)
+          ? rawPkgs
+          : Object.values(rawPkgs);
 
-      if (!hasUnlimited) {
-        const avail = userData.classes?.available ?? 0;
-        const taken = userData.classes?.taken ?? 0;
-        await userRef.update({
-          "classes.available": avail + 1,
-          "classes.taken": Math.max(taken - 1, 0),
+        if (wl.packageId) {
+          const idx = pkgs.findIndex((p) => p.id === wl.packageId);
+          if (idx >= 0) {
+            const pkg = pkgs[idx];
+            if (!pkg.isUnlimited && pkg.classesUsed > 0) {
+              pkgs[idx] = { ...pkg, classesUsed: pkg.classesUsed - 1 };
+            }
+          }
+        } else {
+          // Fallback: primer paquete finito con classesUsed > 0
+          const idx = pkgs.findIndex((p) => !p.isUnlimited && p.classesUsed > 0);
+          if (idx >= 0) {
+            const pkg = pkgs[idx];
+            pkgs[idx] = { ...pkg, classesUsed: pkg.classesUsed - 1 };
+          }
+        }
+
+        const agg: UserClassesAgg = user.classes ?? {
+          total: 0,
+          taken: 0,
+          available: 0,
+        };
+        const newTaken = Math.max(0, (agg.taken ?? 0) - 1);
+        const newAvail = Math.max(0, (agg.total ?? 0) - newTaken);
+
+        t.update(usersCol.doc(wl.userId), {
+          packages: pkgs,
+          classes: {
+            total: agg.total ?? 0,
+            taken: newTaken,
+            available: newAvail,
+          },
         });
       }
 
-      await sendWaitlistRejectedEmail(
-        userData.email,
-        userData.firstName,
-        wl.classId
-      );
+      // Marcar waitlist rechazada
+      t.update(waitlistCol.doc(waitlistId), { status: "rejected" });
+
+      return { userId: wl.userId, classId: wl.classId, action: "rejected" as const };
+    });
+
+    // Emails fuera de la transacción
+    try {
+      const [userSnap] = await Promise.all([usersCol.doc(result.userId).get()]);
+      const u = userSnap.data() as UserDoc | undefined;
+      if (u) {
+        if (result.action === "accepted") {
+          await sendWaitlistAcceptedEmail(u.email, u.firstName, result.classId);
+        } else {
+          await sendWaitlistRejectedEmail(u.email, u.firstName, result.classId);
+        }
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("Email waitlist update falló:", e);
     }
 
-    // Actualizar status en waitlist
-    await wlRef.update({ status });
     res.status(200).json({ message: `Waitlist ${status}` });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("updateWaitlist:", msg);
-    res.status(500).json({ error: "Error interno al actualizar waitlist" });
+    const map: Record<string, number> = {
+      WAITLIST_NOT_FOUND: 404,
+      WAITLIST_NOT_PENDING: 409,
+      [ERROR_CODES.USER_NOT_FOUND]: 404,
+      [ERROR_CODES.CLASS_NOT_FOUND]: 404,
+      [ERROR_CODES.NO_SLOTS_AVAILABLE]: 400,
+      [ERROR_CODES.UNLIMITED_DAILY_LIMIT]: 400,
+    };
+    res.status(map[msg] ?? 500).json({ error: msg, code: msg });
   }
 };
 
-
 /**
  * 6) Eliminar una entrada de waitlist
+ *    - Si estaba pending y consumida, reembolsar
  */
 export const deleteWaitlistController = async (
   req: Request,
@@ -366,33 +440,73 @@ export const deleteWaitlistController = async (
 ): Promise<void> => {
   try {
     const { waitlistId } = req.params;
-    const wlRef = waitlistCol.doc(waitlistId);
-    const wlSnap = await wlRef.get();
-    if (!wlSnap.exists) {
-      res.status(404).json({ error: "Waitlist no encontrada" });
-      return;
-    }
-    const wl = wlSnap.data() as WaitlistDoc;
 
-    // Si estaba pendiente, devolver clase
-    if (wl.status === "pending") {
-      const userRef = usersCol.doc(wl.userId);
-      const userSnap = await userRef.get();
-      if (userSnap.exists) {
-        const ud = userSnap.data() as UserDoc;
-        const avail = ud.classes?.available ?? 0;
-        const taken = ud.classes?.taken ?? 0;
-        await userRef.update({
-          "classes.available": avail + 1,
-          "classes.taken": Math.max(taken - 1, 0),
-        });
+    await db.runTransaction(async (t) => {
+      const wlRef = waitlistCol.doc(waitlistId);
+      const wlSnap = await t.get(wlRef);
+      if (!wlSnap.exists) throw new Error("WAITLIST_NOT_FOUND");
+
+      const wl = wlSnap.data() as WaitlistDoc;
+
+      if (wl.status === "pending" && wl.consumedClass) {
+        const userRef = usersCol.doc(wl.userId);
+        const userSnap = await t.get(userRef);
+        if (userSnap.exists) {
+          const user = userSnap.data() as UserDoc;
+
+          // Normalizar packages
+          const rawPkgs = user.packages ?? [];
+          const pkgs: UserPackage[] = Array.isArray(rawPkgs)
+            ? rawPkgs
+            : Object.values(rawPkgs);
+
+          if (wl.packageId) {
+            const idx = pkgs.findIndex((p) => p.id === wl.packageId);
+            if (idx >= 0) {
+              const pkg = pkgs[idx];
+              if (!pkg.isUnlimited && pkg.classesUsed > 0) {
+                pkgs[idx] = { ...pkg, classesUsed: pkg.classesUsed - 1 };
+              }
+            }
+          } else {
+            const idx = pkgs.findIndex(
+              (p) => !p.isUnlimited && p.classesUsed > 0
+            );
+            if (idx >= 0) {
+              const pkg = pkgs[idx];
+              pkgs[idx] = { ...pkg, classesUsed: pkg.classesUsed - 1 };
+            }
+          }
+
+          const agg: UserClassesAgg = user.classes ?? {
+            total: 0,
+            taken: 0,
+            available: 0,
+          };
+          const newTaken = Math.max(0, (agg.taken ?? 0) - 1);
+          const newAvail = Math.max(0, (agg.total ?? 0) - newTaken);
+
+          t.update(userRef, {
+            packages: pkgs,
+            classes: {
+              total: agg.total ?? 0,
+              taken: newTaken,
+              available: newAvail,
+            },
+          });
+        }
       }
-    }
 
-    await wlRef.delete();
+      // Eliminar la waitlist
+      t.delete(wlRef);
+    });
+
     res.status(200).json({ message: "Entrada de waitlist eliminada" });
   } catch (err) {
-    console.error("deleteWaitlist:", err);
-    res.status(500).json({ error: "Error interno al eliminar waitlist" });
+    const msg = err instanceof Error ? err.message : String(err);
+    const map: Record<string, number> = {
+      WAITLIST_NOT_FOUND: 404,
+    };
+    res.status(map[msg] ?? 500).json({ error: msg, code: msg });
   }
 };

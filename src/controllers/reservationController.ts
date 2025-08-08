@@ -1,3 +1,4 @@
+// src/controllers/reservationController.ts
 import { Request, Response } from "express";
 import admin from "../config/firebase";
 import { ERROR_CODES } from "../types/enums";
@@ -5,21 +6,15 @@ import {
   sendReservationCancelledEmail,
   sendReservationConfirmationEmail,
 } from "../utils/emailService";
+import {
+  ClassType,
+  normalizeClassType,
+  selectPackageForClass,
+  UserPackage,
+} from "../utils/packageSelection";
 
-interface UserPackage {
-  id: string;
-  active: boolean;
-  isUnlimited: boolean;
-  assignedAt?: string;
-  expiresAt?: string;       // ISO string
-  totalClasses?: number;
-  classesUsed?: number;
-  type?: string;
-  notifiedExpiry?: boolean;
-  notifiedLowClasses?: boolean;
-}
-
-interface UserClasses {
+/* ---------- Tipos locales ---------- */
+interface UserClassesAgg {
   available: number;
   taken: number;
   total: number;
@@ -28,37 +23,59 @@ interface UserClasses {
 interface UserDoc {
   email: string;
   firstName: string;
-  classes?: UserClasses;
+  classes?: UserClassesAgg;
   packages?: UserPackage[];
 }
 
 interface ClassDoc {
-  day: string;              // "YYYY-MM-DD" (según tu modelo)
-  hour: string;
+  day: string; // "YYYY-MM-DD"
+  hour: string; // "HH:mm"
   capacity: number;
   occupied: number;
   discipline: string;
+  type?: string; // "groups" | "individual"
 }
 
 type ReservationStatus = "active" | "cancelled";
 
 interface ReservationDoc {
+  id: string;
   userId: string;
   classId: string;
   seat: number;
   status: ReservationStatus;
-  classDay: string;         // "YYYY-MM-DD"
-  createdAt: string;        // ISO
-  consumedClass?: boolean;  // si descontó clase (no ilimitado)
+  classDay: string; // "YYYY-MM-DD"
+  createdAt: string; // ISO
+  consumedClass: boolean;
+  packageId?: string | null;
 }
 
-// CREA UNA RESERVA
-const isActiveUnlimitedPackage = (pkg: UserPackage, now: Date): boolean =>
-  pkg.active === true &&
-  pkg.isUnlimited === true &&
-  (!pkg.expiresAt || new Date(pkg.expiresAt) > now);
+interface CancellationTimes {
+  individual: number; // minutos
+  groups: number; // minutos
+}
 
-/** ─────────────── Controller ─────────────── */
+/* ---------- Helpers ---------- */
+const isActiveUnlimited = (p: UserPackage): boolean => {
+  if (!p.active || !p.isUnlimited) return false;
+  if (!p.expiresAt) return true;
+  return new Date(p.expiresAt) > new Date();
+};
+
+const diffMinutesFromNow = (day: string, hour: string): number => {
+  const start = new Date(`${day}T${hour}:00`);
+  return Math.floor((start.getTime() - Date.now()) / 60000);
+};
+
+const canCancelByConfig = (cls: ClassDoc, cfg: CancellationTimes): boolean => {
+  const t = normalizeClassType(cls.type) ?? "individual";
+  const windowMin = t === "groups" ? cfg.groups : cfg.individual;
+  return diffMinutesFromNow(cls.day, cls.hour) >= windowMin;
+};
+
+/* ===============================================================
+   CREATE
+   =============================================================== */
 export const createReservationController = async (
   req: Request,
   res: Response
@@ -70,312 +87,181 @@ export const createReservationController = async (
       seat: number;
     };
 
-    const db: FirebaseFirestore.Firestore = admin.firestore();
-
-    // 1) Usuario
+    const db = admin.firestore();
     const userRef = db.collection("users").doc(userId);
-    const userSnap = await userRef.get();
-    if (!userSnap.exists) {
-      res.status(404).json({
-        error: "Usuario no encontrado",
-        code: ERROR_CODES.USER_NOT_FOUND,
-      });
-      return;
-    }
-    const userData = userSnap.data() as UserDoc;
-
-    // 2) Clase
     const classRef = db.collection("classes").doc(classId);
-    const classSnap = await classRef.get();
-    if (!classSnap.exists) {
-      res.status(404).json({
-        error: "Clase no encontrada",
-        code: ERROR_CODES.CLASS_NOT_FOUND,
-      });
-      return;
-    }
-    const classData = classSnap.data() as ClassDoc;
-    const classDay = (classData.day ?? "").slice(0, 10); // "YYYY-MM-DD"
+    const reservationsRef = db.collection("reservations");
 
-    // 3) Duplicada misma clase
-    const dup = await db
-      .collection("reservations")
-      .where("userId", "==", userId)
-      .where("classId", "==", classId)
-      .where("status", "==", "active")
-      .get();
-    if (!dup.empty) {
-      res.status(409).json({
-        error:
-          "Ya tienes una reserva para esta clase. No puedes reservar más de un puesto.",
-        code: ERROR_CODES.DUPLICATE_RESERVATION,
-      });
-      return;
-    }
+    const newId = await db.runTransaction(async (t) => {
+      // Usuario y clase
+      const [userSnap, classSnap] = await t.getAll(userRef, classRef);
+      if (!userSnap.exists) throw new Error(ERROR_CODES.USER_NOT_FOUND);
+      if (!classSnap.exists) throw new Error(ERROR_CODES.CLASS_NOT_FOUND);
 
-    // 4) Cupos
-    const available = (classData.capacity ?? 0) - (classData.occupied ?? 0);
-    if (available <= 0) {
-      res.status(409).json({
-        error: "No hay cupos disponibles en esta clase",
-        code: ERROR_CODES.NO_SLOTS_AVAILABLE,
-      });
-      return;
-    }
+      const user = userSnap.data() as UserDoc;
+      const cls = classSnap.data() as ClassDoc;
 
-    // 5) ¿Tiene paquete ilimitado activo?
-    const now = new Date();
-    const packages = userData.packages ?? [];
-    const hasUnlimited = packages.some((p) => isActiveUnlimitedPackage(p, now));
-
-    // 6) Límite de 2 reservas activas por día si es ilimitado
-    if (hasUnlimited) {
-      const sameDay = await db
-        .collection("reservations")
+      // Duplicada
+      const dup = await reservationsRef
         .where("userId", "==", userId)
+        .where("classId", "==", classId)
         .where("status", "==", "active")
-        .where("classDay", "==", classDay)
+        .limit(1)
         .get();
+      if (!dup.empty) throw new Error(ERROR_CODES.DUPLICATE_RESERVATION);
 
-      if (sameDay.size >= 2) {
-        res.status(400).json({
-          error:
-            "Con tu paquete ilimitado puedes reservar como máximo 2 clases por día.",
-          code: ERROR_CODES.UNLIMITED_DAILY_LIMIT,
-        });
-        return;
+      // Cupos
+      const available = (cls.capacity ?? 0) - (cls.occupied ?? 0);
+      if (available <= 0) throw new Error(ERROR_CODES.NO_SLOTS_AVAILABLE);
+
+      // Tipo de clase normalizado
+      const classType: ClassType = (normalizeClassType(cls.type) ??
+        "individual") as ClassType;
+
+      // Selección de paquete
+      const pkgs = (user.packages ?? []) as UserPackage[];
+      const hasUnlimited = pkgs.some(isActiveUnlimited);
+
+      let packageId: string | null = null;
+      let consumedClass = false;
+
+      if (!hasUnlimited) {
+        const pick = selectPackageForClass(pkgs, classType);
+        if (!pick) throw new Error(ERROR_CODES.NO_CLASSES_AVAILABLE);
+
+        const { index, pkg } = pick;
+        packageId = pkg.id;
+        consumedClass = true;
+
+        // Descontar del paquete finito
+        if (!pkg.isUnlimited) {
+          pkgs[index] = { ...pkg, classesUsed: pkg.classesUsed + 1 };
+        }
+
+        // Agregados del usuario
+        const agg: UserClassesAgg = user.classes ?? {
+          total: 0,
+          taken: 0,
+          available: 0,
+        };
+        const newTaken = (agg.taken ?? 0) + 1;
+        const newAvailable = Math.max(0, (agg.total ?? 0) - newTaken);
+        user.classes = {
+          total: agg.total ?? 0,
+          taken: newTaken,
+          available: newAvailable,
+        };
+      } else {
+        // Límite diario para ilimitados (2 por día)
+        const classDay = (cls.day ?? "").slice(0, 10);
+        const sameDay = await reservationsRef
+          .where("userId", "==", userId)
+          .where("status", "==", "active")
+          .where("classDay", "==", classDay)
+          .get();
+        if (sameDay.size >= 2)
+          throw new Error(ERROR_CODES.UNLIMITED_DAILY_LIMIT);
       }
-    } else {
-      // Si NO es ilimitado, exigir clases disponibles
-      const availableClasses = userData.classes?.available ?? 0;
-      // const takenClasses = userData.classes?.taken ?? 0;
-      if (availableClasses <= 0) {
-        res.status(409).json({
-          error: "No tienes clases disponibles",
-          code: ERROR_CODES.NO_CLASSES_AVAILABLE,
-        });
-        return;
-      }
-      // El update de clases se hace más abajo si corresponde
-    }
 
-    // 7) Crear reserva (guardando classDay)
-    const reservationPayload: ReservationDoc = {
-      userId,
-      classId,
-      seat,
-      status: "active",
-      classDay,
-      createdAt: new Date().toISOString(),
-      consumedClass: !hasUnlimited, // útil para el delete
-    };
+      // Ocupa cupo en la clase
+      t.update(classRef, { occupied: (cls.occupied ?? 0) + 1 });
 
-    const resRef = await db.collection("reservations").add(reservationPayload);
+      // Actualiza usuario (paquetes/aggregados)
+      t.update(userRef, { packages: pkgs, classes: user.classes });
 
-    // 8) Actualizaciones relacionadas
-    const updates: Array<Promise<FirebaseFirestore.WriteResult>> = [
-      classRef.update({ occupied: (classData.occupied ?? 0) + 1 }),
-    ];
+      // Crea reserva
+      const resRef = reservationsRef.doc();
+      const payload: ReservationDoc = {
+        id: resRef.id,
+        userId,
+        classId,
+        seat,
+        status: "active",
+        classDay: (cls.day ?? "").slice(0, 10),
+        createdAt: new Date().toISOString(),
+        consumedClass,
+        packageId,
+      };
+      t.set(resRef, payload);
 
-    if (!hasUnlimited) {
-      const availableClasses = userData.classes?.available ?? 0;
-      const takenClasses = userData.classes?.taken ?? 0;
-      updates.push(
-        userRef.update({
-          "classes.available": Math.max(availableClasses - 1, 0),
-          "classes.taken": takenClasses + 1,
-        })
-      );
-    }
+      return resRef.id;
+    });
 
-    await Promise.all(updates);
-
-    // 9) Email (opcional)
+    // Email (fuera de la transacción)
     try {
-      const dateStr = new Date(`${classData.day}T00:00:00`).toLocaleDateString(
+      const classSnap = await admin
+        .firestore()
+        .collection("classes")
+        .doc(classId)
+        .get();
+      const cls = classSnap.data() as ClassDoc;
+      const dateStr = new Date(`${cls.day}T00:00:00`).toLocaleDateString(
         "es-MX",
-        { weekday: "long", day: "numeric", month: "long", year: "numeric" }
+        {
+          weekday: "long",
+          day: "numeric",
+          month: "long",
+          year: "numeric",
+        }
       );
-      const classInfo = `${classData.discipline} el ${dateStr} a las ${classData.hour}`;
-      await sendReservationConfirmationEmail(
-        userData.email,
-        userData.firstName,
-        classInfo
-      );
-    } catch (emailErr) {
-      // No romper el flujo por email
+      const info = `${cls.discipline} el ${dateStr} a las ${cls.hour}`;
+      const userSnap = await admin
+        .firestore()
+        .collection("users")
+        .doc(userId)
+        .get();
+      const u = userSnap.data() as UserDoc;
+      await sendReservationConfirmationEmail(u.email, u.firstName, info);
+    } catch (e) {
       // eslint-disable-next-line no-console
-      console.error("❌ No se pudo enviar el email de reserva:", emailErr);
+      console.error("Email de confirmación falló:", e);
     }
 
     res
       .status(201)
-      .json({ message: "Reserva creada correctamente", id: resRef.id });
-  } catch (error: unknown) {
-    // eslint-disable-next-line no-console
-    console.error("Error al crear reserva:", error);
-    const details =
-      error instanceof Error ? error.message : JSON.stringify(error);
-    res
-      .status(500)
-      .json({ error: "Error al crear reserva", code: ERROR_CODES.INTERNAL_ERROR, details });
+      .json({ message: "Reserva creada correctamente", id: newId });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const map: Record<string, number> = {
+      [ERROR_CODES.USER_NOT_FOUND]: 404,
+      [ERROR_CODES.CLASS_NOT_FOUND]: 404,
+      [ERROR_CODES.DUPLICATE_RESERVATION]: 409,
+      [ERROR_CODES.NO_SLOTS_AVAILABLE]: 409,
+      [ERROR_CODES.NO_CLASSES_AVAILABLE]: 409,
+      [ERROR_CODES.UNLIMITED_DAILY_LIMIT]: 400,
+    };
+    res.status(map[msg] ?? 500).json({ error: msg, code: msg });
   }
 };
 
-// export const createReservationController = async (
-//   req: Request,
-//   res: Response
-// ): Promise<void> => {
-//   try {
-//     const { userId, classId, seat } = req.body;
-
-//     // 1. Verifica que el usuario exista
-//     const userRef = admin.firestore().collection("users").doc(userId);
-//     const userDoc = await userRef.get();
-//     if (!userDoc.exists) {
-//       res.status(404).json({
-//         error: "Usuario no encontrado",
-//         code: ERROR_CODES.USER_NOT_FOUND,
-//       });
-//       return;
-//     }
-
-//     // 2. Verifica que la clase exista
-//     const classRef = admin.firestore().collection("classes").doc(classId);
-//     const classDoc = await classRef.get();
-//     if (!classDoc.exists) {
-//       res.status(404).json({
-//         error: "Clase no encontrada",
-//         code: ERROR_CODES.CLASS_NOT_FOUND,
-//       });
-//       return;
-//     }
-
-//     // 3. Verifica que no exista una reserva activa del usuario para esa clase
-//     const duplicateReservation = await admin
-//       .firestore()
-//       .collection("reservations")
-//       .where("userId", "==", userId)
-//       .where("classId", "==", classId)
-//       .where("status", "==", "active")
-//       .get();
-
-//     if (!duplicateReservation.empty) {
-//       res.status(409).json({
-//         error:
-//           "Ya tienes una reserva para esta clase. No puedes reservar más de un puesto.",
-//         code: ERROR_CODES.DUPLICATE_RESERVATION,
-//       });
-//       return;
-//     }
-
-//     // 4. Verifica que haya cupos en la clase
-//     const classData = classDoc.data();
-//     const currentCapacity = classData?.capacity ?? 0;
-//     const currentOccupied = classData?.occupied ?? 0;
-//     const available = currentCapacity - currentOccupied;
-//     if (available <= 0) {
-//       res.status(409).json({
-//         error: "No hay cupos disponibles en esta clase",
-//         code: ERROR_CODES.NO_SLOTS_AVAILABLE,
-//       });
-//       return;
-//     }
-
-//     // 5. Verifica que el usuario tenga clases disponibles
-//     const userData = userDoc.data();
-//     const userClasses = userData?.classes || {};
-//     const availableClasses = userClasses.available ?? 0;
-//     const takenClasses = userClasses.taken ?? 0;
-//     if (availableClasses <= 0) {
-//       res.status(409).json({
-//         error: "No tienes clases disponibles",
-//         code: ERROR_CODES.NO_CLASSES_AVAILABLE,
-//       });
-//       return;
-//     }
-
-//     // 6. Si TODO está bien, ahora sí crea la reserva y actualiza usuario y clase
-//     const ref = await admin.firestore().collection("reservations").add({
-//       userId,
-//       classId,
-//       seat,
-//       status: "active",
-//       createdAt: new Date().toISOString(),
-//     });
-
-//     await Promise.all([
-//       userRef.update({
-//         "classes.available": availableClasses - 1,
-//         "classes.taken": takenClasses + 1,
-//       }),
-//       classRef.update({
-//         occupied: currentOccupied + 1,
-//       }),
-//     ]);
-
-//     // Envio de email
-//     const data = classDoc.data()!;
-//     const { discipline, day, hour } = data;
-//     const dateStr = new Date(`${day}T00:00:00`).toLocaleDateString("es-MX", {
-//       weekday: "long", // jueves
-//       day: "numeric", // 10
-//       month: "long", // julio
-//       year: "numeric", // 2025
-//     });
-
-//     // ── 2. Formateamos la fecha ‘2025-07-10’ a algo legible en español
-
-//     const classInfo = `${discipline} el ${dateStr} a las ${hour}`;
-
-//     try {
-//       await sendReservationConfirmationEmail(
-//         userData!.email,
-//         userData!.firstName,
-//         classInfo // ✅ ahora va “BSC el … a las …”
-//       );
-//     } catch (emailErr) {
-//       console.error("❌ No se pudo enviar el email de reserva:", emailErr);
-//     }
-
-//     // envio de respuesta
-
-//     res
-//       .status(201)
-//       .json({ message: "Reserva creada correctamente", id: ref.id });
-//   } catch (error) {
-//     console.error("Error al crear reserva:", error);
-//     res.status(500).json({
-//       error: "Error al crear reserva",
-//       details: error instanceof Error ? error.message : String(error),
-//     });
-//   }
-// };
-
-// OBTIENE TODAS LAS RESERVAS
+/* ===============================================================
+   LIST / GET ONE
+   =============================================================== */
 export const getAllReservationsController = async (
   _req: Request,
   res: Response
-) => {
+): Promise<void> => {
   try {
     const snapshot = await admin
       .firestore()
       .collection("reservations")
       .orderBy("createdAt", "desc")
       .get();
-    const reservations = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+
+    const reservations: Array<{ id: string } & Record<string, unknown>> =
+      snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+
     res.status(200).json({ reservations });
   } catch (error) {
     res
       .status(500)
-      .json({ error: "Error al obtener reservas", details: error });
+      .json({ error: "Error al obtener reservas", details: String(error) });
   }
 };
 
-// OBTIENE UNA RESERVA POR ID
 export const getReservationByIdController = async (
   req: Request,
   res: Response
@@ -395,11 +281,15 @@ export const getReservationByIdController = async (
 
     res.status(200).json({ id: doc.id, ...doc.data() });
   } catch (error) {
-    res.status(500).json({ error: "Error al obtener reserva", details: error });
+    res
+      .status(500)
+      .json({ error: "Error al obtener reserva", details: String(error) });
   }
 };
 
-// ACTUALIZA UNA RESERVA
+/* ===============================================================
+   UPDATE (simple)
+   =============================================================== */
 export const updateReservationController = async (
   req: Request,
   res: Response
@@ -414,16 +304,20 @@ export const updateReservationController = async (
       return;
     }
 
-    await ref.update(req.body);
+    // Permite actualizar campos explícitos del modelo
+    const body = req.body as Partial<ReservationDoc> & Record<string, unknown>;
+    await ref.update(body);
     res.status(200).json({ message: "Reserva actualizada correctamente" });
   } catch (error) {
     res
       .status(500)
-      .json({ error: "Error al actualizar reserva", details: error });
+      .json({ error: "Error al actualizar reserva", details: String(error) });
   }
 };
 
-// ELIMINA UNA RESERVA (y devuelve clase al usuario)
+/* ===============================================================
+   CANCEL (soft delete + reembolso si aplica)
+   =============================================================== */
 export const deleteReservationController = async (
   req: Request,
   res: Response
@@ -431,75 +325,128 @@ export const deleteReservationController = async (
   const { reservationId } = req.params;
 
   try {
-    const ref = admin.firestore().collection("reservations").doc(reservationId);
-    const doc = await ref.get();
+    const db = admin.firestore();
+    const resRef = db.collection("reservations").doc(reservationId);
 
-    if (!doc.exists) {
-      res.status(404).json({ error: "Reserva no encontrada" });
-      return;
-    }
+    await db.runTransaction(async (t) => {
+      const resSnap = await t.get(resRef);
+      if (!resSnap.exists) throw new Error("RESERVATION_NOT_FOUND");
 
-    const { userId, classId } = doc.data() as {
-      userId: string;
-      classId: string;
-    };
+      const reservation = resSnap.data() as {
+        userId: string;
+        classId: string;
+        status: ReservationStatus;
+        packageId?: string | null;
+        consumedClass?: boolean;
+      };
 
-    // Borra la reserva
-    await ref.delete();
+      if (reservation.status !== "active") {
+        throw new Error("RESERVATION_NOT_ACTIVE");
+      }
 
-    // Suma una clase disponible al usuario (y resta una tomada)
-    const userRef = admin.firestore().collection("users").doc(userId);
-    const userDoc = await userRef.get();
-    const userData = userDoc.data();
-    const userClasses = userData?.classes || {};
-    const availableClasses = userClasses.available ?? 0;
-    const takenClasses = userClasses.taken ?? 0;
+      const userRef = db.collection("users").doc(reservation.userId);
+      const classRef = db.collection("classes").doc(reservation.classId);
+      const cfgRef = db.collection("configurations").doc("cancellation_times");
 
-    await userRef.update({
-      "classes.available": availableClasses + 1,
-      "classes.taken": Math.max(takenClasses - 1, 0),
-    });
-
-    // Resta uno a ocupados de la clase (sin dejar negativo)
-    const classRef = admin.firestore().collection("classes").doc(classId);
-    const classDoc = await classRef.get();
-    const classData = classDoc.data();
-    const currentOccupied = classData?.occupied ?? 0;
-
-    await classRef.update({
-      occupied: Math.max(currentOccupied - 1, 0),
-    });
-
-    // envio de email
-    const data = classDoc.data()!;
-    const { discipline, day, hour } = data;
-    const dateStr = new Date(`${day}T00:00:00`).toLocaleDateString("es-MX", {
-      weekday: "long", // jueves
-      day: "numeric", // 10
-      month: "long", // julio
-      year: "numeric", // 2025
-    });
-
-    // ── 2. Formateamos la fecha ‘2025-07-10’ a algo legible en español
-
-    const classInfo = `${discipline} el ${dateStr} a las ${hour}`;
-
-    try {
-      await sendReservationCancelledEmail(
-        userData!.email,
-        userData!.firstName,
-        classInfo
+      const [userSnap, classSnap, cfgSnap] = await t.getAll(
+        userRef,
+        classRef,
+        cfgRef
       );
-    } catch (emailErr) {
-      console.error("❌ No se pudo enviar el email de cancelación:", emailErr);
+      if (!userSnap.exists) throw new Error("USER_NOT_FOUND");
+      if (!classSnap.exists) throw new Error("CLASS_NOT_FOUND");
+      if (!cfgSnap.exists) throw new Error("CANCEL_TIMES_NOT_FOUND");
+
+      const user = userSnap.data() as UserDoc;
+      const cls = classSnap.data() as ClassDoc;
+      const cfg = cfgSnap.data() as CancellationTimes;
+
+      // Verificar ventana de cancelación
+      if (!canCancelByConfig(cls, cfg)) {
+        throw new Error("CANCEL_WINDOW_EXPIRED");
+      }
+
+      // Marcar cancelada (no borrar)
+      t.update(resRef, { status: "cancelled" });
+
+      // Liberar cupo de la clase
+      const newOcc = Math.max(0, (cls.occupied ?? 0) - 1);
+      t.update(classRef, { occupied: newOcc });
+
+      // Reembolso de clase (si se consumió)
+      if (reservation.consumedClass) {
+        const pkgs = (user.packages ?? []) as UserPackage[];
+
+        if (reservation.packageId) {
+          const idx = pkgs.findIndex((p) => p.id === reservation.packageId);
+          if (idx >= 0) {
+            const pkg = pkgs[idx];
+            if (!pkg.isUnlimited && pkg.classesUsed > 0) {
+              pkgs[idx] = { ...pkg, classesUsed: pkg.classesUsed - 1 };
+            }
+          }
+        }
+
+        const agg: UserClassesAgg = user.classes ?? {
+          total: 0,
+          taken: 0,
+          available: 0,
+        };
+        const newTaken = Math.max(0, (agg.taken ?? 0) - 1);
+        const newAvail = Math.max(0, (agg.total ?? 0) - newTaken);
+
+        t.update(userRef, {
+          packages: pkgs,
+          classes: {
+            total: agg.total ?? 0,
+            taken: newTaken,
+            available: newAvail,
+          },
+        });
+      }
+    });
+
+    // Email de cancelación (fuera de transacción)
+    try {
+      const resSnap = await admin
+        .firestore()
+        .collection("reservations")
+        .doc(reservationId)
+        .get();
+      const r = resSnap.data() as { userId: string; classId: string };
+      const [userSnap, classSnap] = await Promise.all([
+        admin.firestore().collection("users").doc(r.userId).get(),
+        admin.firestore().collection("classes").doc(r.classId).get(),
+      ]);
+      const user = userSnap.data() as UserDoc;
+      const cls = classSnap.data() as ClassDoc;
+      const dateStr = new Date(`${cls.day}T00:00:00`).toLocaleDateString(
+        "es-MX",
+        {
+          weekday: "long",
+          day: "numeric",
+          month: "long",
+          year: "numeric",
+        }
+      );
+      const info = `${cls.discipline} el ${dateStr} a las ${cls.hour}`;
+      await sendReservationCancelledEmail(user.email, user.firstName, info);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("Email de cancelación falló:", e);
     }
 
-    // respuesta
-
-    res.status(200).json({ message: "Reserva eliminada correctamente" });
-  } catch (error) {
-    res
-      .status(500)
-      .json({ error: "Error al eliminar reserva", details: error });
+    res.status(200).json({ message: "Reserva cancelada" });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const map: Record<string, number> = {
+      RESERVATION_NOT_FOUND: 404,
+      RESERVATION_NOT_ACTIVE: 409,
+      USER_NOT_FOUND: 404,
+      CLASS_NOT_FOUND: 404,
+      CANCEL_TIMES_NOT_FOUND: 500,
+      CANCEL_WINDOW_EXPIRED: 403,
+    };
+    res.status(map[msg] ?? 500).json({ error: msg });
   }
 };
