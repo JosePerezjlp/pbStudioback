@@ -55,7 +55,7 @@ export const userController = async (
         transactions: [],
         waitlist: { inList: false, position: null },
         classes: { total: 0, available: 0, taken: 0 },
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
       });
 
     try {
@@ -70,9 +70,24 @@ export const userController = async (
       email: userRecord.email,
     });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : "Error desconocido";
-    console.error("Error al registrar usuario:", msg);
-    res.status(500).json({ error: "Error interno del servidor", details: msg });
+    // Detectar error de Firebase Admin
+    let status = 500;
+    let code = "INTERNAL";
+    let message = "Error interno del servidor";
+
+    if (typeof error === "object" && error && "code" in error) {
+      const fbErr = error as { code?: string; message?: string };
+      if (fbErr.code === "auth/email-already-exists") {
+        status = 409;
+        code = "EMAIL_ALREADY_EXISTS";
+        message = "El correo ya está registrado.";
+      } else if (fbErr.message) {
+        message = fbErr.message;
+      }
+    }
+
+    console.error("Error al registrar usuario:", message);
+    res.status(status).json({ error: code, message });
   }
 };
 
