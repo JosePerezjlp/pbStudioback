@@ -21,9 +21,7 @@ const CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET!;
 
 /* ---------- helpers ---------- */
 const cleanUndefined = <T extends Record<string, unknown>>(obj: T): T =>
-  Object.fromEntries(
-    Object.entries(obj).filter(([, v]) => v !== undefined)
-  ) as T;
+  Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as T;
 
 const getAccessToken = async (): Promise<string> => {
   const params = new URLSearchParams({ grant_type: "client_credentials" });
@@ -46,7 +44,11 @@ export const createPayPalOrderController = async (
       amount,
       currency = "USD",
       description = "Pago en p&B Studio",
-    } = req.body;
+    } = req.body as {
+      amount: string | number;
+      currency?: string;
+      description?: string;
+    };
 
     const accessToken = await getAccessToken();
 
@@ -91,11 +93,13 @@ export const capturePayPalOrderController = async (
 ): Promise<void> => {
   try {
     /* ---------- Validaciones ---------- */
-    const { orderID, packageId } = req.body as {
+    const { orderID, packageId, branchId } = req.body as {
       orderID: string;
       packageId: string;
+      branchId?: string;
     };
     const uid = req.user?.uid;
+
     if (!orderID || !packageId || !uid) {
       res.status(400).json({ error: "Faltan datos necesarios" });
       return;
@@ -130,49 +134,72 @@ export const capturePayPalOrderController = async (
       modality: pkgData.modality,
     });
 
+    /* ---------- Leer perfil del usuario para email/branch ---------- */
+    type UserDoc = { email?: string; firstName?: string; branch?: string };
+    const userSnap = await admin.firestore().doc(`users/${uid}`).get();
+    const userDoc = (userSnap.data() || {}) as UserDoc;
+
+    // branchId efectivo: prioriza body, luego perfil del usuario
+    let effectiveBranchId = (branchId ?? "").trim();
+    if (!effectiveBranchId) {
+      effectiveBranchId = userDoc.branch ?? "";
+    }
+
+    // email "de la web" para guardar en /transactions y para el correo
+    const appEmail = userDoc.email;
+
     /* ---------- Registro histórico PayPal ---------- */
+    const paypalAmount =
+      data.purchase_units?.[0]?.payments?.captures?.[0]?.amount?.value ?? "0";
+    const paypalCurrency =
+      data.purchase_units?.[0]?.payments?.captures?.[0]?.amount?.currency_code ??
+      "MXN";
+    const captureID =
+      data.purchase_units?.[0]?.payments?.captures?.[0]?.id ?? "";
+    const capturedAt =
+      data.purchase_units?.[0]?.payments?.captures?.[0]?.create_time ??
+      new Date().toISOString();
+
     const paypalTx = {
       orderID: data.id,
       status: data.status,
-      amount:
-        data.purchase_units?.[0]?.payments?.captures?.[0]?.amount?.value ?? "0",
-      currency:
-        data.purchase_units?.[0]?.payments?.captures?.[0]?.amount
-          ?.currency_code ?? "MXN",
+      amount: paypalAmount,
+      currency: paypalCurrency,
       payer: {
         name: `${data.payer.name.given_name} ${data.payer.name.surname}`,
-        email: data.payer.email_address,
+        email: data.payer.email_address, // histórico: email del payer de PayPal
         payer_id: data.payer.payer_id,
       },
-      captureID: data.purchase_units?.[0]?.payments?.captures?.[0]?.id ?? "",
-      capturedAt:
-        data.purchase_units?.[0]?.payments?.captures?.[0]?.create_time ??
-        new Date().toISOString(),
+      captureID,
+      capturedAt,
       createdAt: new Date().toISOString(),
       package: cleanedPackage,
       userId: uid,
+      branchId: effectiveBranchId || null,
     };
 
     await admin.firestore().collection("paypal_transactions").add(paypalTx);
 
-    /* ---------- Registro genérico ---------- */
+    /* ---------- Registro genérico (para /transactions) ---------- */
     const genericStatus: TransactionStatus =
       data.status === "COMPLETED" ? "paid" : "pending";
 
     await saveTransaction({
       userId: uid,
-      userEmail: data.payer.email_address,
+      // ⬇️ AQUI usamos el email del usuario de tu web (no el de PayPal)
+      userEmail: appEmail ?? "sin-email",
       package: cleanedPackage,
       amount: Number(paypalTx.amount),
       currency: paypalTx.currency,
       couponUsed: false,
       paymentMethod: "paypal",
       status: genericStatus,
-      paypal: { orderID: data.id, captureID: paypalTx.captureID },
+      paypal: { orderID: data.id, captureID },
+      branchId: effectiveBranchId || undefined,
       createdAt: new Date().toISOString(),
     });
 
-    /* ---------- Actualizar usuario (transacción de Firestore) ---------- */
+    /* ---------- Actualizar usuario ---------- */
     const userRef = admin.firestore().doc(`users/${uid}`);
     const addTotal = pkgData.isUnlimited ? 0 : pkgData.totalClasses;
     const userPackage = {
@@ -198,22 +225,28 @@ export const capturePayPalOrderController = async (
 
     const updatedSnap = await userRef.get();
     const updatedUser = { id: uid, ...(updatedSnap.data() || {}) };
-    /* ---------- envio de email ---------- */
 
-    const userSnap = await admin.firestore().doc(`users/${uid}`).get();
-    const userData = userSnap.data();
-    const userEmail = userData?.email;
-    const userFirstName = userData?.firstName ?? "Usuario";
+    /* ---------- Email de compra (preferimos email de la web) ---------- */
+    const userEmailForMail =
+      appEmail ?? data.payer?.email_address ?? null; // fallback por si acaso
+    const userFirstName =
+      userDoc.firstName ?? data?.payer?.name?.given_name ?? "Usuario";
 
     try {
-      await sendPackagePurchaseEmail(
-        userEmail,
-        userFirstName,
-        `Paquete ${pkgData.type}`,
-        pkgData.totalClasses,
-        userPackage.expiresAt,
-        pkgData.modality
-      );
+      if (userEmailForMail) {
+        await sendPackagePurchaseEmail(
+          userEmailForMail,
+          userFirstName,
+          `Paquete ${pkgData.type}`,
+          pkgData.totalClasses,
+          userPackage.expiresAt,
+          pkgData.modality
+        );
+      } else {
+        console.warn(
+          `⚠️ No hay email disponible para usuario ${uid}. Se omite envío de correo.`
+        );
+      }
     } catch (emailErr) {
       console.error("❌ No se pudo enviar el email de compra:", emailErr);
     }
@@ -221,7 +254,7 @@ export const capturePayPalOrderController = async (
     /* ---------- Respuesta ---------- */
     res.status(200).json({
       message: "Pago capturado y paquete asignado",
-      transaction: paypalTx,
+      transaction: paypalTx, // incluye branchId
       user: updatedUser,
     });
   } catch (err) {
@@ -241,10 +274,7 @@ export const getAllTransactionsController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const snap = await admin
-      .firestore()
-      .collection("paypal_transactions")
-      .get();
+    const snap = await admin.firestore().collection("paypal_transactions").get();
     const transactions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     res.status(200).json({ transactions });
   } catch (err) {
