@@ -2,13 +2,23 @@ import { Request, Response } from "express";
 import { v4 as uuidv4 } from "uuid";
 import admin from "../config/firebase";
 
+type DocData = Record<string, unknown>;
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null;
+
+const str = (v: unknown): string | undefined =>
+  typeof v === "string" ? v : undefined;
+
+const boolishTrue = (v: unknown): boolean =>
+  v === true || v === "true";
+
 export const loginController = async (
   req: Request,
   res: Response
 ): Promise<void> => {
   try {
-    const { uid } = req.body;
-
+    const { uid } = req.body as { uid?: string };
     if (!uid) {
       res.status(400).json({ error: "UID es requerido" });
       return;
@@ -16,88 +26,111 @@ export const loginController = async (
 
     const db = admin.firestore();
 
-    // 1) users/{uid}
-    let userDoc = await db.collection("users").doc(uid).get();
-    let collection = "users";
+    // Buscar en users / staff / instructors
+    const [userDoc, staffDoc, instrDoc] = await Promise.all([
+      db.collection("users").doc(uid).get(),
+      db.collection("staff").doc(uid).get(),
+      db.collection("instructors").doc(uid).get(),
+    ]);
 
-    // 2) staff/{uid}
-    if (!userDoc.exists) {
-      userDoc = await db.collection("staff").doc(uid).get();
+    let collection: "users" | "staff" | "instructors" | null = null;
+    let snap:
+      | FirebaseFirestore.DocumentSnapshot<FirebaseFirestore.DocumentData>
+      | null = null;
+
+    if (userDoc.exists) {
+      collection = "users";
+      snap = userDoc;
+    } else if (staffDoc.exists) {
       collection = "staff";
+      snap = staffDoc;
+    } else if (instrDoc.exists) {
+      collection = "instructors";
+      snap = instrDoc;
+    } else {
+      res.status(404).json({ error: "Datos de usuario no encontrados" });
+      return;
     }
 
-    // 3) instructors/{uid} → mapear a payload tipo “staff”
-    if (!userDoc.exists) {
-      const instrSnap = await db.collection("instructors").doc(uid).get();
-      if (!instrSnap.exists) {
-        res.status(404).json({ error: "Datos de usuario no encontrados" });
-        return;
+    const dataUnknown = snap.data() || {};
+    const data: DocData = isRecord(dataUnknown) ? dataUnknown : {};
+
+    const roleRaw = str(data.role);
+    const role = roleRaw ? roleRaw.toLowerCase() : "";
+
+    // Normalización si viene de instructors (tu panel lo trata como "employee")
+    if (collection === "instructors") {
+      const enabled = boolishTrue(data.enabled);
+      const status = enabled ? "Activo" : "Inactivo";
+
+      // permissions: o lo que venga, o cae a clases[]
+      let permissions: Record<string, string[]> = {};
+      if (isRecord(data.permissions)) {
+        permissions = Object.fromEntries(
+          Object.entries(data.permissions).map(([k, v]) => [
+            k,
+            Array.isArray(v) ? v.filter((x) => typeof x === "string") : [],
+          ])
+        );
+      } else if (Array.isArray(data.clases)) {
+        permissions = { clases: data.clases.filter((x) => typeof x === "string") as string[] };
+      } else {
+        permissions = { clases: ["listado", "crear", "editar", "detalle"] };
       }
 
-      const instr = instrSnap.data() as Record<string, unknown>;
-
-      // Normalizaciones mínimas para el panel:
-      const { enabled } = instr;
-      const status =
-        enabled === true || enabled === "true" ? "Activo" : "Inactivo";
-
-      // Si existe permissions, lo usamos; si no, tomamos clases[] y lo metemos en permissions.clases
-      const permissions =
-        (instr.permissions as Record<string, string[] | undefined>) ??
-        (Array.isArray(instr.clases)
-          ? { clases: instr.clases as string[] }
-          : { clases: ["listado", "crear", "editar", "detalle"] });
-
-      // branches como array (staff usa arreglo)
-      const branch = (instr.branch as string) ?? "";
+      const branch = str(data.branch) ?? "";
       const branches = branch ? [branch] : [];
 
-      // Armamos el payload. Evitamos exponer el password hasheado.
-      const {
-        password, // eslint-disable-line @typescript-eslint/no-unused-vars
-        ...rest
-      } = instr;
+      // Sesión única
+      const newSessionId = uuidv4();
+      await db.collection("instructors").doc(uid).update({
+        sessionId: newSessionId,
+        sessionUpdatedAt: new Date().toISOString(),
+      });
+      await admin.auth().revokeRefreshTokens(uid);
 
       res.status(200).json({
         uid,
-        email: instr.email,
-        ...rest,
-        // overrides / campos garantizados para el panel:
+        email: str(data.email),
+        ...data,
         role: "employee",
         status,
         branches,
-        branch, // lo conservamos por si tu UI lo usa
+        branch,
         permissions,
+        sessionId: newSessionId,
+        sessionNotice: "Esta sesión reemplazará otras activas por seguridad.",
       });
       return;
     }
 
-    // → Flujo original para users/staff (intacto)
+    // users / staff
     const userRef = db.collection(collection).doc(uid);
-    const userData = userDoc.data() || {};
-    const role = (userData.role as string) ?? "user";
 
     let newSessionId: string | null = null;
     let sessionNotice: string | null = null;
 
-    if (role === "admin") {
+    if (role === "admin" || role === "employee") {
       newSessionId = uuidv4();
-      await userRef.update({ sessionId: newSessionId });
-      sessionNotice = "Esta sesión reemplazará otras activas.";
+      await userRef.update({
+        sessionId: newSessionId,
+        sessionUpdatedAt: new Date().toISOString(),
+      });
+      await admin.auth().revokeRefreshTokens(uid);
+      sessionNotice = "Esta sesión reemplazará otras activas por seguridad.";
     }
 
-    const { ...userDataWithoutPassword } = userData as {
-      password?: unknown;
-      [k: string]: unknown;
-    };
+    // nunca exponer password
+    const { password: _omit, ...rest } = data;
+		console.log("TCL: _omit", _omit)
 
     res.status(200).json({
       uid,
-      email: userData.email,
-      ...userDataWithoutPassword,
+      email: str(rest.email),
+      ...rest,
       role,
-      sessionNotice,
       sessionId: newSessionId,
+      sessionNotice,
     });
   } catch (error) {
     // eslint-disable-next-line no-console
@@ -108,46 +141,37 @@ export const loginController = async (
 
 export const logoutController = async (req: Request, res: Response) => {
   try {
-    const { uid } = req.body;
-    await admin.auth().revokeRefreshTokens(uid);
+    const { uid } = req.body as { uid?: string };
+    if (uid) {
+      await admin.auth().revokeRefreshTokens(uid);
+    }
     res.status(200).json({ message: "Sesión cerrada correctamente" });
   } catch (error) {
     // eslint-disable-next-line no-console
-    console.error(
-      "Error detallado:",
-      error instanceof Error ? error.message : error
-    );
+    console.error("Error detallado:", error);
     res.status(500).json({
       error: "Error al cerrar sesión",
-      details: error instanceof Error ? error.message : "Error desconocido",
     });
   }
 };
 
 export const forceLogoutController = async (req: Request, res: Response) => {
   try {
-    const { uid } = req.body;
-
+    const { uid } = req.body as { uid?: string };
     if (!uid) {
       res.status(400).json({ error: "UID es requerido" });
       return;
     }
-
     await admin.auth().revokeRefreshTokens(uid);
-
     const userRecord = await admin.auth().getUser(uid);
     const revocationTime = new Date(userRecord.tokensValidAfterTime || "");
-
     res.status(200).json({
       message: `Tokens revocados para usuario ${uid}`,
       revokedAt: revocationTime.toISOString(),
     });
   } catch (error) {
     // eslint-disable-next-line no-console
-    console.error(
-      "Error forzando logout:",
-      error instanceof Error ? error.message : error
-    );
+    console.error("Error forzando logout:", error);
     res.status(500).json({ error: "Error interno al forzar logout" });
   }
 };

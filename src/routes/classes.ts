@@ -7,6 +7,7 @@ import {
   getClassByIdController,
   updateClassController,
 } from "../controllers/classController";
+import { adminSessionGuard } from "../middleware/adminSessionGuard";
 
 const router = express.Router();
 
@@ -14,9 +15,9 @@ const router = express.Router();
 router.get("/", getAllClassesController);
 
 // Protegidas
-router.get("/:classId", verifyToken, getClassByIdController);
-router.post("/", verifyToken, createClassController);
-router.put("/:classId", verifyToken, updateClassController);
-router.delete("/:classId", verifyToken, deleteClassController);
+router.get("/:classId", verifyToken, adminSessionGuard, getClassByIdController);
+router.post("/", verifyToken, adminSessionGuard, createClassController);
+router.put("/:classId", verifyToken, adminSessionGuard, updateClassController);
+router.delete("/:classId", verifyToken, adminSessionGuard, deleteClassController);
 
 export default router;

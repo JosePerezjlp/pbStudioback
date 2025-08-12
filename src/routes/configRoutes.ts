@@ -11,22 +11,24 @@ import {
   setNoticeConfigController,
   getNoticeConfigController,
 } from "../controllers/configController";
+import { adminSessionGuard } from "../middleware/adminSessionGuard";
 
 const router = express.Router();
 
 router.get("/cancellation-times", verifyToken, getCancellationTimesController);
-router.post("/cancellation-times", verifyToken, setCancellationTimesController);
+router.post("/cancellation-times", verifyToken, adminSessionGuard, setCancellationTimesController);
 
 router.get("/general-settings", verifyToken, getGeneralSettingsController);
-router.post("/general-settings", verifyToken, setGeneralSettingsController);
+router.post("/general-settings", verifyToken, adminSessionGuard, setGeneralSettingsController);
 
 router.get("/statistics", verifyToken, getStatisticsConfigController);
-router.post("/statistics", verifyToken, setStatisticsConfigController);
+router.post("/statistics", verifyToken, adminSessionGuard, setStatisticsConfigController);
 
 router.get("/notice", verifyToken, getNoticeConfigController);
 router.post(
   "/notice",
   verifyToken,
+  adminSessionGuard,
   uploadNoticeMiddleware,
   setNoticeConfigController
 );

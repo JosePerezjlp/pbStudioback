@@ -32,6 +32,10 @@ import {
   sendPackageExpiryWarningEmail,
   sendWaitlistRejectedEmail,
 } from "./utils/emailService";
+import { adminSessionGuard } from "./middleware/adminSessionGuard";
+import { verifyToken } from "./middleware/authMiddleware";
+// import { verifyToken } from "./middleware/authMiddleware";
+// import { adminSessionGuard } from "./middleware/adminSessionGuard";
 
 const db = admin.firestore();
 const { increment } = admin.firestore.FieldValue;
@@ -66,25 +70,26 @@ app.use(
 
 app.use(express.json());
 app.use("/", homeRouter);
-app.use("/users", usersRouter);
+app.use("/users", verifyToken, adminSessionGuard, usersRouter);
 app.use("/auth", authRouter);
-app.use("/content", contentRouter);
+// app.use(verifyToken, adminSessionGuard);
+app.use("/content",  contentRouter);
 app.use("/packages", packageRouter);
 app.use("/instructors", instructorRouter);
 app.use("/rooms", salonsRouter);
 app.use("/disciplines", disciplinesRouter);
 app.use("/branches", branchRouter);
-app.use("/classes", classesRouter);
+app.use("/classes", verifyToken, adminSessionGuard, classesRouter);
 app.use("/paypal", paypalRouter);
-app.use("/transactions", transactionsRouter);
-app.use("/reservations", reservationRoutes);
+app.use("/transactions", verifyToken, adminSessionGuard, transactionsRouter);
+app.use("/reservations", verifyToken, adminSessionGuard, reservationRoutes);
 app.use("/contact", contactRouter);
 app.use("/password-reset", passwordResetRouter);
 app.use("/config", configRouter);
-app.use("/coupons", couponsRouter);
-app.use("/staff", staffRouter);
-app.use("/attendance", attendanceRouter);
-app.use("/waitlist", waitListRouter);
+app.use("/coupons", verifyToken, adminSessionGuard, couponsRouter);
+app.use("/staff", verifyToken, adminSessionGuard, staffRouter);
+app.use("/attendance", verifyToken, adminSessionGuard, attendanceRouter);
+app.use("/waitlist", verifyToken, adminSessionGuard, waitListRouter);
 
 const startServer = async () => {
   try {
