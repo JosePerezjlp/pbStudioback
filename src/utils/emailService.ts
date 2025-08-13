@@ -322,3 +322,31 @@ export const sendWaitlistRejectedEmail = async (
     console.error("Error enviando email de rechazo de lista de espera:", error);
   }
 };
+
+
+// Cancelacion de lista de espera
+
+export const sendWaitlistCancelledByUserEmail = async (
+  to: string,
+  name: string,
+  classId: string
+) => {
+  try {
+    const { discipline, dateStr, hour } = await getClassInfo(classId);
+    await resend.emails.send({
+      from: FROM,
+      to,
+      subject: "Has salido de la lista de espera",
+      html: `
+        <p>Hola ${name},</p>
+        <p>Has cancelado tu solicitud en lista de espera para la clase <strong>${discipline}</strong> del ${dateStr} a las ${hour}.</p>
+        <p>Si cambias de opinión, puedes volver a unirte desde la agenda.</p>
+      `,
+    });
+  } catch (error) {
+    console.error(
+      "Error enviando email de cancelación de lista de espera por el usuario:",
+      error
+    );
+  }
+};

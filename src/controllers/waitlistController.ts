@@ -6,6 +6,7 @@ import {
   sendWaitlistEntryEmail,
   sendWaitlistAcceptedEmail,
   sendWaitlistRejectedEmail,
+  sendWaitlistCancelledByUserEmail,
 } from "../utils/emailService";
 import {
   selectPackageForClass,
@@ -442,7 +443,7 @@ export const deleteWaitlistController = async (
   try {
     const { waitlistId } = req.params;
 
-    await db.runTransaction(async (t) => {
+    const result = await db.runTransaction(async (t) => {
       const wlRef = waitlistCol.doc(waitlistId);
       const wlSnap = await t.get(wlRef);
       if (!wlSnap.exists) throw new Error("WAITLIST_NOT_FOUND");
@@ -498,7 +499,21 @@ export const deleteWaitlistController = async (
       }
 
       t.delete(wlRef);
+
+      // 👇 devolvemos datos para enviar email luego
+      return { userId: wl.userId, classId: wl.classId };
     });
+
+    // Email fuera de la transacción
+    try {
+      const userSnap = await usersCol.doc(result.userId).get();
+      const u = userSnap.data() as UserDoc | undefined;
+      if (u) {
+        await sendWaitlistCancelledByUserEmail(u.email, u.firstName, result.classId);
+      }
+    } catch (e) {
+      console.error("Email waitlist cancelled (by user) falló:", e);
+    }
 
     res.status(200).json({ message: "Entrada de waitlist eliminada" });
   } catch (err) {
