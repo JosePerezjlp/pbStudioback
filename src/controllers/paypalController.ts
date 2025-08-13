@@ -186,7 +186,7 @@ export const capturePayPalOrderController = async (
 
     await saveTransaction({
       userId: uid,
-      // ⬇️ AQUI usamos el email del usuario de tu web (no el de PayPal)
+      // ⬇️ Usamos el email del usuario de tu web (no el de PayPal)
       userEmail: appEmail ?? "sin-email",
       package: cleanedPackage,
       amount: Number(paypalTx.amount),
@@ -199,7 +199,7 @@ export const capturePayPalOrderController = async (
       createdAt: new Date().toISOString(),
     });
 
-    /* ---------- Actualizar usuario ---------- */
+    /* ---------- Actualizar usuario (incluye modality) ---------- */
     const userRef = admin.firestore().doc(`users/${uid}`);
     const addTotal = pkgData.isUnlimited ? 0 : pkgData.totalClasses;
     const userPackage = {
@@ -212,6 +212,7 @@ export const capturePayPalOrderController = async (
       classesUsed: 0,
       isUnlimited: pkgData.isUnlimited ?? false,
       type: pkgData.type,
+      ...(pkgData.modality && { modality: pkgData.modality }), // ✅ clave para reservas
       active: true,
     };
 

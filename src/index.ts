@@ -70,7 +70,7 @@ app.use(
 
 app.use(express.json());
 app.use("/", homeRouter);
-app.use("/users", verifyToken, adminSessionGuard, usersRouter);
+app.use("/users", usersRouter);
 app.use("/auth", authRouter);
 // app.use(verifyToken, adminSessionGuard);
 app.use("/content",  contentRouter);

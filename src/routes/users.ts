@@ -9,6 +9,7 @@ import {
 } from "../controllers/userController";
 import { userRegisterValidations } from "../validations/userValidations";
 import { verifyToken } from "../middleware/authMiddleware";
+import { adminSessionGuard } from "../middleware/adminSessionGuard";
 
 const router = express.Router();
 
@@ -17,6 +18,6 @@ router.get("/:userId", verifyToken, getUserByIdController);
 router.post("/register", userRegisterValidations, userController);
 router.post("/complete-profile", completeProfileFromAuthController);
 router.put("/:userId", verifyToken, updateUserController);
-router.delete("/:userId", verifyToken, deleteUserController);
+router.delete("/:userId", verifyToken, adminSessionGuard, deleteUserController);
 
 export default router;
