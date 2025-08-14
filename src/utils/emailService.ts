@@ -5,16 +5,200 @@ const resend = new Resend(process.env.RESEND_API_KEY); // usa variables de entor
 
 const FROM = "PB Studio <admin@pbstudioapp.com>"; // puedes personalizarlo si ya tienes un dominio verificado
 
+// utilidad para escapar HTML en strings dinámicos
+const escapeHtml = (s: string) =>
+  s.replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ]!
+  );
+
+// Envia con imagen al registrar
 export const sendWelcomeEmail = async (to: string, name: string) => {
   try {
     await resend.emails.send({
       from: FROM,
       to,
-      subject: "¡Bienvenido a PB Studio!",
-      html: `<strong>Hola ${name},</strong><br/>Gracias por registrarte en PB Studio. ¡Estamos felices de tenerte aquí!`,
+      subject: `¡Bienvenido ${name} a PB Studio!`,
+      html: `
+      <!-- Wrapper a 100% -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;">
+        <tr>
+          <td align="center">
+            <!-- Contenedor centrado -->
+            <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
+              <tr>
+                <td align="center" style="padding:24px 16px 8px 16px;">
+                  <img 
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2FRegistroemail.jpeg?alt=media&token=314a8fde-30a3-454c-9481-231f579d7a20" 
+                    alt="Bienvenida de PB Studio"
+                    width="600"
+                    style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
+                  />
+                </td>
+              </tr>
+
+              <!-- Espaciador compatible -->
+              <tr>
+                <td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:0 24px 24px 24px;">
+                  <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
+                    Hola ${name}, gracias por registrarte en PB Studio.
+                    <br/>¡Estamos felices de tenerte aquí!
+                  </p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>`,
     });
   } catch (error) {
     console.error("Error enviando welcome email:", error);
+  }
+};
+
+// Envia con imagen para confirmar reserva
+export const sendReservationConfirmationEmail = async (
+  to: string,
+  name: string,
+  classInfo: string
+) => {
+  try {
+    const safeName = escapeHtml(name);
+    const safeClass = escapeHtml(classInfo);
+
+    await resend.emails.send({
+      from: FROM,
+      to,
+      subject: `Reserva confirmada: ${safeClass}`,
+      html: `
+      <!-- Preheader (vista previa en inbox) -->
+      <div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
+        Tu reserva para "${safeClass}" ha sido confirmada.
+      </div>
+
+      <!-- Wrapper a 100% -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;">
+        <tr>
+          <td align="center">
+            <!-- Contenedor centrado -->
+            <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
+              
+              <tr>
+                <td align="center" style="padding:24px 16px 8px 16px;">
+                  <img
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2FReservaconfirm.jpeg?alt=media&token=0c1f6357-cde3-4a03-8045-2acce3f13695"
+                    alt="Reserva confirmada en PB Studio"
+                    width="600"
+                    style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
+                  />
+                </td>
+              </tr>
+
+              <!-- Espaciador -->
+              <tr>
+                <td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:0 24px 8px 24px;">
+                  <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
+                    Hola ${safeName}, tu reserva para <strong>${safeClass}</strong> ha sido confirmada.
+                  </p>
+                </td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:0 24px 24px 24px;">
+                  <p style="margin:0;font-size:14px;line-height:21px;color:#555555;">
+                    Si necesitas cancelar, hazlo desde tu cuenta con la antelación indicada para evitar penalidades.
+                  </p>
+                </td>
+              </tr>
+
+            </table>
+          </td>
+        </tr>
+      </table>`,
+    });
+  } catch (error) {
+    console.error("Error enviando email de reserva:", error);
+  }
+};
+
+
+// Envia copn imagen para cancelar reserva
+export const sendReservationCancelledEmail = async (
+  to: string,
+  name: string,
+  classInfo: string
+) => {
+  try {
+    const safeName = escapeHtml(name);
+    const safeClass = escapeHtml(classInfo);
+
+    await resend.emails.send({
+      from: FROM,
+      to,
+      subject: `Reserva cancelada: ${safeClass}`,
+      html: `
+      <!-- Preheader -->
+      <div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
+        Tu reserva para "${safeClass}" ha sido cancelada.
+      </div>
+
+      <!-- Wrapper a 100% -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;">
+        <tr>
+          <td align="center">
+            <!-- Contenedor centrado -->
+            <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
+              
+              <tr>
+                <td align="center" style="padding:24px 16px 8px 16px;">
+                  <img
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2FReservaCancelada.jpeg?alt=media&token=7547e7cd-1119-4bc9-bd28-b73c75a68a66"
+                    alt="Reserva cancelada en PB Studio"
+                    width="600"
+                    style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
+                  />
+                </td>
+              </tr>
+
+              <!-- Espaciador -->
+              <tr>
+                <td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:0 24px 8px 24px;">
+                  <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
+                    Hola ${safeName}, tu reserva para <strong>${safeClass}</strong> ha sido cancelada.
+                  </p>
+                </td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:0 24px 24px 24px;">
+                  <p style="margin:0;font-size:14px;line-height:21px;color:#555555;">
+                    Si fue un error o deseas reprogramar, puedes reservar nuevamente cuando quieras.
+                  </p>
+                </td>
+              </tr>
+
+            </table>
+          </td>
+        </tr>
+      </table>`,
+    });
+  } catch (error) {
+    console.error("Error enviando email de cancelación:", error);
   }
 };
 
@@ -56,40 +240,6 @@ export const sendPackagePurchaseEmail = async (
     });
   } catch (error) {
     console.error("Error enviando email de compra de paquete:", error);
-  }
-};
-
-export const sendReservationConfirmationEmail = async (
-  to: string,
-  name: string,
-  classInfo: string
-) => {
-  try {
-    await resend.emails.send({
-      from: FROM,
-      to,
-      subject: "Reserva confirmada",
-      html: `<strong>Hola ${name},</strong><br/>Tu reserva para la clase <b>${classInfo}</b> ha sido confirmada.`,
-    });
-  } catch (error) {
-    console.error("Error enviando email de reserva:", error);
-  }
-};
-
-export const sendReservationCancelledEmail = async (
-  to: string,
-  name: string,
-  classInfo: string
-) => {
-  try {
-    await resend.emails.send({
-      from: FROM,
-      to,
-      subject: "Reserva cancelada",
-      html: `<strong>Hola ${name},</strong><br/>Tu reserva para la clase <b>${classInfo}</b> ha sido cancelada.`,
-    });
-  } catch (error) {
-    console.error("Error enviando email de cancelación:", error);
   }
 };
 
@@ -245,9 +395,7 @@ async function getClassInfo(classId: string) {
   return { discipline, dateStr, hour };
 }
 
-/**
- * Al entrar en lista de espera.
- */
+// Envia con imagen al entrar en lista de espera
 export const sendWaitlistEntryEmail = async (
   to: string,
   name: string,
@@ -255,24 +403,74 @@ export const sendWaitlistEntryEmail = async (
 ) => {
   try {
     const { discipline, dateStr, hour } = await getClassInfo(classId);
+
+    const safeName = escapeHtml(name);
+    const safeDiscipline = escapeHtml(discipline);
+    const safeDate = escapeHtml(dateStr);
+    const safeHour = escapeHtml(hour);
+
     await resend.emails.send({
       from: FROM,
       to,
-      subject: "Estás en la lista de espera",
+      subject: `Lista de espera: ${safeDiscipline} — ${safeDate} ${safeHour}`,
       html: `
-        <p>Hola ${name},</p>
-        <p>Has ingresado en la lista de espera para la clase <strong>${discipline}</strong> el ${dateStr} a las ${hour}.</p>
-        <p>Te notificaremos tan pronto como se libere un cupo. ¡Gracias por tu paciencia!</p>
-      `,
+      <!-- Preheader -->
+      <div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
+        Has ingresado en la lista de espera para "${safeDiscipline}" el ${safeDate} a las ${safeHour}.
+      </div>
+
+      <!-- Wrapper a 100% -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;">
+        <tr>
+          <td align="center">
+            <!-- Contenedor centrado -->
+            <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
+
+              <tr>
+                <td align="center" style="padding:24px 16px 8px 16px;">
+                  <img
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2FIngresoListaEspera.jpeg?alt=media&token=d8468a66-6397-4bc8-aacb-bf5a75b7afbc"
+                    alt="Ingreso a lista de espera en PB Studio"
+                    width="600"
+                    style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
+                  />
+                </td>
+              </tr>
+
+              <!-- Espaciador -->
+              <tr>
+                <td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:0 24px 8px 24px;">
+                  <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
+                    Hola ${safeName}, entraste en la lista de espera para
+                    <strong>${safeDiscipline}</strong> el <strong>${safeDate}</strong> a las <strong>${safeHour}</strong>.
+                  </p>
+                </td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:0 24px 24px 24px;">
+                  <p style="margin:0;font-size:14px;line-height:21px;color:#555555;">
+                    Te notificaremos automáticamente si se libera un cupo. Gracias por tu paciencia.
+                  </p>
+                </td>
+              </tr>
+
+            </table>
+          </td>
+        </tr>
+      </table>`,
     });
   } catch (error) {
     console.error("Error enviando email de lista de espera:", error);
   }
 };
 
-/**
- * Cuando se libera un cupo y aceptamos al usuario.
- */
+
+// Envia con imagen cuando se le da cupo al usuario de la lista de espera
 export const sendWaitlistAcceptedEmail = async (
   to: string,
   name: string,
@@ -280,23 +478,71 @@ export const sendWaitlistAcceptedEmail = async (
 ) => {
   try {
     const { discipline, dateStr, hour } = await getClassInfo(classId);
+
+    const safeName = escapeHtml(name);
+    const safeDiscipline = escapeHtml(discipline);
+    const safeDate = escapeHtml(dateStr);
+    const safeHour = escapeHtml(hour);
+
     await resend.emails.send({
       from: FROM,
       to,
-      subject: "¡Cupo disponible en tu lista de espera!",
+      subject: `¡Cupo disponible: ${safeDiscipline} — ${safeDate} ${safeHour}`,
       html: `
-        <p>Hola ${name},</p>
-        <p>¡Buenas noticias! Se ha liberado un cupo para la clase <strong>${discipline}</strong> el ${dateStr} a las ${hour}.</p>
-        <p>Tu reserva ha sido creada automáticamente. ¡Nos vemos en clase!</p>
-      `,
+      <!-- Preheader -->
+      <div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
+        ¡Se liberó un cupo! Tu reserva para "${safeDiscipline}" el ${safeDate} a las ${safeHour} fue creada automáticamente.
+      </div>
+
+      <!-- Wrapper -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;">
+        <tr>
+          <td align="center">
+            <!-- Contenedor -->
+            <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
+
+              <tr>
+                <td align="center" style="padding:24px 16px 8px 16px;">
+                  <img
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2FAceptacionListaDeEspera.jpeg?alt=media&token=799c5ec8-6c8d-40c0-9a18-065a192de6ac"
+                    alt="Cupo disponible en PB Studio"
+                    width="600"
+                    style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
+                  />
+                </td>
+              </tr>
+
+              <tr>
+                <td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:0 24px 8px 24px;">
+                  <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
+                    Hola ${safeName}, ¡buenas noticias! Se liberó un cupo para
+                    <strong>${safeDiscipline}</strong> el <strong>${safeDate}</strong> a las <strong>${safeHour}</strong>.
+                  </p>
+                </td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:0 24px 24px 24px;">
+                  <p style="margin:0;font-size:14px;line-height:21px;color:#555555;">
+                    Tu reserva fue creada automáticamente. Si no puedes asistir, recuerda cancelarla con la antelación establecida.
+                  </p>
+                </td>
+              </tr>
+
+            </table>
+          </td>
+        </tr>
+      </table>`,
     });
   } catch (error) {
-    console.error(
-      "Error enviando email de aceptación de lista de espera:",
-      error
-    );
+    console.error("Error enviando email de aceptación de lista de espera:", error);
   }
 };
+
 
 /**
  * Cuando la ventana de espera finaliza sin cupo.
@@ -322,7 +568,6 @@ export const sendWaitlistRejectedEmail = async (
     console.error("Error enviando email de rechazo de lista de espera:", error);
   }
 };
-
 
 // Cancelacion de lista de espera
 
