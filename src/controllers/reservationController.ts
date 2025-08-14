@@ -5,6 +5,7 @@ import { ERROR_CODES, ClassType } from "../types/enums";
 import {
   sendReservationCancelledEmail,
   sendReservationConfirmationEmail,
+  sendWaitlistAcceptedEmail,
 } from "../utils/emailService";
 import {
   normalizeClassType,
@@ -32,7 +33,7 @@ interface ClassDoc {
   capacity: number;
   occupied: number;
   discipline: string;
-  type?: string; 
+  type?: string;
 }
 
 type ReservationStatus = "active" | "cancelled";
@@ -41,7 +42,7 @@ interface ReservationDoc {
   id: string;
   userId: string;
   classId: string;
-  seat: number;
+  seat: number | null;
   status: ReservationStatus;
   classDay: string; // "YYYY-MM-DD"
   createdAt: string; // ISO
@@ -52,6 +53,16 @@ interface ReservationDoc {
 interface CancellationTimes {
   individual: number; // minutos
   groups: number; // minutos
+}
+
+/** Entradas de waitlist en Firestore */
+interface WaitlistDoc {
+  userId: string;
+  classId: string;
+  status: "pending" | "accepted" | "rejected";
+  createdAt: string;
+  consumedClass?: boolean;
+  packageId?: string | null;
 }
 
 /* ---------- Helpers ---------- */
@@ -92,13 +103,12 @@ export const createReservationController = async (
     const reservationsRef = db.collection("reservations");
 
     const newId = await db.runTransaction(async (t) => {
-      // Usuario y clase
-      const [userSnap, classSnap] = await t.getAll(userRef, classRef);
-      if (!userSnap.exists) throw new Error(ERROR_CODES.USER_NOT_FOUND);
-      if (!classSnap.exists) throw new Error(ERROR_CODES.CLASS_NOT_FOUND);
+      const [userSnapTx, classSnapTx] = await t.getAll(userRef, classRef);
+      if (!userSnapTx.exists) throw new Error(ERROR_CODES.USER_NOT_FOUND);
+      if (!classSnapTx.exists) throw new Error(ERROR_CODES.CLASS_NOT_FOUND);
 
-      const user = userSnap.data() as UserDoc;
-      const cls = classSnap.data() as ClassDoc;
+      const user = userSnapTx.data() as UserDoc;
+      const cls = classSnapTx.data() as ClassDoc;
 
       // Duplicada
       const dup = await reservationsRef
@@ -113,7 +123,7 @@ export const createReservationController = async (
       const available = (cls.capacity ?? 0) - (cls.occupied ?? 0);
       if (available <= 0) throw new Error(ERROR_CODES.NO_SLOTS_AVAILABLE);
 
-      // Tipo de clase normalizado (enum estricto)
+      // Tipo de clase normalizado
       const classType = normalizeClassType(cls.type) ?? ClassType.INDIVIDUAL;
 
       // Selección de paquete
@@ -131,12 +141,10 @@ export const createReservationController = async (
         packageId = pkg.id;
         consumedClass = true;
 
-        // Descontar del paquete finito
         if (!pkg.isUnlimited) {
           pkgs[index] = { ...pkg, classesUsed: pkg.classesUsed + 1 };
         }
 
-        // Agregados del usuario
         const agg: UserClassesAgg = user.classes ?? {
           total: 0,
           taken: 0,
@@ -164,7 +172,7 @@ export const createReservationController = async (
       // Ocupa cupo en la clase
       t.update(classRef, { occupied: (cls.occupied ?? 0) + 1 });
 
-      // Actualiza usuario (paquetes/aggregados)
+      // Actualiza usuario
       t.update(userRef, { packages: pkgs, classes: user.classes });
 
       // Crea reserva
@@ -187,31 +195,25 @@ export const createReservationController = async (
 
     // Email (fuera de la transacción)
     try {
-      const classSnap = await admin
+      const classSnapEmail = await admin
         .firestore()
         .collection("classes")
         .doc(classId)
         .get();
-      const cls = classSnap.data() as ClassDoc;
+      const cls = classSnapEmail.data() as ClassDoc;
       const dateStr = new Date(`${cls.day}T00:00:00`).toLocaleDateString(
         "es-MX",
-        {
-          weekday: "long",
-          day: "numeric",
-          month: "long",
-          year: "numeric",
-        }
+        { weekday: "long", day: "numeric", month: "long", year: "numeric" }
       );
       const info = `${cls.discipline} el ${dateStr} a las ${cls.hour}`;
-      const userSnap = await admin
+      const userSnapEmail = await admin
         .firestore()
         .collection("users")
         .doc(userId)
         .get();
-      const u = userSnap.data() as UserDoc;
+      const u = userSnapEmail.data() as UserDoc;
       await sendReservationConfirmationEmail(u.email, u.firstName, info);
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.error("Email de confirmación falló:", e);
     }
 
@@ -247,10 +249,7 @@ export const getAllReservationsController = async (
       .get();
 
     const reservations: Array<{ id: string } & Record<string, unknown>> =
-      snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+      snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
     res.status(200).json({ reservations });
   } catch (error) {
@@ -302,7 +301,6 @@ export const updateReservationController = async (
       return;
     }
 
-    // Permite actualizar campos explícitos del modelo
     const body = req.body as Partial<ReservationDoc> & Record<string, unknown>;
     await ref.update(body);
     res.status(200).json({ message: "Reserva actualizada correctamente" });
@@ -315,6 +313,7 @@ export const updateReservationController = async (
 
 /* ===============================================================
    CANCEL (soft delete + reembolso si aplica)
+   + Promoción automática desde waitlist si queda cupo
    =============================================================== */
 export const deleteReservationController = async (
   req: Request,
@@ -322,22 +321,27 @@ export const deleteReservationController = async (
 ): Promise<void> => {
   const { reservationId } = req.params;
 
+  // Para notificar por email después
+  let promotedFromWaitlist: { userId: string; classId: string } | null = null;
+
   try {
     const db = admin.firestore();
     const resRef = db.collection("reservations").doc(reservationId);
+    const waitlistsRef = db.collection("waitlists");
+    const reservationsRef = db.collection("reservations");
 
     await db.runTransaction(async (t) => {
-      const resSnap = await t.get(resRef);
-      if (!resSnap.exists) throw new Error("RESERVATION_NOT_FOUND");
+      /* ---------- 1) LECTURAS (todas antes de escribir) ---------- */
+      const reservationSnapTx = await t.get(resRef);
+      if (!reservationSnapTx.exists) throw new Error("RESERVATION_NOT_FOUND");
 
-      const reservation = resSnap.data() as {
+      const reservation = reservationSnapTx.data() as {
         userId: string;
         classId: string;
         status: ReservationStatus;
         packageId?: string | null;
         consumedClass?: boolean;
       };
-
       if (reservation.status !== "active") {
         throw new Error("RESERVATION_NOT_ACTIVE");
       }
@@ -346,35 +350,87 @@ export const deleteReservationController = async (
       const classRef = db.collection("classes").doc(reservation.classId);
       const cfgRef = db.collection("configurations").doc("cancellation_times");
 
-      const [userSnap, classSnap, cfgSnap] = await t.getAll(
+      const [userSnapTx, classSnapTx, cfgSnapTx] = await t.getAll(
         userRef,
         classRef,
         cfgRef
       );
-      if (!userSnap.exists) throw new Error("USER_NOT_FOUND");
-      if (!classSnap.exists) throw new Error("CLASS_NOT_FOUND");
-      if (!cfgSnap.exists) throw new Error("CANCEL_TIMES_NOT_FOUND");
+      if (!userSnapTx.exists) throw new Error("USER_NOT_FOUND");
+      if (!classSnapTx.exists) throw new Error("CLASS_NOT_FOUND");
+      if (!cfgSnapTx.exists) throw new Error("CANCEL_TIMES_NOT_FOUND");
 
-      const user = userSnap.data() as UserDoc;
-      const cls = classSnap.data() as ClassDoc;
-      const cfg = cfgSnap.data() as CancellationTimes;
+      const user = userSnapTx.data() as UserDoc;
+      const cls = classSnapTx.data() as ClassDoc;
+      const cfg = cfgSnapTx.data() as CancellationTimes;
 
-      // Verificar ventana de cancelación
       if (!canCancelByConfig(cls, cfg)) {
         throw new Error("CANCEL_WINDOW_EXPIRED");
       }
 
-      // Marcar cancelada (no borrar)
+      const capacity = cls.capacity ?? 0;
+      const occupiedAfter = Math.max(0, (cls.occupied ?? 0) - 1);
+      const classDay = (cls.day ?? "").slice(0, 10);
+
+      // Candidatos de waitlist (solo si hay cupo potencial)
+      const pendingSnapTx =
+        occupiedAfter < capacity
+          ? await t.get(
+              waitlistsRef
+                .where("classId", "==", reservation.classId)
+                .where("status", "==", "pending")
+                .orderBy("createdAt", "asc")
+                .limit(10)
+            )
+          : null;
+
+      // Contar reservas activas del mismo día por usuario (consulta única)
+      let candidate: { wl: WaitlistDoc; waitlistDocId: string } | null = null;
+
+      if (pendingSnapTx && !pendingSnapTx.empty) {
+        const { docs } = pendingSnapTx;
+        const userIds = docs.map((d) => (d.data() as WaitlistDoc).userId);
+
+        let sameDayCount: Record<string, number> = {};
+        if (userIds.length > 0) {
+          const activeSameDaySnapTx = await t.get(
+            reservationsRef
+              .where("classDay", "==", classDay)
+              .where("status", "==", "active")
+              .where("userId", "in", userIds)
+          );
+
+          sameDayCount = {};
+          userIds.forEach((id) => {
+            sameDayCount[id] = 0;
+          });
+          activeSameDaySnapTx.docs.forEach((r) => {
+            const rData = r.data() as { userId: string };
+            sameDayCount[rData.userId] = (sameDayCount[rData.userId] ?? 0) + 1;
+          });
+        }
+
+        // Elegir primer elegible (sin await ni continue)
+        let picked: { wl: WaitlistDoc; waitlistDocId: string } | null = null;
+        for (let i = 0; i < docs.length && !picked; i += 1) {
+          const d = docs[i];
+          const wl = d.data() as WaitlistDoc;
+          const canAccept =
+            Boolean(wl.consumedClass) || (sameDayCount[wl.userId] ?? 0) < 2;
+          if (canAccept) {
+            picked = { wl, waitlistDocId: d.id };
+          }
+        }
+        candidate = picked;
+      }
+
+      /* ---------- 2) ESCRITURAS (después de TODAS las lecturas) ---------- */
+
+      // 2.1 Marcar la reserva como cancelada
       t.update(resRef, { status: "cancelled" });
 
-      // Liberar cupo de la clase
-      const newOcc = Math.max(0, (cls.occupied ?? 0) - 1);
-      t.update(classRef, { occupied: newOcc });
-
-      // Reembolso de clase (si se consumió)
+      // 2.2 Reembolso de clase (si se consumió)
       if (reservation.consumedClass) {
         const pkgs = (user.packages ?? []) as UserPackage[];
-
         if (reservation.packageId) {
           const idx = pkgs.findIndex((p) => p.id === reservation.packageId);
           if (idx >= 0) {
@@ -384,7 +440,6 @@ export const deleteReservationController = async (
             }
           }
         }
-
         const agg: UserClassesAgg = user.classes ?? {
           total: 0,
           taken: 0,
@@ -402,36 +457,99 @@ export const deleteReservationController = async (
           },
         });
       }
+
+      // 2.3 Si hay candidato, crear su reserva y aceptar waitlist
+      let finalOccupied = occupiedAfter;
+      if (candidate) {
+        const newResRef = reservationsRef.doc();
+        const payload: ReservationDoc = {
+          id: newResRef.id,
+          userId: candidate.wl.userId,
+          classId: candidate.wl.classId,
+          seat: null,
+          status: "active",
+          classDay,
+          createdAt: new Date().toISOString(),
+          consumedClass: Boolean(candidate.wl.consumedClass),
+          packageId: candidate.wl.consumedClass
+            ? (candidate.wl.packageId ?? null)
+            : null,
+        };
+        t.set(newResRef, payload);
+        t.update(waitlistsRef.doc(candidate.waitlistDocId), {
+          status: "accepted",
+        });
+
+        finalOccupied = occupiedAfter + 1;
+        promotedFromWaitlist = {
+          userId: candidate.wl.userId,
+          classId: candidate.wl.classId,
+        };
+      }
+
+      // 2.4 Actualizar ocupación de la clase UNA sola vez
+      t.update(classRef, { occupied: finalOccupied });
     });
 
-    // Email de cancelación (fuera de transacción)
+    // Emails fuera de la transacción
     try {
-      const resSnap = await admin
+      // 1) Email al usuario que canceló
+      const reservationDocSnap = await admin
         .firestore()
         .collection("reservations")
         .doc(reservationId)
         .get();
-      const r = resSnap.data() as { userId: string; classId: string };
-      const [userSnap, classSnap] = await Promise.all([
+      const r = reservationDocSnap.data() as {
+        userId: string;
+        classId: string;
+      };
+      const [cancelUserSnap, cancelClassSnap] = await Promise.all([
         admin.firestore().collection("users").doc(r.userId).get(),
         admin.firestore().collection("classes").doc(r.classId).get(),
       ]);
-      const user = userSnap.data() as UserDoc;
-      const cls = classSnap.data() as ClassDoc;
-      const dateStr = new Date(`${cls.day}T00:00:00`).toLocaleDateString(
-        "es-MX",
-        {
-          weekday: "long",
-          day: "numeric",
-          month: "long",
-          year: "numeric",
-        }
+      const cancelUser = cancelUserSnap.data() as UserDoc;
+      const cancelClass = cancelClassSnap.data() as ClassDoc;
+      const cancelDateStr = new Date(
+        `${cancelClass.day}T00:00:00`
+      ).toLocaleDateString("es-MX", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      });
+      const cancelInfo = `${cancelClass.discipline} el ${cancelDateStr} a las ${cancelClass.hour}`;
+      await sendReservationCancelledEmail(
+        cancelUser.email,
+        cancelUser.firstName,
+        cancelInfo
       );
-      const info = `${cls.discipline} el ${dateStr} a las ${cls.hour}`;
-      await sendReservationCancelledEmail(user.email, user.firstName, info);
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.error("Email de cancelación falló:", e);
+    }
+
+    // 2) Email al usuario promovido desde waitlist (si hubo)
+    if (promotedFromWaitlist) {
+      const { userId: promotedUserId, classId: promotedClassId } =
+        promotedFromWaitlist;
+      try {
+        const promotedUserSnapEmail = await admin
+          .firestore()
+          .collection("users")
+          .doc(promotedUserId)
+          .get();
+        const promotedUserEmail = promotedUserSnapEmail.data() as
+          | UserDoc
+          | undefined;
+        if (promotedUserEmail) {
+          await sendWaitlistAcceptedEmail(
+            promotedUserEmail.email,
+            promotedUserEmail.firstName,
+            promotedClassId
+          );
+        }
+      } catch (e) {
+        console.error("Email de aceptación de waitlist falló:", e);
+      }
     }
 
     res.status(200).json({ message: "Reserva cancelada" });
