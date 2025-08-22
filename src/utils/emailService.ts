@@ -202,6 +202,7 @@ export const sendReservationCancelledEmail = async (
   }
 };
 
+// Compra de paqquete enviando con imagen
 export const sendPackagePurchaseEmail = async (
   to: string,
   name: string,
@@ -228,38 +229,150 @@ export const sendPackagePurchaseEmail = async (
       to,
       subject: "¡Compra de paquete exitosa!",
       html: `
-        <p><strong>Hola ${name},</strong></p>
-        <p>Confirmamos la compra del paquete <strong>${packageName}</strong>.</p>
-        <ul>
-          <li><strong>Clases incluidas:</strong> ${totalClasses}</li>
-          <li><strong>Modalidad:</strong> ${formattedModality}</li>
-          <li><strong>Vence:</strong> ${formattedDate}</li>
-        </ul>
-        <p>Gracias por tu confianza en PB Studio.</p>
-      `,
+      <!-- Wrapper a 100% -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;">
+        <tr>
+          <td align="center">
+            <!-- Contenedor centrado -->
+            <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
+              <tr>
+                <td align="center" style="padding:24px 16px 8px 16px;">
+                  <img
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2Fcomprapaquete.jpeg?alt=media&token=caca023b-117b-4272-98e6-9bbad7694372"
+                    alt="PB Studio - Compra de paquete confirmada"
+                    width="600"
+                    style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
+                  />
+                </td>
+              </tr>
+
+              <!-- Espaciador -->
+              <tr>
+                <td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:0 24px;">
+                  <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
+                    <strong>Hola ${name},</strong><br/>
+                    ¡Tu compra se realizó con éxito! Estos son los detalles de tu paquete:
+                  </p>
+                </td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:16px 24px 8px 24px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:520px;">
+                    <tr>
+                      <td style="font-size:14px;line-height:22px;color:#111827;padding:8px 0;">
+                        <strong>Paquete:</strong> ${packageName}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="font-size:14px;line-height:22px;color:#111827;padding:8px 0;">
+                        <strong>Clases incluidas:</strong> ${totalClasses}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="font-size:14px;line-height:22px;color:#111827;padding:8px 0;">
+                        <strong>Modalidad:</strong> ${formattedModality}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="font-size:14px;line-height:22px;color:#111827;padding:8px 0;">
+                        <strong>Vencimiento:</strong> ${formattedDate}
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:8px 24px 24px 24px;">
+                  <p style="margin:0;font-size:14px;line-height:22px;color:#4b5563;">
+                    ¡Gracias por confiar en <strong>PB Studio</strong>!<br/>
+                    Te esperamos en clase para que sigas cumpliendo tus objetivos.
+                  </p>
+                </td>
+              </tr>
+
+            </table>
+          </td>
+        </tr>
+      </table>`,
     });
   } catch (error) {
     console.error("Error enviando email de compra de paquete:", error);
   }
 };
 
+
+// Paqquete por ExpressValidator, Enviando con imagen
 export const sendPackageExpiryWarningEmail = async (
   to: string,
   name: string,
   daysLeft: number
 ) => {
   try {
+    const daysLabel = daysLeft === 1 ? "1 día" : `${daysLeft} días`;
+
     await resend.emails.send({
       from: FROM,
       to,
       subject: "Tu paquete está por vencer",
-      html: `<strong>Hola ${name},</strong><br/>Tu paquete vencerá en <b>${daysLeft}</b> días. ¡Aprovecha tus clases antes de que expire!`,
+      html: `
+      <!-- Wrapper a 100% -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;">
+        <tr>
+          <td align="center">
+            <!-- Contenedor centrado -->
+            <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
+              <tr>
+                <td align="center" style="padding:24px 16px 8px 16px;">
+                  <img 
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2Fpaqueteproximoaexpirar.jpeg?alt=media&token=45defb9c-0118-4290-a1ff-0cd71f1bc69d" 
+                    alt="PB Studio - Paquete por expirar"
+                    width="600"
+                    style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
+                  />
+                </td>
+              </tr>
+
+              <!-- Espaciador compatible -->
+              <tr>
+                <td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:0 24px;">
+                  <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
+                    Hola ${name},<br/>
+                    tu paquete <strong>vencerá en ${daysLabel}</strong>.
+                  </p>
+                </td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:12px 24px 20px 24px;">
+                  <p style="margin:0;font-size:14px;line-height:22px;color:#4b5563;">
+                    ¡Aprovecha tus clases antes de que expire!<br/>
+                    Si ya realizaste la renovación, puedes ignorar este mensaje.
+                  </p>
+                </td>
+              </tr>
+
+            </table>
+          </td>
+        </tr>
+      </table>`,
     });
   } catch (error) {
     console.error("Error enviando email de expiración de paquete:", error);
   }
 };
 
+
+// NO IMAGEN
 export const sendClassReminderEmail = async (
   to: string,
   name: string,
@@ -307,6 +420,7 @@ export const getAdminContactEmail = async (): Promise<string | null> => {
   }
 };
 
+// NO PROPORCIONAN IMAGEN
 export const sendContactNotificationEmail = async (payload: {
   name: string;
   phone: string;
@@ -339,7 +453,7 @@ export const sendContactNotificationEmail = async (payload: {
   });
 };
 
-/** 2) Autorespuesta al visitante */
+/** 2) Autorespuesta al visitante NO PROPORCIONAN IMAGEN */ 
 export const sendContactAutoReplyEmail = async (payload: {
   name: string;
   email: string;
@@ -359,24 +473,86 @@ export const sendContactAutoReplyEmail = async (payload: {
 };
 // Restablecer password
 
-/* Envía un código de 6 dígitos para restablecer contraseña */
+/* Envía un código de 6 dígitos para restablecer contraseña enviop con imagen */
 export const sendPasswordResetCodeEmail = async (
   to: string,
   name: string,
   code: string
 ) => {
-  await resend.emails.send({
-    from: FROM,
-    to,
-    subject: "Código para restablecer tu contraseña",
-    html: `
-      <p>Hola ${name},</p>
-      <p>Tu código de verificación es:</p>
-      <h2 style="letter-spacing:4px">${code}</h2>
-      <p>Caduca en 2&nbsp;horas. Si no pediste este código, ignora este correo.</p>
-    `,
-  });
+  try {
+    await resend.emails.send({
+      from: FROM,
+      to,
+      subject: "Código para restablecer tu contraseña",
+      html: `
+      <!-- Wrapper a 100% -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;">
+        <tr>
+          <td align="center">
+            <!-- Contenedor centrado -->
+            <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
+              <tr>
+                <td align="center" style="padding:24px 16px 8px 16px;">
+                  <img 
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2Frestablecerpass.jpeg?alt=media&token=b916775b-3c22-46b8-9e3d-dffa3525bbea" 
+                    alt="PB Studio - Restablecer contraseña"
+                    width="600"
+                    style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
+                  />
+                </td>
+              </tr>
+
+              <!-- Espaciador compatible -->
+              <tr>
+                <td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:0 24px;">
+                  <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
+                    Hola ${name},<br/>
+                    usa el siguiente código para restablecer tu contraseña:
+                  </p>
+                </td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:16px 24px 0 24px;">
+                  <div style="
+                    display:inline-block;
+                    padding:12px 20px;
+                    border-radius:8px;
+                    background:#f3f4f6;
+                    font-size:22px;
+                    line-height:28px;
+                    font-weight:700;
+                    letter-spacing:6px;
+                    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+                    color:#111827;
+                  ">
+                    ${code}
+                  </div>
+                </td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:18px 24px 24px 24px;">
+                  <p style="margin:0;font-size:14px;line-height:22px;color:#4b5563;">
+                    El código <strong>vence en 2 horas</strong>.<br/>
+                    Si no solicitaste este código, puedes ignorar este correo con tranquilidad.
+                  </p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>`,
+    });
+  } catch (error) {
+    console.error("Error enviando email de restablecimiento:", error);
+  }
 };
+
 
 async function getClassInfo(classId: string) {
   const doc = await admin.firestore().collection("classes").doc(classId).get();
@@ -545,7 +721,7 @@ export const sendWaitlistAcceptedEmail = async (
 
 
 /**
- * Cuando la ventana de espera finaliza sin cupo.
+ * Cuando la ventana de espera finaliza sin cupo. envio con imagen
  */
 export const sendWaitlistRejectedEmail = async (
   to: string,
@@ -554,22 +730,58 @@ export const sendWaitlistRejectedEmail = async (
 ) => {
   try {
     const { discipline, dateStr, hour } = await getClassInfo(classId);
+
     await resend.emails.send({
       from: FROM,
       to,
       subject: "Tu solicitud en lista de espera ha finalizado",
       html: `
-        <p>Hola ${name},</p>
-        <p>Lamentablemente no se liberó ningún cupo para la clase <strong>${discipline}</strong> el ${dateStr} a las ${hour}.</p>
-        <p>Tu solicitud ha sido rechazada, pero podrás intentarlo de nuevo en futuras ocasiones.</p>
-      `,
+      <!-- Wrapper a 100% -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;">
+        <tr>
+          <td align="center">
+            <!-- Contenedor centrado -->
+            <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
+              <tr>
+                <td align="center" style="padding:24px 16px 8px 16px;">
+                  <img 
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2Ffinlistasincupo.jpeg?alt=media&token=7c24f0f4-a9ee-4977-9238-7c65ddd52ae1" 
+                    alt="PB Studio - Lista de espera finalizada"
+                    width="600"
+                    style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
+                  />
+                </td>
+              </tr>
+
+              <!-- Espaciador compatible -->
+              <tr>
+                <td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:0 24px 24px 24px;">
+                  <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
+                    Hola ${name},
+                    <br/>lamentablemente <strong>no se liberó ningún cupo</strong> para la clase de <strong>${discipline}</strong> del <strong>${dateStr}</strong> a las <strong>${hour}</strong>.
+                  </p>
+                  <p style="margin:16px 0 0 0;font-size:16px;line-height:24px;color:#333333;">
+                    Tu solicitud en lista de espera ha finalizado. 
+                    <br/>¡No te desanimes! Puedes volver a intentarlo en próximas clases desde la agenda.
+                  </p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>`,
     });
   } catch (error) {
     console.error("Error enviando email de rechazo de lista de espera:", error);
   }
 };
 
-// Cancelacion de lista de espera
+
+// Cancelacion de lista de espera envio con imagen
 
 export const sendWaitlistCancelledByUserEmail = async (
   to: string,
@@ -578,15 +790,49 @@ export const sendWaitlistCancelledByUserEmail = async (
 ) => {
   try {
     const { discipline, dateStr, hour } = await getClassInfo(classId);
+
     await resend.emails.send({
       from: FROM,
       to,
       subject: "Has salido de la lista de espera",
       html: `
-        <p>Hola ${name},</p>
-        <p>Has cancelado tu solicitud en lista de espera para la clase <strong>${discipline}</strong> del ${dateStr} a las ${hour}.</p>
-        <p>Si cambias de opinión, puedes volver a unirte desde la agenda.</p>
-      `,
+      <!-- Wrapper a 100% -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;">
+        <tr>
+          <td align="center">
+            <!-- Contenedor centrado -->
+            <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
+              <tr>
+                <td align="center" style="padding:24px 16px 8px 16px;">
+                  <img 
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2FAceptacionListaDeEspera.jpeg?alt=media&token=2fa33598-a13b-42c6-8a99-90e6bed4e1d3" 
+                    alt="PB Studio - Lista de espera"
+                    width="600"
+                    style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
+                  />
+                </td>
+              </tr>
+
+              <!-- Espaciador compatible -->
+              <tr>
+                <td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding:0 24px 24px 24px;">
+                  <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
+                    Hola ${name},
+                    <br/>hemos procesado tu solicitud y <strong>saliste de la lista de espera</strong> para la clase de <strong>${discipline}</strong> del <strong>${dateStr}</strong> a las <strong>${hour}</strong>.
+                  </p>
+                  <p style="margin:16px 0 0 0;font-size:16px;line-height:24px;color:#333333;">
+                    Si cambias de opinión, puedes volver a unirte desde la agenda. ¡Te esperamos pronto!
+                  </p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>`,
     });
   } catch (error) {
     console.error(
@@ -595,3 +841,4 @@ export const sendWaitlistCancelledByUserEmail = async (
     );
   }
 };
+
