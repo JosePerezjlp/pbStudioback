@@ -66,12 +66,6 @@ interface WaitlistDoc {
 }
 
 /* ---------- Helpers ---------- */
-const isActiveUnlimited = (p: UserPackage): boolean => {
-  if (!p.active || !p.isUnlimited) return false;
-  if (!p.expiresAt) return true;
-  return new Date(p.expiresAt) > new Date();
-};
-
 const diffMinutesFromNow = (day: string, hour: string): number => {
   const start = new Date(`${day}T${hour}:00`);
   return Math.floor((start.getTime() - Date.now()) / 60000);
@@ -81,6 +75,41 @@ const canCancelByConfig = (cls: ClassDoc, cfg: CancellationTimes): boolean => {
   const t = normalizeClassType(cls.type) ?? ClassType.INDIVIDUAL;
   const windowMin = t === ClassType.GROUPS ? cfg.groups : cfg.individual;
   return diffMinutesFromNow(cls.day, cls.hour) >= windowMin;
+};
+
+/** Mapea MENSAJE (ES) -> HTTP status sin usar objeto con claves duplicadas */
+const statusFromMessage = (m: string): number => {
+  if (
+    m === ERROR_CODES.USER_NOT_FOUND ||
+    m === ERROR_CODES.CLASS_NOT_FOUND ||
+    m === "Reserva no encontrada" || // usado en delete
+    m === "RESERVATION_NOT_FOUND"    // por si llega crudo
+  ) return 404;
+
+  if (m === ERROR_CODES.UNLIMITED_DAILY_LIMIT) return 400;
+
+  if (
+    m === ERROR_CODES.DUPLICATE_RESERVATION ||
+    m === ERROR_CODES.NO_SLOTS_AVAILABLE ||
+    m === ERROR_CODES.NO_CLASSES_AVAILABLE ||
+    m === ERROR_CODES.NO_PACKAGES ||
+    m === ERROR_CODES.NO_COMPATIBLE_PACKAGE
+  ) return 409;
+
+  return 500;
+};
+
+/** (Opcional) MENSAJE (ES) -> slug de código */
+const codeFromMessage = (m: string): string => {
+  if (m === ERROR_CODES.USER_NOT_FOUND) return "USER_NOT_FOUND";
+  if (m === ERROR_CODES.CLASS_NOT_FOUND) return "CLASS_NOT_FOUND";
+  if (m === ERROR_CODES.DUPLICATE_RESERVATION) return "DUPLICATE_RESERVATION";
+  if (m === ERROR_CODES.NO_SLOTS_AVAILABLE) return "NO_SLOTS_AVAILABLE";
+  if (m === ERROR_CODES.NO_CLASSES_AVAILABLE) return "NO_CLASSES_AVAILABLE";
+  if (m === ERROR_CODES.NO_PACKAGES) return "NO_PACKAGES";
+  if (m === ERROR_CODES.NO_COMPATIBLE_PACKAGE) return "NO_COMPATIBLE_PACKAGE";
+  if (m === ERROR_CODES.UNLIMITED_DAILY_LIMIT) return "UNLIMITED_DAILY_LIMIT";
+  return "INTERNAL_ERROR";
 };
 
 /* ===============================================================
@@ -126,14 +155,35 @@ export const createReservationController = async (
       // Tipo de clase normalizado
       const classType = normalizeClassType(cls.type) ?? ClassType.INDIVIDUAL;
 
-      // Selección de paquete
-      const pkgs = (user.packages ?? []) as UserPackage[];
-      const hasUnlimited = pkgs.some(isActiveUnlimited);
+      // Paquetes del usuario (UNA sola vez)
+      const pkgs: UserPackage[] = (user.packages ?? []);
+
+      const now = new Date();
+      const isActivePkg = (p: UserPackage) =>
+        p.active && (!p.expiresAt || new Date(p.expiresAt) > now);
+      const pkgType = (p: UserPackage) =>
+        normalizeClassType(p.type) ?? ClassType.INDIVIDUAL;
+
+      // 1) ¿Tiene paquetes activos?
+      if (!pkgs.some(isActivePkg)) {
+        throw new Error(ERROR_CODES.NO_PACKAGES);
+      }
+
+      // 2) ¿Alguno activo y del MISMO TIPO que la clase?
+      if (!pkgs.some((p) => isActivePkg(p) && pkgType(p) === classType)) {
+        throw new Error(ERROR_CODES.NO_COMPATIBLE_PACKAGE);
+      }
+
+      // 3) ¿Hay ilimitado compatible?
+      const hasUnlimited = pkgs.some(
+        (p) => isActivePkg(p) && p.isUnlimited && pkgType(p) === classType
+      );
 
       let packageId: string | null = null;
       let consumedClass = false;
 
       if (!hasUnlimited) {
+        // Selecciona paquete finito compatible y descuéntalo
         const pick = selectPackageForClass(pkgs, classType);
         if (!pick) throw new Error(ERROR_CODES.NO_CLASSES_AVAILABLE);
 
@@ -165,8 +215,9 @@ export const createReservationController = async (
           .where("status", "==", "active")
           .where("classDay", "==", classDay)
           .get();
-        if (sameDay.size >= 2)
+        if (sameDay.size >= 2) {
           throw new Error(ERROR_CODES.UNLIMITED_DAILY_LIMIT);
+        }
       }
 
       // Ocupa cupo en la clase
@@ -193,7 +244,7 @@ export const createReservationController = async (
       return resRef.id;
     });
 
-    // Email (fuera de la transacción)
+    // ✅ Email de confirmación (fuera de la transacción)
     try {
       const classSnapEmail = await admin
         .firestore()
@@ -201,36 +252,32 @@ export const createReservationController = async (
         .doc(classId)
         .get();
       const cls = classSnapEmail.data() as ClassDoc;
+
       const dateStr = new Date(`${cls.day}T00:00:00`).toLocaleDateString(
         "es-MX",
         { weekday: "long", day: "numeric", month: "long", year: "numeric" }
       );
+
       const info = `${cls.discipline} el ${dateStr} a las ${cls.hour}`;
+
       const userSnapEmail = await admin
         .firestore()
         .collection("users")
         .doc(userId)
         .get();
       const u = userSnapEmail.data() as UserDoc;
+
       await sendReservationConfirmationEmail(u.email, u.firstName, info);
     } catch (e) {
       console.error("Email de confirmación falló:", e);
     }
 
-    res
-      .status(201)
-      .json({ message: "Reserva creada correctamente", id: newId });
+    res.status(201).json({ message: "Reserva creada correctamente", id: newId });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    const map: Record<string, number> = {
-      [ERROR_CODES.USER_NOT_FOUND]: 404,
-      [ERROR_CODES.CLASS_NOT_FOUND]: 404,
-      [ERROR_CODES.DUPLICATE_RESERVATION]: 409,
-      [ERROR_CODES.NO_SLOTS_AVAILABLE]: 409,
-      [ERROR_CODES.NO_CLASSES_AVAILABLE]: 409,
-      [ERROR_CODES.UNLIMITED_DAILY_LIMIT]: 400,
-    };
-    res.status(map[msg] ?? 500).json({ error: msg, code: msg });
+    const status = statusFromMessage(msg);
+    const code = codeFromMessage(msg);
+    res.status(status).json({ error: msg, code });
   }
 };
 
@@ -464,26 +511,26 @@ export const deleteReservationController = async (
         const newResRef = reservationsRef.doc();
         const payload: ReservationDoc = {
           id: newResRef.id,
-          userId: candidate.wl.userId,
-          classId: candidate.wl.classId,
+          userId: candidate!.wl.userId,
+          classId: candidate!.wl.classId,
           seat: null,
           status: "active",
           classDay,
           createdAt: new Date().toISOString(),
-          consumedClass: Boolean(candidate.wl.consumedClass),
-          packageId: candidate.wl.consumedClass
-            ? (candidate.wl.packageId ?? null)
+          consumedClass: Boolean(candidate!.wl.consumedClass),
+          packageId: candidate!.wl.consumedClass
+            ? (candidate!.wl.packageId ?? null)
             : null,
         };
         t.set(newResRef, payload);
-        t.update(waitlistsRef.doc(candidate.waitlistDocId), {
+        t.update(waitlistsRef.doc(candidate!.waitlistDocId), {
           status: "accepted",
         });
 
         finalOccupied = occupiedAfter + 1;
         promotedFromWaitlist = {
-          userId: candidate.wl.userId,
-          classId: candidate.wl.classId,
+          userId: candidate!.wl.userId,
+          classId: candidate!.wl.classId,
         };
       }
 
