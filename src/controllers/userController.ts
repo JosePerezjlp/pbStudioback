@@ -19,12 +19,10 @@ export const completeProfileFromAuthController = async (
     // 1) Verificar ID token -> obtener uid y email confiables
     const idToken = getBearer(req);
     if (!idToken) {
-      res
-        .status(401)
-        .json({
-          error: "UNAUTHORIZED",
-          message: "Falta Authorization Bearer token",
-        });
+      res.status(401).json({
+        error: "UNAUTHORIZED",
+        message: "Falta Authorization Bearer token",
+      });
       return;
     }
 
@@ -387,5 +385,111 @@ export const getUserByIdController = async (
     const msg = error instanceof Error ? error.message : "Error desconocido";
     console.error("Error al obtener usuario por ID:", msg);
     res.status(500).json({ error: "Error interno del servidor", details: msg });
+  }
+};
+
+export const adminResetPasswordController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  // helpers locales para leer código/mensaje sin usar `any`
+  const getErrorCode = (e: unknown): string | undefined => {
+    if (typeof e === "object" && e !== null && "code" in e) {
+      const { code } = e as { code?: unknown };
+      return typeof code === "string" ? code : undefined;
+    }
+    return undefined;
+  };
+
+  const getErrorMessage = (e: unknown): string | undefined => {
+    if (typeof e === "object" && e !== null && "message" in e) {
+      const { message } = e as { message?: unknown };
+      return typeof message === "string" ? message : undefined;
+    }
+    return undefined;
+  };
+
+  try {
+    const { userId } = req.params;
+    const { newPassword } = req.body as { newPassword?: string };
+
+    // Validaciones mínimas
+    if (!userId) {
+      res.status(400).json({
+        error: "USER_ID_REQUIRED",
+        message: "Falta userId en la ruta",
+      });
+      return;
+    }
+
+    if (!newPassword || typeof newPassword !== "string") {
+      res.status(400).json({
+        error: "PASSWORD_REQUIRED",
+        message: "La nueva contraseña es requerida",
+      });
+      return;
+    }
+
+    if (newPassword.trim().length < 8) {
+      res.status(400).json({
+        error: "WEAK_PASSWORD",
+        message: "La contraseña debe tener al menos 8 caracteres",
+      });
+      return;
+    }
+
+    // Verificar que exista el doc en Firestore (opcional pero útil)
+    const userDoc = await admin
+      .firestore()
+      .collection("users")
+      .doc(userId)
+      .get();
+    if (!userDoc.exists) {
+      res
+        .status(404)
+        .json({ error: "USER_NOT_FOUND", message: "Usuario no encontrado" });
+      return;
+    }
+
+    // Actualizar password en Firebase Auth
+    await admin.auth().updateUser(userId, { password: newPassword.trim() });
+
+    // Revocar tokens para forzar re-login en todos los dispositivos
+    await admin.auth().revokeRefreshTokens(userId);
+
+    // Marcar actualizado en el doc (opcional)
+    await admin
+      .firestore()
+      .collection("users")
+      .doc(userId)
+      .update({ updatedAt: new Date().toISOString() });
+
+    res
+      .status(200)
+      .json({ message: "Contraseña actualizada y sesiones revocadas" });
+  } catch (err: unknown) {
+    // eslint-disable-next-line no-console
+    console.error("adminResetPasswordController error:", err);
+
+    let status = 500;
+    let code = "INTERNAL_ERROR";
+    let message = "No se pudo actualizar la contraseña";
+
+    const fbCode = getErrorCode(err);
+    const fbMsg = getErrorMessage(err);
+
+    if (fbCode === "auth/user-not-found") {
+      status = 404;
+      code = "USER_NOT_FOUND";
+      message = "Usuario no encontrado en Auth";
+    } else if (typeof fbCode === "string" && fbCode.startsWith("auth/")) {
+      status = 400;
+      code = fbCode.toUpperCase().replace(/\//g, "_");
+      message = fbMsg ?? message;
+    } else if (fbMsg) {
+      message = fbMsg;
+    }
+
+    res.status(status).json({ error: code, message });
   }
 };

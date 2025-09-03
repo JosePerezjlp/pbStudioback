@@ -6,6 +6,7 @@ import {
   getAllUsersController,
   getUserByIdController,
   completeProfileFromAuthController,
+  adminResetPasswordController,
 } from "../controllers/userController";
 import { userRegisterValidations } from "../validations/userValidations";
 import { verifyToken } from "../middleware/authMiddleware";
@@ -19,5 +20,12 @@ router.post("/register", userRegisterValidations, userController);
 router.post("/complete-profile", completeProfileFromAuthController);
 router.put("/:userId", verifyToken, updateUserController);
 router.delete("/:userId", verifyToken, adminSessionGuard, deleteUserController);
+
+router.post(
+  "/:userId/reset-password",
+  verifyToken,
+  adminSessionGuard,
+  adminResetPasswordController
+);
 
 export default router;
