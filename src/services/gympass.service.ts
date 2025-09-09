@@ -40,7 +40,7 @@ export const GympassService = {
     const res = await api.post(`booking/v1/gyms/${gymId}/classes`, classPlayload);
     return res.data;
   },
-  async simulateCheckin(cheking: Cheking, gymId: number) {
+  async simulateChecking(cheking: Cheking, gymId: number) {
     const res = await api.post(
       `/helper/v1/gyms/${gymId}/simulate/checkins`,
       cheking

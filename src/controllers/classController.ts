@@ -1,10 +1,10 @@
 // src/controllers/classController.ts
 import { Request, Response } from "express";
+import { DateTime } from "luxon";
 import admin from "../config/firebase";
 import { ClassType } from "../types/enums";
 import { getRoomTypeById } from "../utils/getRoomType";
 import { AuthRequest } from "../middleware/authMiddleware";
-import { DateTime } from "luxon";
 
 interface ClassDoc {
   day: string;
