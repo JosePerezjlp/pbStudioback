@@ -1,7 +1,9 @@
 export class Instructor {
-  name: string|null;             
+  name: string | null;
+
   substitute: boolean;
-    constructor() {
+
+  constructor() {
     this.name = null;
     this.substitute = false;
   }

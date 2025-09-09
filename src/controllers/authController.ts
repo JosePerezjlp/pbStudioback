@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import { v4 as uuidv4 } from "uuid";
 import admin from "../config/firebase";
+import { GympassService } from "../services/gympass.service";
+import { Cheking } from "../models/Checking";
 
 type DocData = Record<string, unknown>;
 
@@ -88,7 +90,12 @@ export const loginController = async (
         sessionUpdatedAt: new Date().toISOString(),
       });
       await admin.auth().revokeRefreshTokens(uid);
-
+     // conecion con wellhub
+     const cheking= new Cheking()
+     cheking.gympass_user_id= 1000000000003
+     cheking.product_id=396
+     const gymId = 198
+     GympassService.simulateChecking(cheking,gymId)
       res.status(200).json({
         uid,
         email: str(data.email),

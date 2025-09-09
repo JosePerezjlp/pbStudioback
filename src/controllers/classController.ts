@@ -3,6 +3,8 @@ import { Request, Response } from "express";
 import admin from "../config/firebase";
 import { ClassType } from "../types/enums";
 import { getRoomTypeById } from "../utils/getRoomType";
+import { GympassService } from "../services/gympass.service";
+import { CreateSlotRequest } from "../models/CreateSlotRequest";
 
 interface ClassDoc {
   day: string;
@@ -99,7 +101,18 @@ export const createClassController = async (
       type: roomType, // enum
       createdAt: new Date().toISOString(),
     });
-
+    // Construir objeto para Gympass
+    const slot = new CreateSlotRequest();
+    slot.occur_date = `${day}T${hour}:00`; 
+    slot.room = String(room);
+    slot.total_capacity = parsedCapacity;
+    slot.total_booked = parsedOccupied;
+    slot.status = status === "abierta" ? 1 : 0;
+    slot.length_in_minutes = 60; 
+    slot.instructors =  [];
+    slot.product_id = 198; 
+    slot.booking_window = null; 
+    GympassService.createClass(198,5,slot)
     res.status(201).json({ message: "Clase creada correctamente", id: ref.id });
   } catch (error) {
     console.error("Error al crear clase:", error);
