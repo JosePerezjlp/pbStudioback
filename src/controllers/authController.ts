@@ -1,8 +1,7 @@
 import { Request, Response } from "express";
 import { v4 as uuidv4 } from "uuid";
 import admin from "../config/firebase";
-import { GympassService } from "../services/gympass.service";
-import { Cheking } from "../models/Checking";
+
 
 
 type DocData = Record<string, unknown>;
