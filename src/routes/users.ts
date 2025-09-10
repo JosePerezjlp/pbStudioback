@@ -5,8 +5,7 @@ import {
   deleteUserController,
   getAllUsersController,
   getUserByIdController,
-  completeProfileFromAuthController,
-  adminResetPasswordController,
+  completeProfileFromAuthController
 } from "../controllers/userController";
 import { userRegisterValidations } from "../validations/userValidations";
 import { verifyToken } from "../middleware/authMiddleware";

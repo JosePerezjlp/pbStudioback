@@ -1,8 +1,8 @@
 import axios from "axios";
 import dotenv from "dotenv";
-import { Cheking } from "../models/Checking";
 import { CreateSlotRequest } from "../models/CreateSlotRequest";
 import { ClassRequest } from "../models/ClassRequest";
+import { Cheking } from "../types/types";
 
 dotenv.config();
 
