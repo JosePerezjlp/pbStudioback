@@ -11,3 +11,8 @@ export type Coupon = {
   createdAt: string;
   updatedAt: string;
 };
+export interface Cheking {
+  gympass_user_id: string | number | null;
+
+  product_id: string | number | null;
+}
