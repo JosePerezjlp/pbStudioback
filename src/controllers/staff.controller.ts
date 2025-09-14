@@ -110,7 +110,7 @@ export const createStaffUser = async (
       phone: "0000000000",
       branch: branches[0] ?? "",
       createdAt: new Date().toISOString(),
-      isAdmin:true
+      isAdmin: true,
     });
 
     res.status(201).json({
@@ -291,22 +291,55 @@ export const deleteStaffUser = async (
 };
 
 // 🔑 Cambiar contraseña sin pedir la anterior
+
+type ChangeStaffPasswordParams = { id: string };
+type ChangeStaffPasswordBody = { newPassword: string };
+
+type RequestUser = {
+  uid: string;
+  email: string;
+  role: RolTypeEnum;
+  isAdmin: boolean;
+};
+
+function hasRequestUser(req: Request): req is Request & { user: RequestUser } {
+  const u = (req as Request & { user?: Partial<RequestUser> }).user;
+  return !!u && typeof u.uid === "string" && typeof u.isAdmin === "boolean";
+}
+
 export const changeStaffPassword = async (
-  req: Request,
+  req: Request<ChangeStaffPasswordParams, unknown, ChangeStaffPasswordBody>,
   res: Response
 ): Promise<void> => {
   try {
     const { id } = req.params;
-    const { newPassword }: { newPassword: string } = req.body;
+    const { newPassword } = req.body;
 
-    if (!newPassword) {
-      res.status(400).json({ error: "La nueva contraseña es requerida" });
+    if (!newPassword || newPassword.length < 8) {
+      res.status(400).json({
+        error:
+          "La nueva contraseña es requerida y debe tener al menos 8 caracteres",
+      });
+      return;
+    }
+
+    if (!hasRequestUser(req) || !req.user.isAdmin) {
+      res.status(403).json({ error: "No autorizado" });
       return;
     }
 
     await admin.auth().updateUser(id, { password: newPassword });
+    await admin.auth().revokeRefreshTokens(id);
 
-    res.status(200).json({ message: "Contraseña actualizada correctamente" });
+    await admin
+      .firestore()
+      .collection("users")
+      .doc(id)
+      .set({ updatedAt: new Date().toISOString() }, { merge: true });
+
+    res
+      .status(200)
+      .json({ message: "Contraseña actualizada y sesiones revocadas" });
   } catch (error) {
     console.error("Error al cambiar contraseña:", error);
     res.status(500).json({
