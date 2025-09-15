@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import { CreateSlotRequest } from "../models/CreateSlotRequest";
 import { ClassRequest } from "../models/ClassRequest";
 import { Cheking } from "../types/types";
+import { UpdateBookingRequest } from "../models/UpdateBookingRequest";
 
 dotenv.config();
 
@@ -32,18 +33,39 @@ export const GympassService = {
     const res = await api.get(`/gyms/${gymId}/classes`);
     return res.data;
   },
-  async createClass(gymId: number,classId:number ,classPlayload: CreateSlotRequest) {
-    const res = await api.post(`/booking/v1/gyms/${gymId}/classes/${classId}/slots`, classPlayload);
+  async createClass(
+    gymId: number,
+    classId: number,
+    classPlayload: CreateSlotRequest
+  ) {
+    const res = await api.post(
+      `/booking/v1/gyms/${gymId}/classes/${classId}/slots`,
+      classPlayload
+    );
     return res.data;
-  },  
-  async createCategory(gymId: number,classPlayload: ClassRequest) {
-    const res = await api.post(`booking/v1/gyms/${gymId}/classes`, classPlayload);
+  },
+  async createCategory(gymId: number, classPlayload: ClassRequest) {
+    const res = await api.post(
+      `booking/v1/gyms/${gymId}/classes`,
+      classPlayload
+    );
     return res.data;
   },
   async simulateChecking(cheking: Cheking, gymId: number) {
     const res = await api.post(
       `/helper/v1/gyms/${gymId}/simulate/checkins`,
       cheking
+    );
+    return res.data;
+  },
+  async updateBooking(
+    gymId: number,
+    bookingNumber: string,
+    bookingRequest: UpdateBookingRequest
+  ) {
+    const res = await api.patch(
+      `/booking/v1/gyms/${gymId}/bookings/${bookingNumber}`,
+      bookingRequest
     );
     return res.data;
   },
