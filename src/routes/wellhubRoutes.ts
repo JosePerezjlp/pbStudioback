@@ -6,6 +6,7 @@ import {
   getClassesController,
   getProductsController,
   getUserChecking,
+  updateBookingController,
 } from "../controllers/wellHubController";
 
 const router = express.Router();
@@ -35,5 +36,9 @@ router.post("/:gymId/classes", verifyToken, createCategoryController);
    GYMPASS – simular check-in
    ============================================================ */
 router.get("/cheking/:userId", verifyToken, getUserChecking);
+/* ============================================================
+   GYMPASS – actualizar reserva (booking)
+   ============================================================ */
+router.put("/reserve/:gymId/:bookingId", verifyToken, updateBookingController);
 
 export default router;
