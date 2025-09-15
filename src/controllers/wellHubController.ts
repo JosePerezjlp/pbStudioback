@@ -126,3 +126,35 @@ export const getUserChecking = async (
     res.status(500).json({ error: "Error interno del servidor", details: msg });
   }
 };
+/* ============================================================
+   PATCH – actualizar reserva (booking)
+   ============================================================ */
+export const updateBookingController = async (
+  req: Request<
+    { gymId: string; bookingId: string },
+    object,
+    {
+      status: "RESERVED" | "REJECTED" | "CANCELLED_BY_GYM";
+      reason?: string;
+      virtual_class_url?: string;
+    }
+  >,
+  res: Response
+): Promise<void> => {
+  const { gymId, bookingId } = req.params;
+  const payload = req.body;
+
+  try {
+    const updatedBooking = await GympassService.updateBooking(
+      Number(gymId),
+      bookingId,
+      payload
+    );
+    res.status(200).json(updatedBooking);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Error desconocido";
+    console.error("❌ Error al actualizar booking:", msg);
+    res.status(500).json({ error: msg });
+  }
+};
+
