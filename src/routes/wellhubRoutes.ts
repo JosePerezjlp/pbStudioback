@@ -1,5 +1,5 @@
 import express from "express";
-import { verifyToken } from "../middleware/authMiddleware";
+import { verifyGympassSignature, verifyToken } from "../middleware/authMiddleware";
 import {
   createCategoryController,
   createSlotController,
@@ -7,6 +7,7 @@ import {
   getProductsController,
   getUserChecking,
   updateBookingController,
+  wellhubWebhookController,
 } from "../controllers/wellHubController";
 
 const router = express.Router();
@@ -15,6 +16,7 @@ const router = express.Router();
    WELLHUB – check-in de usuario
    ============================================================ */
 router.get("/checking/:userId", verifyToken, getUserChecking);
+router.post("checkin-booking",verifyGympassSignature, wellhubWebhookController);
 
 /* ============================================================
    GYMPASS – productos y clases
