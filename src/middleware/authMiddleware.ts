@@ -1,7 +1,9 @@
 // src/middleware/authMiddleware.ts
+import { createHmac } from "crypto";
 import type { Request, Response, NextFunction, RequestHandler } from "express";
 import type { DecodedIdToken } from "firebase-admin/auth";
 import admin from "../config/firebase";
+
 
 /* ---------- Tipos auxiliares ---------- */
 export interface AuthRequest extends Request {
@@ -15,6 +17,12 @@ export interface AuthRequest extends Request {
 interface FirebaseAuthError {
   code?: string;
   message?: string;
+}
+interface GympassRequest extends Request {
+  gympassEvent?: {
+    type: string;
+    data: unknown;
+  };
 }
 
 /* ---------- Middleware ---------- */
@@ -74,4 +82,38 @@ export const verifyToken: RequestHandler = (req: AuthRequest, res: Response, nex
       console.error("[verifyToken] Error verificando token:", err);
       res.status(401).json({ error: "Token inválido" });
     });
+};
+
+export const verifyGympassSignature: RequestHandler = (
+  req: GympassRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  const signature = req.headers["x-gympass-signature"] as string;
+  const secret = process.env.GYMPASS_SECRET;
+
+  if (!signature || !secret) {
+    res.status(401).json({ error: "Firma no proporcionada" });
+    return;
+  }
+
+  const body = JSON.stringify(req.body);
+
+  // 👇 ya reconoce createHmac
+  const computed = createHmac("sha1", secret)
+    .update(body)
+    .digest("hex")
+    .toUpperCase();
+
+  if (computed !== signature.toUpperCase()) {
+    res.status(401).json({ error: "Firma inválida" });
+    return;
+  }
+
+  req.gympassEvent = {
+    type: req.body.event_type,
+    data: req.body.event_data,
+  };
+
+  next();
 };
