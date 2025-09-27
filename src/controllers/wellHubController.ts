@@ -114,7 +114,7 @@ export const getUserChecking = async (
       res.status(404).json({ error: "Usuario no encontrado" });
       return;
     }
-    const gympass = userDoc.data()?.gympass
+    const gympass = userDoc.data()?.gympass;
     const gymId = gympass?.gym_id;
     const checkingWellhub = await GympassService.simulateChecking(
       { gympass_user_id: gympass?.user_id, product_id: gympass?.product_id },
@@ -131,7 +131,6 @@ export const getUserChecking = async (
    POST – webhook de check-in de Gympass
    ============================================================ */
 
-
 export const wellhubWebhookController = async (
   req: Request,
   res: Response
@@ -146,9 +145,7 @@ export const wellhubWebhookController = async (
       res.status(400).json({ error: "Falta la firma de Wellhub" });
       return;
     }
-
-    const { eventType, eventData } = event;
-
+    const { event_type: eventType, event_data: eventData } = event;
     if (eventType !== "checkin") {
       res.status(400).json({ error: "Evento no soportado" });
       return;
@@ -171,12 +168,14 @@ export const wellhubWebhookController = async (
     const uniqueToken: string = userPayload.unique_token;
     const gymId: number = gymPayload.id;
     const productId: number = gymPayload.product.id;
-    const {email} = userPayload;
+    const { email } = userPayload;
     const phoneRaw: string | undefined = userPayload.phone_number;
 
     // Usar phone_number como contraseña: validar que exista y cumpla con mínimo de Firebase
     if (!phoneRaw || typeof phoneRaw !== "string") {
-      res.status(400).json({ error: "Falta phone_number para usar como contraseña" });
+      res
+        .status(400)
+        .json({ error: "Falta phone_number para usar como contraseña" });
       return;
     }
     const password = phoneRaw.trim();
@@ -184,7 +183,8 @@ export const wellhubWebhookController = async (
     if (password.length < 6) {
       res.status(400).json({
         error: "WEAK_PASSWORD",
-        message: "El phone_number debe tener al menos 6 caracteres para usarse como contraseña",
+        message:
+          "El phone_number debe tener al menos 6 caracteres para usarse como contraseña",
       });
       return;
     }
@@ -195,6 +195,7 @@ export const wellhubWebhookController = async (
       .where("gympass.user_id", "==", uniqueToken)
       .limit(1)
       .get();
+    console.log(existingUserSnap);
 
     if (!existingUserSnap.empty) {
       res.status(409).json({ error: "Usuario ya existe" });
@@ -209,40 +210,34 @@ export const wellhubWebhookController = async (
 
     // 4️⃣ Guardar en Firestore (siguiendo la estructura de userController)
     const now = new Date().toISOString();
-    await db.collection("users").doc(userRecord.uid).set({
-      firstName: userPayload.first_name ?? null,
-      lastName: userPayload.last_name ?? null,
-      email,
-      phone: phoneRaw ?? null,
-      branch: null,
-      role: "user",
-      isAdmin: false,
-      isNew: true,
-      enabled: true,
-      freeSession: false,
-      birthDate: null,
-      registrationDate: now,
-      emergencyContact: { name: null, phone: null },
-      packages: [],
-      transactions: [],
-      waitlist: { inList: false, position: null },
-      classes: { total: 0, available: 0, taken: 0 },
-      createdAt: now,
-      gympass: {
-        gym_id: gymId,
-        product_id: productId,
-        user_id: uniqueToken,
-      },
-      checkins: [
-        {
-          gymId,
-          productId,
-          timestamp: eventData.timestamp ?? null,
-          receivedAt: now,
-          rawEvent: eventData,
+    await db
+      .collection("users")
+      .doc(userRecord.uid)
+      .set({
+        firstName: userPayload.first_name ?? null,
+        lastName: userPayload.last_name ?? null,
+        email,
+        phone: phoneRaw ?? null,
+        branch: null,
+        role: "user",
+        isAdmin: false,
+        isNew: true,
+        enabled: true,
+        freeSession: false,
+        birthDate: null,
+        registrationDate: now,
+        emergencyContact: { name: null, phone: null },
+        packages: [],
+        transactions: [],
+        waitlist: { inList: false, position: null },
+        classes: { total: 0, available: 0, taken: 0 },
+        createdAt: now,
+        gympass: {
+          gym_id: gymId,
+          product_id: productId,
+          user_id: uniqueToken,
         },
-      ],
-    });
+      });
     res.status(201).json({
       message: "Usuario creado con check-in",
       id: userRecord.uid,
@@ -263,7 +258,8 @@ export const wellhubWebhookController = async (
       } else if (fbErr.code === "auth/invalid-password") {
         status = 400;
         code = "INVALID_PASSWORD";
-        message = "La contraseña proporcionada no cumple las políticas de Auth.";
+        message =
+          "La contraseña proporcionada no cumple las políticas de Auth.";
       } else if (fbErr.message) {
         message = fbErr.message;
       }
@@ -275,8 +271,6 @@ export const wellhubWebhookController = async (
     res.status(status).json({ error: code, message });
   }
 };
-
-
 
 /* ============================================================
    PATCH – actualizar reserva (booking)
@@ -309,4 +303,3 @@ export const updateBookingController = async (
     res.status(500).json({ error: msg });
   }
 };
-

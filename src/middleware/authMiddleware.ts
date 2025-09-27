@@ -4,7 +4,6 @@ import type { Request, Response, NextFunction, RequestHandler } from "express";
 import type { DecodedIdToken } from "firebase-admin/auth";
 import admin from "../config/firebase";
 
-
 /* ---------- Tipos auxiliares ---------- */
 export interface AuthRequest extends Request {
   user?: {
@@ -18,11 +17,13 @@ interface FirebaseAuthError {
   code?: string;
   message?: string;
 }
+
 interface GympassRequest extends Request {
   gympassEvent?: {
     type: string;
     data: unknown;
   };
+  rawBody?: Buffer;
 }
 
 /* ---------- Middleware ---------- */
@@ -90,26 +91,22 @@ export const verifyGympassSignature: RequestHandler = (
   next: NextFunction
 ) => {
   const signature = req.headers["x-gympass-signature"] as string;
-  const secret = process.env.GYMPASS_SECRET;
-
+  const secret = process.env.GYMPASS_TOKEN;
   if (!signature || !secret) {
-    res.status(401).json({ error: "Firma no proporcionada" });
+    res
+      .status(401)
+      .json({ error: "Firma no proporcionada o secret faltante" });
     return;
   }
-
-  const body = JSON.stringify(req.body);
-
-  // 👇 ya reconoce createHmac
+  const rawBody = JSON.stringify(req.body);
   const computed = createHmac("sha1", secret)
-    .update(body)
+    .update(rawBody)
     .digest("hex")
     .toUpperCase();
-
   if (computed !== signature.toUpperCase()) {
     res.status(401).json({ error: "Firma inválida" });
     return;
   }
-
   req.gympassEvent = {
     type: req.body.event_type,
     data: req.body.event_data,
