@@ -291,9 +291,18 @@ export const updateBookingController = async (
   const payload = req.body;
 
   try {
+
+     const userDoc = await admin
+          .firestore()
+          .collection("users")
+          .doc(gymId)
+          .get();
+    // eslint-disable-next-line prefer-destructuring
+    const gympassGymId= userDoc.data()?.gympass_gym_id
+    const gympassBookingNumber= userDoc.data()?.booking_number
     const updatedBooking = await GympassService.updateBooking(
-      Number(gymId),
-      bookingId,
+      gympassGymId,
+      gympassBookingNumber,
       payload
     );
     res.status(200).json(updatedBooking);
