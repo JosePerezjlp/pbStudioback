@@ -16,7 +16,7 @@ const router = express.Router();
    WELLHUB – check-in de usuario
    ============================================================ */
 router.get("/checking/:userId", verifyToken, getUserChecking);
-router.post("checkin-booking",verifyGympassSignature, wellhubWebhookController);
+router.post("/check-in-webhook",verifyGympassSignature, wellhubWebhookController);
 
 /* ============================================================
    GYMPASS – productos y clases
