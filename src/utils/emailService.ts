@@ -67,7 +67,8 @@ export const sendWelcomeEmail = async (to: string, name: string) => {
 export const sendReservationConfirmationEmail = async (
   to: string,
   name: string,
-  classInfo: string
+  classInfo: string,
+  typeClass:string
 ) => {
   try {
     const safeName = escapeHtml(name);
@@ -109,7 +110,7 @@ export const sendReservationConfirmationEmail = async (
               <tr>
                 <td align="center" style="padding:0 24px 8px 24px;">
                   <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
-                    Hola ${safeName}, tu reserva para <strong>${safeClass}</strong> ha sido confirmada.
+                    Hola ${safeName}, tu reserva para <strong>${safeClass}</strong> <strong>${typeClass}</strong> ha sido confirmada.
                   </p>
                 </td>
               </tr>

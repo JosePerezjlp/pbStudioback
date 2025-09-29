@@ -267,7 +267,7 @@ export const createReservationController = async (
         .get();
       const u = userSnapEmail.data() as UserDoc;
 
-      await sendReservationConfirmationEmail(u.email, u.firstName, info);
+      await sendReservationConfirmationEmail(u.email, u.firstName, info, cls.type as string);
     } catch (e) {
       console.error("Email de confirmación falló:", e);
     }
