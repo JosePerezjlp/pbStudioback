@@ -60,11 +60,12 @@ export const GympassService = {
   },
   async updateBooking(
     gymId: number,
-    bookingNumber: string,
+    clasId: number,
+    slotId: number,
     bookingRequest: UpdateBookingRequest
   ) {
     const res = await api.patch(
-      `/booking/v1/gyms/${gymId}/bookings/${bookingNumber}`,
+      `/booking/v1/gyms/${gymId}/classes/${clasId}/${{ slotId }}`,
       bookingRequest
     );
     return res.data;

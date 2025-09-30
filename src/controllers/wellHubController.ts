@@ -3,6 +3,8 @@ import admin from "../config/firebase";
 import { GympassService } from "../services/gympass.service";
 import { ClassRequest } from "../models/ClassRequest";
 import { CreateSlotRequest } from "../models/CreateSlotRequest";
+import { UpdateBookingRequest } from "../models/UpdateBookingRequest";
+import { BookingStatus } from "../types/enums";
 
 /* ============================================================
    GET – productos por gym
@@ -276,34 +278,46 @@ export const wellhubWebhookController = async (
    PATCH – actualizar reserva (booking)
    ============================================================ */
 export const updateBookingController = async (
-  req: Request<
-    { gymId: string; bookingId: string },
-    object,
-    {
-      status: "RESERVED" | "REJECTED" | "CANCELLED_BY_GYM";
-      reason?: string;
-      virtual_class_url?: string;
-    }
-  >,
+  req: Request,
   res: Response
 ): Promise<void> => {
-  const { gymId, bookingId } = req.params;
+  const { gymId, classId } = req.params;
   const payload = req.body;
 
   try {
-
-     const userDoc = await admin
-          .firestore()
-          .collection("users")
-          .doc(gymId)
-          .get();
+    const branchDoc = await admin
+      .firestore()
+      .collection("branches")
+      .doc(gymId)
+      .get();
     // eslint-disable-next-line prefer-destructuring
-    const gympassGymId= userDoc.data()?.gympass_gym_id
-    const gympassBookingNumber= userDoc.data()?.booking_number
+    const gympassGymId = branchDoc.data()?.gympass_gym_id;
+    const clasesDoc = await admin
+      .firestore()
+      .collection("classes")
+      .doc(classId)
+      .get();
+    const gympassClassId = clasesDoc.data()?.gympass.class_id;
+    const gympassSlotId = clasesDoc.data()?.gympass.slot_id;
+    const bookingRequest: UpdateBookingRequest = new UpdateBookingRequest();
+    if (
+      Object.values(BookingStatus).includes(payload.status as BookingStatus)
+    ) {
+      bookingRequest.status = payload.status as BookingStatus;
+    } else {
+      throw new Error("Estado inválido recibido en el payload");
+    }
+    const capacity = Number.parseInt(clasesDoc.data()?.capacity, 10);
+    const occupied = Number.parseInt(clasesDoc.data()?.occupied, 10);
+    bookingRequest.total_capacity = capacity;
+    bookingRequest.total_booked = capacity - occupied;
+console.log('bookingRequest',bookingRequest);
+
     const updatedBooking = await GympassService.updateBooking(
       gympassGymId,
-      gympassBookingNumber,
-      payload
+      gympassClassId,
+      gympassSlotId,
+      bookingRequest
     );
     res.status(200).json(updatedBooking);
   } catch (error) {

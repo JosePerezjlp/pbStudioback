@@ -31,3 +31,8 @@ export enum ClassType {
   GROUPS = "groups",
   INDIVIDUAL = "individual",
 }
+export enum BookingStatus {
+  RESERVED = "RESERVED",
+  REJECTED = "REJECTED",
+  CANCELLED_BY_GYM = "CANCELLED_BY_GYM",
+}
