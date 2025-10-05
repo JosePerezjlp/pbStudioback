@@ -290,7 +290,6 @@ export const updateBookingController = async (
       .collection("branches")
       .doc(gymId)
       .get();
-    // eslint-disable-next-line prefer-destructuring
     const gympassGymId = branchDoc.data()?.gympass_gym_id;
     const clasesDoc = await admin
       .firestore()
@@ -311,7 +310,6 @@ export const updateBookingController = async (
     const occupied = Number.parseInt(clasesDoc.data()?.occupied, 10);
     bookingRequest.total_capacity = capacity;
     bookingRequest.total_booked = capacity - occupied;
-console.log('bookingRequest',bookingRequest);
 
     const updatedBooking = await GympassService.updateBooking(
       gympassGymId,
