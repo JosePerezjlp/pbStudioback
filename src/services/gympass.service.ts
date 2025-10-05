@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import axios from "axios";
 import dotenv from "dotenv";
 import { CreateSlotRequest } from "../models/CreateSlotRequest";
@@ -19,7 +21,6 @@ if (!baseURL || !token) {
 const api = axios.create({
   baseURL,
   headers: {
-    Accept: "application/json",
     "Content-Type": "application/json",
     Authorization: `Bearer ${token}`,
   },
@@ -58,16 +59,25 @@ export const GympassService = {
     );
     return res.data;
   },
+  // eslint-disable-next-line consistent-return
   async updateBooking(
     gymId: number,
     clasId: number,
     slotId: number,
     bookingRequest: UpdateBookingRequest
   ) {
-    const res = await api.patch(
-      `/booking/v1/gyms/${gymId}/classes/${clasId}/${{ slotId }}`,
-      bookingRequest
-    );
-    return res.data;
+    try {
+      const url = `https://apitesting.partners.gympass.com/booking/v1/gyms/${gymId}/classes/${clasId}/slots/${slotId}`;
+      const res = await axios.patch(url, bookingRequest, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      return { success: true, data: res.data };
+    } catch (error: any) {
+      return { success: false, error: error.response?.data || error.message };
+    }
   },
 };
