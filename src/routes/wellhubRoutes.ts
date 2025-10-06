@@ -41,6 +41,6 @@ router.get("/cheking/:userId", verifyToken, getUserChecking);
 /* ============================================================
    GYMPASS – actualizar reserva (booking)
    ============================================================ */
-router.put("/reserve/:gymId/:classId", verifyToken, updateBookingController);
+router.put("/reserve/:classId", verifyToken, updateBookingController);
 
 export default router;

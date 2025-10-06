@@ -3,8 +3,6 @@ import admin from "../config/firebase";
 import { GympassService } from "../services/gympass.service";
 import { ClassRequest } from "../models/ClassRequest";
 import { CreateSlotRequest } from "../models/CreateSlotRequest";
-import { UpdateBookingRequest } from "../models/UpdateBookingRequest";
-import { BookingStatus } from "../types/enums";
 
 /* ============================================================
    GET – productos por gym
@@ -277,39 +275,26 @@ export const wellhubWebhookController = async (
 /* ============================================================
    PATCH – actualizar reserva (booking)
    ============================================================ */
+// 🔹 Busca clase a partir de un id (puede ser de reserva o clase)
+
+// 🔹 Controlador principal
 export const updateBookingController = async (
   req: Request,
   res: Response
 ): Promise<void> => {
-  const { gymId, classId } = req.params;
+  const { classId } = req.params;
   const payload = req.body;
 
   try {
-    const branchDoc = await admin
-      .firestore()
-      .collection("branches")
-      .doc(gymId)
-      .get();
-    const gympassGymId = branchDoc.data()?.gympass_gym_id;
-    const clasesDoc = await admin
-      .firestore()
-      .collection("classes")
-      .doc(classId)
-      .get();
+    const { clasesDoc, gymId } = await GympassService.findClassAndBranch(classId);
+
+    const branchData = await GympassService.getBranchData(gymId);
+
+    const gympassGymId = branchData?.gympass_gym_id;
     const gympassClassId = clasesDoc.data()?.gympass.class_id;
     const gympassSlotId = clasesDoc.data()?.gympass.slot_id;
-    const bookingRequest: UpdateBookingRequest = new UpdateBookingRequest();
-    if (
-      Object.values(BookingStatus).includes(payload.status as BookingStatus)
-    ) {
-      bookingRequest.status = payload.status as BookingStatus;
-    } else {
-      throw new Error("Estado inválido recibido en el payload");
-    }
-    const capacity = Number.parseInt(clasesDoc.data()?.capacity, 10);
-    const occupied = Number.parseInt(clasesDoc.data()?.occupied, 10);
-    bookingRequest.total_capacity = capacity;
-    bookingRequest.total_booked = capacity - occupied;
+
+    const bookingRequest = GympassService.buildBookingRequest(clasesDoc, payload.status);
 
     const updatedBooking = await GympassService.updateBooking(
       gympassGymId,
@@ -317,6 +302,7 @@ export const updateBookingController = async (
       gympassSlotId,
       bookingRequest
     );
+
     res.status(200).json(updatedBooking);
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
