@@ -1,8 +1,8 @@
 import { Request, Response } from "express";
 import admin from "../config/firebase";
 import { GympassService } from "../services/gympass.service";
-import { ClassRequest } from "../models/ClassRequest";
 import { CreateSlotRequest } from "../models/CreateSlotRequest";
+import { ClassPayload } from "../models/ClassPayload";
 
 /* ============================================================
    GET – productos por gym
@@ -57,11 +57,12 @@ export const createSlotController = async (
   res: Response
 ): Promise<void> => {
   const { gymId, classId } = req.params;
+  const branchData = await GympassService.getBranchData(gymId);
+  const gympassGymId = branchData?.gympass_gym_id;
   const payload: CreateSlotRequest = req.body;
-
   try {
     const slot = await GympassService.createClass(
-      Number(gymId),
+      Number(gympassGymId),
       Number(classId),
       payload
     );
@@ -77,21 +78,24 @@ export const createSlotController = async (
    POST – crear categoría (clase)
    ============================================================ */
 export const createCategoryController = async (
-  req: Request<{ gymId: string }, object, ClassRequest>,
+  req: Request<{ gymId: string }, object, ClassPayload>,
   res: Response
 ): Promise<void> => {
-  const { gymId } = req.params;
-  const payload: ClassRequest = req.body;
-
   try {
+    const { gymId } = req.params;
+    const branchData = await GympassService.getBranchData(gymId);
+    const gympassGymId = branchData?.gympass_gym_id;
+    const payload = {
+      classes: [req.body],
+    };
     const category = await GympassService.createCategory(
-      Number(gymId),
+      Number(gympassGymId),
       payload
     );
     res.status(201).json(category);
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
-    console.error("❌ Error al crear categoría:", msg);
+    console.error("❌ Error al crear categoría:", error);
     res.status(500).json({ error: msg });
   }
 };
@@ -286,7 +290,8 @@ export const updateBookingController = async (
   const payload = req.body;
 
   try {
-    const { clasesDoc, gymId } = await GympassService.findClassAndBranch(classId);
+    const { clasesDoc, gymId } =
+      await GympassService.findClassAndBranch(classId);
 
     const branchData = await GympassService.getBranchData(gymId);
 
@@ -294,7 +299,10 @@ export const updateBookingController = async (
     const gympassClassId = clasesDoc.data()?.gympass.class_id;
     const gympassSlotId = clasesDoc.data()?.gympass.slot_id;
 
-    const bookingRequest = GympassService.buildBookingRequest(clasesDoc, payload.status);
+    const bookingRequest = GympassService.buildBookingRequest(
+      clasesDoc,
+      payload.status
+    );
 
     const updatedBooking = await GympassService.updateBooking(
       gympassGymId,

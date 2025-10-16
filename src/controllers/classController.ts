@@ -52,6 +52,7 @@ export const createClassController = async (
       capacity,
       occupied,
       status = "abierta",
+      gympass
     } = req.body as Record<string, unknown>;
 
     // Números válidos
@@ -82,7 +83,14 @@ export const createClassController = async (
       });
       return;
     }
-
+   // 👇 Añadir gympass solo si viene en body
+    if (!gympass && typeof gympass !== "object") {
+     res.status(409).json({
+        error: "No ha creado una clase en Wellhub",
+        code: "CONFLICTING_CLASS",
+      });
+      return;
+    }
     // Obtener tipo desde el salón, con fallback al enum
     const roomType =
       (await getRoomTypeById(String(room))) ?? ClassType.INDIVIDUAL;
@@ -97,6 +105,7 @@ export const createClassController = async (
       info,
       capacity: parsedCapacity,
       occupied: parsedOccupied,
+      gympass,
       status,
       type: roomType, // enum
       createdAt: new Date().toISOString(),

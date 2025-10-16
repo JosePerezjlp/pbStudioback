@@ -32,7 +32,8 @@ router.post(
   verifyToken,
   createSlotController
 );
-router.post("/:gymId/classes", verifyToken, createCategoryController);
+// router.post("/:gymId/classes", verifyToken, createCategoryController);
+router.post("/:gymId/classes", createCategoryController);
 
 /* ============================================================
    GYMPASS – simular check-in
