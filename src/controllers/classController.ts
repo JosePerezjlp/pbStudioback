@@ -97,7 +97,14 @@ export const createClassController = async (
       });
       return;
     }
-
+   // 👇 Añadir gympass solo si viene en body
+    if (!gympass && typeof gympass !== "object") {
+     res.status(409).json({
+        error: "No ha creado una clase en Wellhub",
+        code: "CONFLICTING_CLASS",
+      });
+      return;
+    }
     // Obtener tipo desde el salón, con fallback al enum
     const roomType =
       (await getRoomTypeById(String(room))) ?? ClassType.INDIVIDUAL;
