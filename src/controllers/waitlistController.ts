@@ -409,7 +409,7 @@ export const updateWaitlistController = async (
       const u = userSnap.data() as UserDoc | undefined;
       if (u) {
         if (result.action === "accepted") {
-          await sendWaitlistAcceptedEmail(u.email, u.firstName, result.classId);
+          await sendWaitlistAcceptedEmail(u.email, u.firstName, result.classId, null);
         } else {
           await sendWaitlistRejectedEmail(u.email, u.firstName, result.classId);
         }

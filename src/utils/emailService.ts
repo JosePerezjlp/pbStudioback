@@ -68,11 +68,18 @@ export const sendReservationConfirmationEmail = async (
   to: string,
   name: string,
   classInfo: string,
-  typeClass:string
+  typeClass: string,
+  seatNumber?: number | null
 ) => {
   try {
     const safeName = escapeHtml(name);
     const safeClass = escapeHtml(classInfo);
+    
+    // Generar información del asiento para clases grupales
+    let seatInfo = "";
+    if (seatNumber !== null && seatNumber !== undefined && typeClass.toLowerCase().includes("grup")) {
+      seatInfo = `<br/><br/><strong>Tu lugar:</strong> Asiento #${seatNumber}`;
+    }
 
     await resend.emails.send({
       from: FROM,
@@ -110,7 +117,7 @@ export const sendReservationConfirmationEmail = async (
               <tr>
                 <td align="center" style="padding:0 24px 8px 24px;">
                   <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
-                    Hola ${safeName}, tu reserva para <strong>${safeClass}</strong> <strong>${typeClass}</strong> ha sido confirmada.
+                    Hola ${safeName}, tu reserva para <strong>${safeClass}</strong> <strong>${typeClass}</strong> ha sido confirmada.${seatInfo}
                   </p>
                 </td>
               </tr>
@@ -651,7 +658,8 @@ export const sendWaitlistEntryEmail = async (
 export const sendWaitlistAcceptedEmail = async (
   to: string,
   name: string,
-  classId: string
+  classId: string,
+  seatNumber?: number | null
 ) => {
   try {
     const { discipline, dateStr, hour } = await getClassInfo(classId);
@@ -660,6 +668,12 @@ export const sendWaitlistAcceptedEmail = async (
     const safeDiscipline = escapeHtml(discipline);
     const safeDate = escapeHtml(dateStr);
     const safeHour = escapeHtml(hour);
+    
+    // Generar información del asiento para clases grupales
+    let seatInfo = "";
+    if (seatNumber !== null && seatNumber !== undefined) {
+      seatInfo = `<br/><br/><strong>Tu lugar:</strong> Asiento #${seatNumber}`;
+    }
 
     await resend.emails.send({
       from: FROM,
@@ -697,7 +711,7 @@ export const sendWaitlistAcceptedEmail = async (
                 <td align="center" style="padding:0 24px 8px 24px;">
                   <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
                     Hola ${safeName}, ¡buenas noticias! Se liberó un cupo para
-                    <strong>${safeDiscipline}</strong> el <strong>${safeDate}</strong> a las <strong>${safeHour}</strong>.
+                    <strong>${safeDiscipline}</strong> el <strong>${safeDate}</strong> a las <strong>${safeHour}</strong>.${seatInfo}
                   </p>
                 </td>
               </tr>

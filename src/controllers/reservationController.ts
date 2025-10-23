@@ -267,7 +267,7 @@ export const createReservationController = async (
         .get();
       const u = userSnapEmail.data() as UserDoc;
 
-      await sendReservationConfirmationEmail(u.email, u.firstName, info, cls.type as string);
+      await sendReservationConfirmationEmail(u.email, u.firstName, info, cls.type as string, seat);
     } catch (e) {
       console.error("Email de confirmación falló:", e);
     }
@@ -591,7 +591,8 @@ export const deleteReservationController = async (
           await sendWaitlistAcceptedEmail(
             promotedUserEmail.email,
             promotedUserEmail.firstName,
-            promotedClassId
+            promotedClassId,
+            null // Asiento null para promociones desde waitlist
           );
         }
       } catch (e) {
