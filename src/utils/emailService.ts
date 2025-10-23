@@ -125,7 +125,7 @@ export const sendReservationConfirmationEmail = async (
               <tr>
                 <td align="center" style="padding:0 24px 24px 24px;">
                   <p style="margin:0;font-size:14px;line-height:21px;color:#555555;">
-                    Si necesitas cancelar, hazlo desde tu cuenta con la antelación indicada para evitar penalidades.
+                    Si necesitas cancelar, hazlo desde tu cuenta con 12 horas de anticipación para evitar penalidades.
                   </p>
                 </td>
               </tr>
@@ -719,7 +719,7 @@ export const sendWaitlistAcceptedEmail = async (
               <tr>
                 <td align="center" style="padding:0 24px 24px 24px;">
                   <p style="margin:0;font-size:14px;line-height:21px;color:#555555;">
-                    Tu reserva fue creada automáticamente. Si no puedes asistir, recuerda cancelarla con la antelación establecida.
+                    Tu reserva fue creada automáticamente. Si no puedes asistir, recuerda cancelarla con 12 horas de anticipación.
                   </p>
                 </td>
               </tr>
