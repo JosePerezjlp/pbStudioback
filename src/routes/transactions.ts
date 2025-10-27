@@ -19,7 +19,7 @@ router.get("/my", verifyToken, getUserTransactionsController); // Obtener transa
 /* Rutas administrativas (requieren permisos específicos): */
 router.get("/", verifyToken, checkPermission("transacciones", "listado"), getAllTransactionsController);
 router.get("/caja", verifyToken, checkPermission("transacciones", "caja"), getCajaTransactionsController);
-router.get("/:id", verifyToken, checkPermission("transacciones", "detalle"), getUserTransactionsController);
+router.get("/:userId", verifyToken, checkPermission("transacciones", "detalle"), getUserTransactionsController);
 router.post("/cash", verifyToken, checkPermission("transacciones", "crear"), createCashTransactionController);
 router.patch("/:id/cancel", verifyToken, checkPermission("transacciones", "cancelar"), cancelTransactionController);
 router.patch("/:id/expiration", verifyToken, checkPermission("transacciones", "editar_fecha_expiracion"), updateTransactionExpirationController);

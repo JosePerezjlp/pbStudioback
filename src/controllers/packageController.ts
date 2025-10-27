@@ -58,13 +58,17 @@ export const getAllPackagesController = async (
           return true;
         }
         
+        // Normalizar fechas para comparación consistente
+        const startDate = pkg.startDate ? (pkg.startDate.toDate ? pkg.startDate.toDate().toISOString() : pkg.startDate) : null;
+        const endDate = pkg.endDate ? (pkg.endDate.toDate ? pkg.endDate.toDate().toISOString() : pkg.endDate) : null;
+        
         // Verificar fecha de inicio
-        if (pkg.startDate && now < pkg.startDate) {
+        if (startDate && now < startDate) {
           return false; // Aún no se publica
         }
         
         // Verificar fecha de fin
-        if (pkg.endDate && now > pkg.endDate) {
+        if (endDate && now > endDate) {
           return false; // Ya expiró
         }
         

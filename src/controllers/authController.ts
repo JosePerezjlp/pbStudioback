@@ -118,10 +118,13 @@ export const loginController = async (
       });
       await admin.auth().revokeRefreshTokens(uid);
 
+      // Filtrar campos sensibles como en la lógica de users
+      const { password: _omit, ...safeData } = data;
+
       res.status(200).json({
         uid,
-        email: str(data.email),
-        ...data,
+        email: str(safeData.email),
+        ...safeData,
         role: "employee",
         status,
         branches,

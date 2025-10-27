@@ -341,8 +341,8 @@ export const getUserTransactionsController = async (
       const decoded = await admin.auth().verifyIdToken(idToken);
       userId = decoded.uid;
     } else {
-      // Si es la ruta /:userId, usar el parámetro
-      userId = req.params.userId;
+      // Si es la ruta /:userId, usar el parámetro (también soporta /:id por retrocompatibilidad)
+      userId = req.params.userId || req.params.id;
     }
 
     const snap = await admin
