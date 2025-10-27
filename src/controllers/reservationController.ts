@@ -36,7 +36,7 @@ interface ClassDoc {
   type?: string;
 }
 
-type ReservationStatus = "active" | "cancelled";
+type ReservationStatus = "active" | "cancelled" | "changed";
 
 interface ReservationDoc {
   id: string;
@@ -51,8 +51,10 @@ interface ReservationDoc {
 }
 
 interface CancellationTimes {
-  individual: number; // minutos
-  groups: number; // minutos
+  individual: number; // minutos para cancelar
+  groups: number; // minutos para cancelar
+  changeIndividual?: number; // minutos para cambiar (default: 120)
+  changeGroups?: number; // minutos para cambiar (default: 120)
 }
 
 /** Entradas de waitlist en Firestore */
@@ -653,5 +655,179 @@ export const deleteReservationController = async (
       CANCEL_WINDOW_EXPIRED: 403,
     };
     res.status(map[msg] ?? 500).json({ error: msg });
+  }
+};
+
+/* ===============================================================
+   CHANGE - Cambiar clase
+   =============================================================== */
+export const changeReservationController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { reservationId } = req.params;
+    const { newClassId, newSeat } = req.body as {
+      newClassId: string;
+      newSeat?: number;
+    };
+
+    if (!newClassId) {
+      res.status(400).json({ error: "newClassId es requerido" });
+      return;
+    }
+
+    const db = admin.firestore();
+    const reservationRef = db.collection("reservations").doc(reservationId);
+
+    // 1. Obtener configuración de tiempos
+    const cfgSnap = await db
+      .collection("configurations")
+      .doc("cancellation_times")
+      .get();
+
+    let cfg: CancellationTimes;
+    if (!cfgSnap.exists) {
+      // Valores por defecto
+      cfg = {
+        individual: 60,
+        groups: 120,
+        changeIndividual: 120, // 2 horas por defecto
+        changeGroups: 120, // 2 horas por defecto
+      };
+    } else {
+      const cfgData = cfgSnap.data() as CancellationTimes;
+      cfg = {
+        individual: cfgData.individual,
+        groups: cfgData.groups,
+        changeIndividual: cfgData.changeIndividual ?? 120,
+        changeGroups: cfgData.changeGroups ?? 120,
+      };
+    }
+
+    const result = await db.runTransaction(async (t) => {
+      // 2. Obtener reserva actual
+      const resSnap = await t.get(reservationRef);
+      if (!resSnap.exists) throw new Error("RESERVATION_NOT_FOUND");
+
+      const currentRes = resSnap.data() as ReservationDoc & { id: string };
+      if (currentRes.status !== "active") {
+        throw new Error("RESERVATION_NOT_ACTIVE");
+      }
+
+      // 3. Obtener clase actual y nueva
+      const currentClassRef = db.collection("classes").doc(currentRes.classId);
+      const newClassRef = db.collection("classes").doc(newClassId);
+      
+      const [currentClassSnap, newClassSnap] = await t.getAll(
+        currentClassRef,
+        newClassRef
+      );
+
+      if (!currentClassSnap.exists || !newClassSnap.exists) {
+        throw new Error("CLASS_NOT_FOUND");
+      }
+
+      const currentClass = currentClassSnap.data() as ClassDoc;
+      const newClass = newClassSnap.data() as ClassDoc;
+
+      // 4. Validar tiempo límite para cambiar
+      const classType = normalizeClassType(currentClass.type) ?? ClassType.INDIVIDUAL;
+      const windowMin = classType === ClassType.GROUPS ? cfg.changeGroups! : cfg.changeIndividual!;
+      const minutesUntilClass = diffMinutesFromNow(currentClass.day, currentClass.hour);
+
+      if (minutesUntilClass < windowMin) {
+        throw new Error(
+          `CANCEL_WINDOW_EXPIRED: No se puede cambiar clase. Faltan menos de ${windowMin} minutos.`
+        );
+      }
+
+      // 5. Validar disponibilidad de la nueva clase
+      const available = (newClass.capacity ?? 0) - (newClass.occupied ?? 0);
+      if (available <= 0) {
+        throw new Error(ERROR_CODES.NO_SLOTS_AVAILABLE);
+      }
+
+      // 6. Si es clase grupal, validar asiento
+      if (newClass.type === "groups" && newSeat) {
+        const seatTaken = await db
+          .collection("reservations")
+          .where("classId", "==", newClassId)
+          .where("seat", "==", newSeat)
+          .where("status", "==", "active")
+          .limit(1)
+          .get();
+
+        if (!seatTaken.empty) {
+          throw new Error("El asiento seleccionado no está disponible");
+        }
+      }
+
+      // 7. Crear referencia para nueva reserva ANTES de usarla en la transacción
+      const newReservationRef = db.collection("reservations").doc();
+      const newReservationData = {
+        userId: currentRes.userId,
+        classId: newClassId,
+        seat: newSeat || null,
+        status: "active" as const,
+        classDay: newClass.day,
+        createdAt: new Date().toISOString(),
+        consumedClass: false,
+        packageId: currentRes.packageId,
+      };
+      t.set(newReservationRef, newReservationData);
+
+      // 8. Actualizar reserva actual a "changed"
+      t.update(reservationRef, {
+        status: "changed",
+        changedAt: new Date().toISOString(),
+        newReservationId: newReservationRef.id,
+      });
+
+      // 9. Disminuir ocupación de clase actual
+      const currentOccupiedAfter = Math.max(0, (currentClass.occupied ?? 0) - 1);
+      t.update(currentClassRef, { occupied: currentOccupiedAfter });
+
+      // 10. Aumentar ocupación de nueva clase
+      t.update(newClassRef, {
+        occupied: admin.firestore.FieldValue.increment(1),
+      });
+
+      return {
+        oldReservation: {
+          id: reservationId,
+          classId: currentRes.classId,
+          status: "changed",
+        },
+        newReservation: {
+          id: newReservationRef.id,
+          classId: newClassId,
+          status: "active",
+          seat: newSeat || null,
+        },
+      };
+    });
+
+    res.status(200).json({
+      message: "Clase cambiada exitosamente",
+      ...result,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("Error cambiando clase:", err);
+
+    if (msg.includes("CANCEL_WINDOW_EXPIRED")) {
+      res.status(403).json({ error: msg });
+    } else if (msg === "RESERVATION_NOT_FOUND" || msg === "CLASS_NOT_FOUND") {
+      res.status(404).json({ error: msg });
+    } else if (
+      msg === "RESERVATION_NOT_ACTIVE" ||
+      msg === ERROR_CODES.NO_SLOTS_AVAILABLE ||
+      msg.includes("asiento")
+    ) {
+      res.status(409).json({ error: msg });
+    } else {
+      res.status(500).json({ error: "Error al cambiar clase" });
+    }
   }
 };

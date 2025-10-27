@@ -3,6 +3,7 @@ import { verifyToken } from "../middleware/authMiddleware";
 import { checkPermission } from "../middleware/permissionMiddleware";
 import { adminSessionGuard } from "../middleware/adminSessionGuard";
 import {
+  changeReservationController,
   createReservationController,
   deleteReservationController,
   getAllReservationsController,
@@ -16,6 +17,9 @@ const router = express.Router();
 router.get("/my", verifyToken, getAllReservationsController); // Obtener reservas del usuario actual
 router.post("/", verifyToken, createReservationController); // Crear reserva
 router.get("/", verifyToken, adminSessionGuard, checkPermission("clases", "reservaciones"), getAllReservationsController); // Ver todas las reservas (admin)
+
+// Ruta para cambiar clase (pública para usuarios autenticados)
+router.post("/:reservationId/change", verifyToken, changeReservationController);
 
 // Rutas administrativas con validación de sesión
 router.get("/:reservationId", verifyToken, adminSessionGuard, getReservationByIdController); // Ver reserva específica

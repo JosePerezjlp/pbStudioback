@@ -9,28 +9,42 @@ export const setCancellationTimesController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { individual, groups } = req.body;
+    const { individual, groups, changeIndividual, changeGroups } = req.body;
 
     const parsedIndividual = Number(individual);
     const parsedGroups = Number(groups);
+    const parsedChangeIndividual = Number(changeIndividual);
+    const parsedChangeGroups = Number(changeGroups);
 
-    if (Number.isNaN(parsedIndividual) || Number.isNaN(parsedGroups)) {
+    if (
+      Number.isNaN(parsedIndividual) ||
+      Number.isNaN(parsedGroups) ||
+      Number.isNaN(parsedChangeIndividual) ||
+      Number.isNaN(parsedChangeGroups)
+    ) {
       res.status(400).json({ error: "Los valores deben ser numéricos" });
       return;
+    }
+
+    const configData: Record<string, number | string> = {
+      individual: parsedIndividual,
+      groups: parsedGroups,
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Agregar campos opcionales si están presentes
+    if (!Number.isNaN(parsedChangeIndividual)) {
+      configData.changeIndividual = parsedChangeIndividual;
+    }
+    if (!Number.isNaN(parsedChangeGroups)) {
+      configData.changeGroups = parsedChangeGroups;
     }
 
     await admin
       .firestore()
       .collection("configurations")
       .doc("cancellation_times")
-      .set(
-        {
-          individual: parsedIndividual,
-          groups: parsedGroups,
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true } // permite actualizar sin sobrescribir campos no incluidos
-      );
+      .set(configData, { merge: true });
 
     res.status(200).json({ message: "Configuración guardada correctamente" });
   } catch (error) {
