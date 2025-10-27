@@ -88,8 +88,11 @@ export const sendReservationConfirmationEmail = async (
     
     // Generar información del asiento para clases grupales
     let seatInfo = "";
-    if (seatNumber !== null && seatNumber !== undefined && typeClass.toLowerCase().includes("grup")) {
-      seatInfo = `<br/><br/><strong>Tu lugar:</strong> Asiento #${seatNumber}`;
+    const classTypeLower = typeClass.toLowerCase();
+    const isGrupal = classTypeLower.includes("grup") || classTypeLower.includes("groups");
+    
+    if (seatNumber !== null && seatNumber !== undefined && isGrupal) {
+      seatInfo = `<br/><br/><strong>🎫 Tu lugar:</strong> Asiento #${seatNumber}`;
     }
 
     await resend.emails.send({
@@ -128,7 +131,7 @@ export const sendReservationConfirmationEmail = async (
               <tr>
                 <td align="center" style="padding:0 24px 8px 24px;">
                   <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
-                    Hola ${safeName}, tu reserva para <strong>${safeClass}</strong> <strong>${typeClass}</strong> ha sido confirmada.${seatInfo}
+                    Hola ${safeName}, tu reserva para <strong>${safeClass}</strong> ha sido confirmada.${seatInfo}
                   </p>
                 </td>
               </tr>
@@ -688,8 +691,10 @@ export const sendWaitlistAcceptedEmail = async (
     
     // Generar información del asiento para clases grupales
     let seatInfo = "";
-    if (seatNumber !== null && seatNumber !== undefined) {
-      seatInfo = `<br/><br/><strong>Tu lugar:</strong> Asiento #${seatNumber}`;
+    const isGrupal = classType && (classType.toLowerCase().includes("grup") || classType.toLowerCase().includes("groups"));
+    
+    if (seatNumber !== null && seatNumber !== undefined && isGrupal) {
+      seatInfo = `<br/><br/><strong>🎫 Tu lugar:</strong> Asiento #${seatNumber}`;
     }
 
     await resend.emails.send({
