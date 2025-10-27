@@ -10,6 +10,9 @@ import {
 
 const router = express.Router();
 
+// La ruta /validate está definida públicamente en index.ts para evitar duplicación
+// router.get("/validate", validateCouponController); // Duplicado - ya existe en index.ts
+
 router.post("/", verifyToken, createCouponController);
 router.get("/", verifyToken, getAllCouponsController);
 router.get("/:couponId", verifyToken, getCouponByIdController);

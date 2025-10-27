@@ -74,7 +74,10 @@ const diffMinutesFromNow = (day: string, hour: string): number => {
 const canCancelByConfig = (cls: ClassDoc, cfg: CancellationTimes): boolean => {
   const t = normalizeClassType(cls.type) ?? ClassType.INDIVIDUAL;
   const windowMin = t === ClassType.GROUPS ? cfg.groups : cfg.individual;
-  return diffMinutesFromNow(cls.day, cls.hour) >= windowMin;
+  const minutesUntilClass = diffMinutesFromNow(cls.day, cls.hour);
+  
+  // Puede cancelar si faltan MÁS minutos que el límite configurado
+  return minutesUntilClass > windowMin;
 };
 
 /** Mapea MENSAJE (ES) -> HTTP status sin usar objeto con claves duplicadas */
@@ -267,7 +270,7 @@ export const createReservationController = async (
         .get();
       const u = userSnapEmail.data() as UserDoc;
 
-      await sendReservationConfirmationEmail(u.email, u.firstName, info, cls.type as string);
+      await sendReservationConfirmationEmail(u.email, u.firstName, info, cls.type as string, seat);
     } catch (e) {
       console.error("Email de confirmación falló:", e);
     }
@@ -285,21 +288,41 @@ export const createReservationController = async (
    LIST / GET ONE
    =============================================================== */
 export const getAllReservationsController = async (
-  _req: Request,
+  req: Request,
   res: Response
 ): Promise<void> => {
   try {
-    const snapshot = await admin
+    let query = admin
       .firestore()
       .collection("reservations")
-      .orderBy("createdAt", "desc")
-      .get();
+      .orderBy("createdAt", "desc");
 
+    // Si es la ruta /my, filtrar por usuario actual
+    if (req.path === '/my' || req.originalUrl.includes('/my')) {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        res.status(401).json({ error: "Token no proporcionado" });
+        return;
+      }
+
+      const idToken = authHeader.slice(7);
+      const decoded = await admin.auth().verifyIdToken(idToken);
+      const userId = decoded.uid;
+      
+      query = admin
+        .firestore()
+        .collection("reservations")
+        .where("userId", "==", userId)
+        .orderBy("createdAt", "desc");
+    }
+
+    const snapshot = await query.get();
     const reservations: Array<{ id: string } & Record<string, unknown>> =
       snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
     res.status(200).json({ reservations });
   } catch (error) {
+    console.error("Error en getAllReservationsController:", error);
     res
       .status(500)
       .json({ error: "Error al obtener reservas", details: String(error) });
@@ -404,11 +427,18 @@ export const deleteReservationController = async (
       );
       if (!userSnapTx.exists) throw new Error("USER_NOT_FOUND");
       if (!classSnapTx.exists) throw new Error("CLASS_NOT_FOUND");
-      if (!cfgSnapTx.exists) throw new Error("CANCEL_TIMES_NOT_FOUND");
 
       const user = userSnapTx.data() as UserDoc;
       const cls = classSnapTx.data() as ClassDoc;
-      const cfg = cfgSnapTx.data() as CancellationTimes;
+      
+      // Configuración por defecto si no existe
+      let cfg: CancellationTimes;
+      if (!cfgSnapTx.exists) {
+        console.log("⚠️ No hay configuración de cancelación, usando valores por defecto");
+        cfg = { individual: 60, groups: 120 }; // 1 hora individual, 2 horas grupal
+      } else {
+        cfg = cfgSnapTx.data() as CancellationTimes;
+      }
 
       if (!canCancelByConfig(cls, cfg)) {
         throw new Error("CANCEL_WINDOW_EXPIRED");
@@ -568,7 +598,8 @@ export const deleteReservationController = async (
       await sendReservationCancelledEmail(
         cancelUser.email,
         cancelUser.firstName,
-        cancelInfo
+        cancelInfo,
+        cancelClass.type as string
       );
     } catch (e) {
       console.error("Email de cancelación falló:", e);
@@ -588,10 +619,21 @@ export const deleteReservationController = async (
           | UserDoc
           | undefined;
         if (promotedUserEmail) {
+          // Obtener información de la clase promovida
+          const promotedClassSnap = await admin
+            .firestore()
+            .collection("classes")
+            .doc(promotedClassId)
+            .get();
+          const promotedClassData = promotedClassSnap.data() as ClassDoc | undefined;
+          const promotedClassType = promotedClassData?.type || "individual";
+          
           await sendWaitlistAcceptedEmail(
             promotedUserEmail.email,
             promotedUserEmail.firstName,
-            promotedClassId
+            promotedClassId,
+            null, // Asiento null para promociones desde waitlist
+            promotedClassType // Tipo de clase
           );
         }
       } catch (e) {

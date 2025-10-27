@@ -76,8 +76,9 @@ export const createCouponController = async (
       endDate,
       discount,
       totalUses,
-      packageIds,
-      applyToSpecialPrice, // 👈 viene del frontend
+      packageIds = [], // Opcional para cupones universales
+      applyToSpecialPrice,
+      isUniversal = false, // Nuevo campo
     } = req.body;
 
     
@@ -85,20 +86,33 @@ export const createCouponController = async (
     const newEnd = new Date(endDate);
     const now = new Date().toISOString();
 
-    const pkgDocs = await fetchPackagesByIds(packageIds);
+    // Validar conflictos si tiene paquetes específicos
+    if (packageIds.length > 0) {
+      const pkgDocs = await fetchPackagesByIds(packageIds);
+      
+      if (pkgDocs.length !== packageIds.length) {
+        res.status(400).json({
+          error: "Algunos paquetes no existen"
+        });
+        return;
+      }
 
-    const couponIdsToCheck = Array.from(
-      new Set(pkgDocs.map((d) => d.data().couponId).filter(Boolean))
-    );
-    const couponsById = await fetchCouponsByIds(couponIdsToCheck, couponsCol);
+      // Solo validar conflictos si NO es universal
+      if (!isUniversal) {
+        const couponIdsToCheck = Array.from(
+          new Set(pkgDocs.map((d) => d.data().couponId).filter(Boolean))
+        );
+        const couponsById = await fetchCouponsByIds(couponIdsToCheck, couponsCol);
 
-    const conflicts = buildConflictList(pkgDocs, couponsById, newStart, newEnd);
-    if (conflicts.length > 0) {
-      res.status(400).json({
-        error: "Algunos paquetes ya tienen un cupón vigente.",
-        conflicts,
-      });
-      return;
+        const conflicts = buildConflictList(pkgDocs, couponsById, newStart, newEnd);
+        if (conflicts.length > 0) {
+          res.status(400).json({
+            error: "Algunos paquetes ya tienen un cupón vigente.",
+            conflicts,
+          });
+          return;
+        }
+      }
     }
 
     const isExpired = newEnd < new Date();
@@ -114,49 +128,55 @@ export const createCouponController = async (
       discount,
       totalUses,
       usedCount: 0,
-      packageIds,
-      applyToSpecialPrice, // ✅ no se invierte
+      packageIds: isUniversal ? [] : packageIds, // Vacío para universales
+      applyToSpecialPrice,
+      isUniversal,
       createdAt: now,
       updatedAt: now,
     };
 
     const docRef = await couponsCol.add(newCoupon);
 
-    await Promise.all(
-      pkgDocs.map((pkgDoc) => {
-        const rawAmount = pkgDoc.data().amount;
-        const amount =
-          typeof rawAmount === "number" ? rawAmount : parseFloat(rawAmount);
+    // Actualizar paquetes si NO es universal y tiene paquetes específicos
+    if (!isUniversal && packageIds.length > 0) {
+      const pkgDocs = await fetchPackagesByIds(packageIds);
+      
+      await Promise.all(
+        pkgDocs.map((pkgDoc) => {
+          const rawAmount = pkgDoc.data().amount;
+          const amount =
+            typeof rawAmount === "number" ? rawAmount : parseFloat(rawAmount);
 
-        if (amount === null || Number.isNaN(amount)) {
-          console.error(
-            `❌ Paquete con ID ${pkgDoc.id} tiene amount inválido:`,
-            rawAmount
-          );
-          throw new Error(`Paquete con ID ${pkgDoc.id} no tiene amount válido`);
-        }
+          if (amount === null || Number.isNaN(amount)) {
+            console.error(
+              `❌ Paquete con ID ${pkgDoc.id} tiene amount inválido:`,
+              rawAmount
+            );
+            throw new Error(`Paquete con ID ${pkgDoc.id} no tiene amount válido`);
+          }
 
-        const specialPrice =
-          effectiveDiscount > 0
-            ? Math.max(0, amount - (amount * effectiveDiscount) / 100)
-            : 0;
+          const specialPrice =
+            effectiveDiscount > 0
+              ? Math.max(0, amount - (amount * effectiveDiscount) / 100)
+              : 0;
 
-        const updateData = {
-          couponId: docRef.id,
-          discount: effectiveDiscount,
-          discountInfo: effectiveDiscount > 0 ? name : "--",
-          applyToSpecialPrice, // ✅ se refleja también en el paquete
-          specialPrice,
-          updatedAt: now,
-        };
-        console.log("TCL: updateData", updateData);
+          const updateData = {
+            couponId: docRef.id,
+            discount: effectiveDiscount,
+            discountInfo: effectiveDiscount > 0 ? name : "--",
+            applyToSpecialPrice,
+            specialPrice,
+            updatedAt: now,
+          };
+          console.log("TCL: updateData", updateData);
 
-        return pkgDoc.ref.update(updateData);
-      })
-    );
+          return pkgDoc.ref.update(updateData);
+        })
+      );
+    }
 
     res.status(201).json({
-      message: "Cupón creado y paquetes actualizados",
+      message: isUniversal ? "Cupón universal creado correctamente" : "Cupón creado y paquetes actualizados",
       id: docRef.id,
     });
   } catch (error) {
@@ -364,3 +384,88 @@ export const getCouponByIdController = async (
     res.status(500).json({ error: "Error interno", details: String(error) });
   }
 };
+
+export const validateCouponController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { code, packageId } = req.query as { code?: string; packageId?: string };
+
+    if (!code) {
+      res.status(400).json({ valid: false, error: "Código de cupón es requerido" });
+      return;
+    }
+
+    // Buscar cupón por código
+    const couponQuery = await couponsCol
+      .where("code", "==", code)
+      .limit(1)
+      .get();
+
+    if (couponQuery.empty) {
+      res.status(200).json({ 
+        valid: false,
+        error: "Cupón no encontrado" 
+      });
+      return;
+    }
+
+    const couponDoc = couponQuery.docs[0];
+    const couponData = couponDoc.data() as Coupon;
+
+    // Verificar fechas
+    const now = new Date();
+    const start = new Date(couponData.startDate);
+    const end = new Date(couponData.endDate);
+    const usosDisponibles = (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0);
+
+    let isValid = true;
+    let message = "";
+    let discountInfo = null;
+
+    // Verificar vigencia
+    if (now < start) {
+      isValid = false;
+      message = "El cupón aún no está vigente";
+    } else if (now >= end) {
+      isValid = false;
+      message = "El cupón ha expirado";
+    } else if (usosDisponibles <= 0) {
+      isValid = false;
+      message = "El cupón ha alcanzado su límite de usos";
+    }
+
+    // Si se proporciona packageId, verificar si aplica
+    if (isValid && packageId) {
+      if (!couponData.isUniversal && !couponData.packageIds.includes(packageId)) {
+        isValid = false;
+        message = "Este cupón no aplica para el paquete seleccionado";
+      }
+    }
+
+    if (isValid) {
+      discountInfo = {
+        discount: couponData.discount,
+        code: couponData.code,
+        name: couponData.name,
+        isUniversal: couponData.isUniversal,
+        appliesToPackage: packageId ? (couponData.isUniversal || couponData.packageIds.includes(packageId)) : true
+      };
+    }
+
+    res.status(200).json({
+      valid: isValid,
+      coupon: isValid ? discountInfo : null,
+      message: isValid ? "Cupón válido" : message
+    });
+  } catch (error) {
+    console.error("Error al validar cupón:", error);
+    res.status(500).json({ 
+      valid: false,
+      error: "Error interno", 
+      details: String(error) 
+    });
+  }
+};
+

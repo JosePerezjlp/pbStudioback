@@ -6,8 +6,9 @@ export type Coupon = {
   discount: number;
   totalUses: number;
   usedCount?: number;
-  packageIds: string[];
+  packageIds: string[]; // Paquetes específicos (opcional)
   applyToSpecialPrice: boolean;
+  isUniversal: boolean; // Nuevo: si aplica a cualquier paquete
   createdAt: string;
   updatedAt: string;
 };

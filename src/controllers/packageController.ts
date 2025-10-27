@@ -41,13 +41,40 @@ export const getAllPackagesController = async (
 ): Promise<void> => {
   try {
     const snapshot = await collection
-      .orderBy("createdAt", "desc") // 👈 Ordena por fecha de creación descendente
+      .orderBy("createdAt", "desc")
       .get();
 
-    const packages = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const now = new Date().toISOString();
+    
+    // Filtrar paquetes por fechas de publicación
+    const packages = snapshot.docs
+      .map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }))
+      .filter((pkg: any) => {
+        // Si no tiene fechas de publicación, mostrarlo (compatibilidad)
+        if (!pkg.startDate && !pkg.endDate) {
+          return true;
+        }
+        
+        // Normalizar fechas para comparación consistente
+        const startDate = pkg.startDate ? (pkg.startDate.toDate ? pkg.startDate.toDate().toISOString() : pkg.startDate) : null;
+        const endDate = pkg.endDate ? (pkg.endDate.toDate ? pkg.endDate.toDate().toISOString() : pkg.endDate) : null;
+        
+        // Verificar fecha de inicio
+        if (startDate && now < startDate) {
+          return false; // Aún no se publica
+        }
+        
+        // Verificar fecha de fin
+        if (endDate && now > endDate) {
+          return false; // Ya expiró
+        }
+        
+        return true; // Está en el rango de publicación
+      });
+
     res.status(200).json({ packages, total: packages.length });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";

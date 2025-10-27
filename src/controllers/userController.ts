@@ -242,6 +242,46 @@ export const userController = async (
   }
 };
 
+// Controlador para habilitar usuario
+export const enableUserController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const { userId } = req.params;
+
+  try {
+    await admin.firestore().collection("users").doc(userId).update({
+      enabled: true,
+      updatedAt: new Date().toISOString(),
+    });
+
+    res.status(200).json({ message: "Usuario habilitado correctamente" });
+  } catch (error) {
+    console.error("Error al habilitar usuario:", error);
+    res.status(500).json({ error: "Error interno al habilitar usuario" });
+  }
+};
+
+// Controlador para deshabilitar usuario
+export const disableUserController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const { userId } = req.params;
+
+  try {
+    await admin.firestore().collection("users").doc(userId).update({
+      enabled: false,
+      updatedAt: new Date().toISOString(),
+    });
+
+    res.status(200).json({ message: "Usuario deshabilitado correctamente" });
+  } catch (error) {
+    console.error("Error al deshabilitar usuario:", error);
+    res.status(500).json({ error: "Error interno al deshabilitar usuario" });
+  }
+};
+
 export const updateUserController = async (
   req: Request,
   res: Response
@@ -366,9 +406,25 @@ export const getUserByIdController = async (
   req: Request,
   res: Response
 ): Promise<void> => {
-  const { userId } = req.params;
-
   try {
+    let userId: string;
+
+    // Si es la ruta /me, obtener el UID del token
+    if (req.path === '/me' || req.originalUrl.includes('/me')) {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        res.status(401).json({ error: "Token no proporcionado" });
+        return;
+      }
+
+      const idToken = authHeader.slice(7);
+      const decoded = await admin.auth().verifyIdToken(idToken);
+      userId = decoded.uid;
+    } else {
+      // Si es la ruta /:userId, usar el parámetro
+      userId = req.params.userId;
+    }
+
     const userDoc = await admin
       .firestore()
       .collection("users")
@@ -383,7 +439,7 @@ export const getUserByIdController = async (
     res.status(200).json({ id: userDoc.id, ...userDoc.data() });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
-    console.error("Error al obtener usuario por ID:", msg);
+    console.error("Error al obtener usuario:", msg);
     res.status(500).json({ error: "Error interno del servidor", details: msg });
   }
 };

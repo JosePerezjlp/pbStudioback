@@ -409,7 +409,12 @@ export const updateWaitlistController = async (
       const u = userSnap.data() as UserDoc | undefined;
       if (u) {
         if (result.action === "accepted") {
-          await sendWaitlistAcceptedEmail(u.email, u.firstName, result.classId);
+          // Obtener el tipo de clase para el email
+          const classSnap = await classesCol.doc(result.classId).get();
+          const classData = classSnap.data() as ClassDoc | undefined;
+          const classType = classData?.type || "individual";
+          
+          await sendWaitlistAcceptedEmail(u.email, u.firstName, result.classId, null, classType);
         } else {
           await sendWaitlistRejectedEmail(u.email, u.firstName, result.classId);
         }
