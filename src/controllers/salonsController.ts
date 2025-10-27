@@ -22,9 +22,9 @@ interface ClassroomData {
 
 /* -------------------- helpers -------------------- */
 
-const GRID_ROWS = 8;
+const GRID_ROWS = 10;
 const GRID_COLS = 10;
-const MAX_SEATS = GRID_ROWS * GRID_COLS; // 80
+const MAX_SEATS = GRID_ROWS * GRID_COLS; // 100
 
 type UnknownRec = Record<string, unknown>;
 

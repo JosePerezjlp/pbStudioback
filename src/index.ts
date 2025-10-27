@@ -14,6 +14,7 @@ import disciplinesRouter from "./routes/disciplines";
 import branchRouter from "./routes/branch";
 import authRouter from "./routes/auth";
 import classesRouter from "./routes/classes";
+import dailyClassesRouter from "./routes/dailyClasses";
 import paypalRouter from "./routes/paypal";
 import transactionsRouter from "./routes/transactions";
 import { initializeDefaultAdmin } from "./utils/adminInit";
@@ -23,6 +24,7 @@ import contactRouter from "./routes/contact";
 import passwordResetRouter from "./routes/passwordReset";
 import configRouter from "./routes/configRoutes";
 import couponsRouter from "./routes/couponRoutes";
+import { validateCouponController } from "./controllers/couponController";
 import staffRouter from "./routes/staffRoutes";
 import attendanceRouter from "./routes/attendances";
 import waitListRouter from "./routes/waitlist";
@@ -49,6 +51,8 @@ const app = express();
 const port = process.env.PORT ?? 3000;
 
 const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:3001",
   "http://localhost:5173",
   "https://www.pbstudioapp.com",
   "https://pbstudioapp.com",
@@ -80,12 +84,15 @@ app.use("/rooms", salonsRouter);
 app.use("/disciplines", disciplinesRouter);
 app.use("/branches", branchRouter);
 app.use("/classes", verifyToken, adminSessionGuard, classesRouter);
+app.use("/daily-classes", dailyClassesRouter);
 app.use("/paypal", paypalRouter);
 app.use("/transactions", verifyToken, adminSessionGuard, transactionsRouter);
 app.use("/reservations", verifyToken, adminSessionGuard, reservationRoutes);
 app.use("/contact", contactRouter);
 app.use("/password-reset", passwordResetRouter);
 app.use("/config", configRouter);
+// Ruta pública para validar cupones (sin autenticación)
+app.get("/coupons/validate", validateCouponController);
 app.use("/coupons", verifyToken, adminSessionGuard, couponsRouter);
 app.use("/staff", verifyToken, adminSessionGuard, staffRouter);
 app.use("/attendance", verifyToken, adminSessionGuard, attendanceRouter);
@@ -210,7 +217,7 @@ cron.schedule("*/10 * * * *", async () => {
                       hour: classData.hour,
                       discipline: classData.discipline?.name ?? "Clase",
                       branch: classData.branch?.name ?? "Sucursal",
-                    });
+                    }, classData.type);
 
                     await reservationDoc.ref.update({
                       emailReminderSent: true,
@@ -270,7 +277,7 @@ cron.schedule("0 8 * * *", async () => {
                   hour: "¡Atención!",
                   discipline: `Te queda${remaining === 1 ? "" : "n"} ${remaining} clase${remaining === 1 ? "" : "s"}`,
                   branch: "¡Aprovecha antes que se acabe tu paquete!",
-                });
+                }, "individual"); // Tipo por defecto para emails de expiración
 
                 // 2. Marcar como notificado
                 const userRef = admin.firestore().doc(`users/${doc.id}`);

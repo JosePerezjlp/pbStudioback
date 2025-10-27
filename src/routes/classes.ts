@@ -1,5 +1,6 @@
 import express from "express";
 import { verifyToken } from "../middleware/authMiddleware";
+import { checkPermission } from "../middleware/permissionMiddleware";
 import {
   createClassController,
   deleteClassController,
@@ -11,13 +12,13 @@ import { adminSessionGuard } from "../middleware/adminSessionGuard";
 
 const router = express.Router();
 
-// Pública (aunque está protegida con verifyToken)
+// Públicas (usuarios autenticados pueden ver clases)
 router.get("/", getAllClassesController);
+router.get("/:classId", verifyToken, getClassByIdController);
 
-// Protegidas
-router.get("/:classId", verifyToken, adminSessionGuard, getClassByIdController);
-router.post("/", verifyToken, adminSessionGuard, createClassController);
-router.put("/:classId", verifyToken, adminSessionGuard, updateClassController);
-router.delete("/:classId", verifyToken, adminSessionGuard, deleteClassController);
+// Protegidas con permisos específicos (solo para administradores/staff)
+router.post("/", verifyToken, checkPermission("clases", "crear"), createClassController);
+router.put("/:classId", verifyToken, checkPermission("clases", "editar"), updateClassController);
+router.delete("/:classId", verifyToken, checkPermission("clases", "cancelar"), deleteClassController);
 
 export default router;

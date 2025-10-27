@@ -1,6 +1,7 @@
 // routes/waitlist.routes.ts
 import express from "express";
 import { verifyToken } from "../middleware/authMiddleware";
+import { checkPermission } from "../middleware/permissionMiddleware";
 import {
   createWaitlistController,
   getAllWaitlistsController,
@@ -12,11 +13,12 @@ import {
 
 const router = express.Router();
 
-// 1) Entrar en lista de espera
-router.post("/", verifyToken, createWaitlistController);
+// Rutas públicas para usuarios comunes
+router.post("/", verifyToken, createWaitlistController); // Entrar en lista de espera
+router.get("/my", verifyToken, getAllWaitlistsController); // Obtener waitlists del usuario actual
 
-// 2) Obtener todas las waitlists
-router.get("/", verifyToken, getAllWaitlistsController);
+// Rutas administrativas (requieren permisos específicos)
+router.get("/", verifyToken, checkPermission("clases", "lista_espera"), getAllWaitlistsController);
 
 // 3) Obtener waitlists por clase (query param ?classId=...)
 router.get("/by-class", verifyToken, getWaitlistsByClassController);

@@ -128,7 +128,22 @@ export const createCashTransactionController = async (
     // --- Referencias
     const userRef = db.doc(`users/${uid}`);
     const packageRef = db.doc(`packages/${packageId}`);
-    const couponRef = couponId ? db.doc(`coupons/${couponId}`) : null;
+    const couponsCol = db.collection("coupons");
+    
+    // Buscar cupón por código si no hay couponId
+    let finalCouponId = couponId;
+    if (couponCode && !couponId) {
+      const couponQuery = await couponsCol
+        .where("code", "==", couponCode)
+        .limit(1)
+        .get();
+      
+      if (!couponQuery.empty) {
+        finalCouponId = couponQuery.docs[0].id;
+      }
+    }
+    
+    const couponRef = finalCouponId ? db.doc(`coupons/${finalCouponId}`) : null;
 
     const [userSnap, pkgSnap, couponSnap] = await Promise.all([
       userRef.get(),
@@ -149,10 +164,11 @@ export const createCashTransactionController = async (
     const userData = userSnap.data()!;
     const pkgData = pkgSnap.data()!;
 
-    // Validar cupón si existe
+    // Validar cupón si existe y calcular descuento
     let couponIsValid = false;
+    let finalAmount = amount; // Precio final (con descuento aplicado)
 
-    if (couponId && couponSnap && couponSnap.exists) {
+    if (finalCouponId && couponSnap && couponSnap.exists) {
       const couponData = couponSnap.data()!;
       const now = new Date();
       const start = new Date(couponData.startDate);
@@ -160,14 +176,49 @@ export const createCashTransactionController = async (
       const usosDisponibles =
         (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0);
 
-      if (now >= start && now <= end && usosDisponibles > 0) {
+      // Verificar si el cupón aplica al paquete
+      if (!couponData.isUniversal && !couponData.packageIds.includes(packageId)) {
+        res.status(400).json({ 
+          error: "Este cupón no aplica para el paquete seleccionado" 
+        });
+        return;
+      }
+
+      // Verificar si el usuario ya usó este cupón antes
+      const existingTx = await db
+        .collection("transactions")
+        .where("userId", "==", uid)
+        .where("couponId", "==", finalCouponId)
+        .limit(1)
+        .get();
+
+      if (!existingTx.empty) {
+        res.status(400).json({ 
+          error: "Ya has usado este cupón anteriormente" 
+        });
+        return;
+      }
+
+      if (now >= start && now < end && usosDisponibles > 0) {
         couponIsValid = true;
+        
+        // Calcular descuento
+        const discountAmount = (amount * couponData.discount) / 100;
+        finalAmount = Math.max(0, amount - discountAmount);
+        
+  
       } else {
         res
           .status(400)
           .json({ error: "Cupón inválido o sin usos disponibles" });
         return;
       }
+    } else if (couponCode && !finalCouponId) {
+      // Si se envió código pero no se encontró cupón
+      res.status(404).json({ 
+        error: "Cupón no encontrado" 
+      });
+      return;
     }
 
     // --- Crear transacción
@@ -180,11 +231,11 @@ export const createCashTransactionController = async (
         type: pkgData.type,
         ...(pkgData.modality && { modality: pkgData.modality }),
       },
-      amount,
+      amount: finalAmount,
       currency: "MXN",
       couponUsed: couponIsValid,
       couponCode,
-      couponId,
+      couponId: finalCouponId,
       paymentMethod,
       status: "paid",
       createdAt: new Date().toISOString(),
@@ -276,7 +327,24 @@ export const getUserTransactionsController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { userId } = req.params;
+    let userId: string;
+
+    // Si es la ruta /my, obtener el UID del token
+    if (req.path === '/my' || req.originalUrl.includes('/my')) {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        res.status(401).json({ error: "Token no proporcionado" });
+        return;
+      }
+
+      const idToken = authHeader.slice(7);
+      const decoded = await admin.auth().verifyIdToken(idToken);
+      userId = decoded.uid;
+    } else {
+      // Si es la ruta /:userId, usar el parámetro
+      userId = req.params.userId;
+    }
+
     const snap = await admin
       .firestore()
       .collection("transactions")
@@ -331,5 +399,126 @@ export const updateTransactionStatusController = async (
     res
       .status(500)
       .json({ error: "Error interno al actualizar la transacción" });
+  }
+};
+
+/**
+ * 4) Cancelar transacción
+ */
+export const cancelTransactionController = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const db = admin.firestore();
+    const txRef = db.collection("transactions").doc(id);
+    const txSnap = await txRef.get();
+
+    if (!txSnap.exists) {
+      res.status(404).json({ error: "Transacción no encontrada" });
+      return;
+    }
+
+    const txData = txSnap.data()!;
+    
+    // Solo se pueden cancelar transacciones pendientes o pagadas
+    if (txData.status === "rejected") {
+      res.status(400).json({ error: "La transacción ya está cancelada" });
+      return;
+    }
+
+    await txRef.update({ 
+      status: "rejected",
+      cancelledAt: new Date().toISOString(),
+      cancelledBy: req.user?.uid
+    });
+
+    res.status(200).json({ message: "Transacción cancelada correctamente" });
+  } catch (err) {
+    console.error("❌ Error cancelando transacción:", err);
+    res.status(500).json({ error: "Error interno al cancelar la transacción" });
+  }
+};
+
+/**
+ * 5) Editar fecha de expiración de transacción
+ */
+export const updateTransactionExpirationController = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { expirationDate } = req.body as { expirationDate: string };
+
+    if (!expirationDate) {
+      res.status(400).json({ error: "Fecha de expiración es requerida" });
+      return;
+    }
+
+    const db = admin.firestore();
+    const txRef = db.collection("transactions").doc(id);
+    const txSnap = await txRef.get();
+
+    if (!txSnap.exists) {
+      res.status(404).json({ error: "Transacción no encontrada" });
+      return;
+    }
+
+    await txRef.update({ 
+      expirationDate: new Date(expirationDate).toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    res.status(200).json({ message: "Fecha de expiración actualizada correctamente" });
+  } catch (err) {
+    console.error("❌ Error actualizando fecha de expiración:", err);
+    res.status(500).json({ error: "Error interno al actualizar la fecha de expiración" });
+  }
+};
+
+/**
+ * 6) Obtener vista de caja (transacciones del día)
+ */
+export const getCajaTransactionsController = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    
+    const snapshot = await admin
+      .firestore()
+      .collection("transactions")
+      .where("createdAt", ">=", `${today}T00:00:00.000Z`)
+      .where("createdAt", "<=", `${today}T23:59:59.999Z`)
+      .orderBy("createdAt", "desc")
+      .get();
+
+    const transactions = snapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as any[];
+    
+    // Calcular totales
+    const totalAmount = transactions.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+    const totalTransactions = transactions.length;
+    const paidTransactions = transactions.filter(tx => tx.status === "paid").length;
+    const pendingTransactions = transactions.filter(tx => tx.status === "pending").length;
+    const rejectedTransactions = transactions.filter(tx => tx.status === "rejected").length;
+
+    res.status(200).json({ 
+      transactions,
+      summary: {
+        totalAmount,
+        totalTransactions,
+        paidTransactions,
+        pendingTransactions,
+        rejectedTransactions,
+        date: today
+      }
+    });
+  } catch (err) {
+    console.error("❌ Error obteniendo transacciones de caja:", err);
+    res.status(500).json({ error: "Error interno al obtener transacciones de caja" });
   }
 };

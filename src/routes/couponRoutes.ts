@@ -6,9 +6,13 @@ import {
   getCouponByIdController,
   updateCouponController,
   deleteCouponController,
+  validateCouponController,
 } from "../controllers/couponController";
 
 const router = express.Router();
+
+// Ruta pública para validar cupón (sin autenticación)
+router.get("/validate", validateCouponController);
 
 router.post("/", verifyToken, createCouponController);
 router.get("/", verifyToken, getAllCouponsController);

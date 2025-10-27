@@ -75,7 +75,7 @@ export const loginController = async (
       } else if (Array.isArray(data.clases)) {
         permissions = { clases: data.clases.filter((x) => typeof x === "string") as string[] };
       } else {
-        permissions = { clases: ["listado", "crear", "editar", "detalle"] };
+        permissions = { clases: ["listado", "crear", "editar", "cancelar", "reservaciones", "lista_espera"] };
       }
 
       const branch = str(data.branch) ?? "";
@@ -104,13 +104,41 @@ export const loginController = async (
       return;
     }
 
-    // users / staff
+    // Normalización si viene de staff
+    if (collection === "staff") {
+      const status = str(data.status) || "Activo";
+      const permissions = isRecord(data.permissions) ? data.permissions : {};
+      const branches = Array.isArray(data.branches) ? data.branches : [];
+
+      // Sesión única
+      const newSessionId = uuidv4();
+      await db.collection("staff").doc(uid).update({
+        sessionId: newSessionId,
+        sessionUpdatedAt: new Date().toISOString(),
+      });
+      await admin.auth().revokeRefreshTokens(uid);
+
+      res.status(200).json({
+        uid,
+        email: str(data.email),
+        ...data,
+        role: "employee",
+        status,
+        branches,
+        permissions,
+        sessionId: newSessionId,
+        sessionNotice: "Esta sesión reemplazará otras activas por seguridad.",
+      });
+      return;
+    }
+
+    // users (admin)
     const userRef = db.collection(collection).doc(uid);
 
     let newSessionId: string | null = null;
     let sessionNotice: string | null = null;
 
-    if (role === "admin" || role === "employee") {
+    if (role === "admin") {
       newSessionId = uuidv4();
       await userRef.update({
         sessionId: newSessionId,
@@ -122,7 +150,6 @@ export const loginController = async (
 
     // nunca exponer password
     const { password: _omit, ...rest } = data;
-		console.log("TCL: _omit", _omit)
 
     res.status(200).json({
       uid,

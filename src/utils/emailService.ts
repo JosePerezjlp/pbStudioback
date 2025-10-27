@@ -15,6 +15,17 @@ const escapeHtml = (s: string) =>
       ]!
   );
 
+// utilidad para convertir tipo de clase a formato legible
+const formatClassType = (type: string | undefined): string => {
+  if (!type) return "Individual";
+  
+  const normalizedType = type.toLowerCase();
+  if (normalizedType.includes("group") || normalizedType.includes("grupal")) {
+    return "Grupal";
+  }
+  return "Individual";
+};
+
 // Envia con imagen al registrar
 export const sendWelcomeEmail = async (to: string, name: string) => {
   try {
@@ -145,11 +156,13 @@ export const sendReservationConfirmationEmail = async (
 export const sendReservationCancelledEmail = async (
   to: string,
   name: string,
-  classInfo: string
+  classInfo: string,
+  classType?: string
 ) => {
   try {
     const safeName = escapeHtml(name);
     const safeClass = escapeHtml(classInfo);
+    const formattedClassType = formatClassType(classType);
 
     await resend.emails.send({
       from: FROM,
@@ -187,7 +200,7 @@ export const sendReservationCancelledEmail = async (
               <tr>
                 <td align="center" style="padding:0 24px 8px 24px;">
                   <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
-                    Hola ${safeName}, tu reserva para <strong>${safeClass}</strong> ha sido cancelada.
+                    Hola ${safeName}, tu reserva para <strong>${safeClass} ${formattedClassType}</strong> ha sido cancelada.
                   </p>
                 </td>
               </tr>
@@ -384,9 +397,11 @@ export const sendPackageExpiryWarningEmail = async (
 export const sendClassReminderEmail = async (
   to: string,
   name: string,
-  info: { day: string; hour: string; discipline: string; branch: string }
+  info: { day: string; hour: string; discipline: string; branch: string },
+  classType?: string
 ) => {
   const { day, hour, discipline, branch } = info;
+  const formattedClassType = formatClassType(classType);
 
   await resend.emails.send({
     from: FROM,
@@ -396,7 +411,7 @@ export const sendClassReminderEmail = async (
       <p>Hola ${name},</p>
       <p>Este es un recordatorio de tu clase:</p>
       <ul>
-        <li><strong>Disciplina:</strong> ${discipline}</li>
+        <li><strong>Disciplina:</strong> ${discipline} ${formattedClassType}</li>
         <li><strong>Fecha:</strong> ${day}</li>
         <li><strong>Hora:</strong> ${hour}</li>
         <li><strong>Sucursal:</strong> ${branch}</li>
@@ -659,7 +674,8 @@ export const sendWaitlistAcceptedEmail = async (
   to: string,
   name: string,
   classId: string,
-  seatNumber?: number | null
+  seatNumber?: number | null,
+  classType?: string
 ) => {
   try {
     const { discipline, dateStr, hour } = await getClassInfo(classId);
@@ -668,6 +684,7 @@ export const sendWaitlistAcceptedEmail = async (
     const safeDiscipline = escapeHtml(discipline);
     const safeDate = escapeHtml(dateStr);
     const safeHour = escapeHtml(hour);
+    const formattedClassType = formatClassType(classType);
     
     // Generar información del asiento para clases grupales
     let seatInfo = "";
@@ -711,7 +728,7 @@ export const sendWaitlistAcceptedEmail = async (
                 <td align="center" style="padding:0 24px 8px 24px;">
                   <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
                     Hola ${safeName}, ¡buenas noticias! Se liberó un cupo para
-                    <strong>${safeDiscipline}</strong> el <strong>${safeDate}</strong> a las <strong>${safeHour}</strong>.${seatInfo}
+                    <strong>${safeDiscipline} ${formattedClassType}</strong> el <strong>${safeDate}</strong> a las <strong>${safeHour}</strong>.${seatInfo}
                   </p>
                 </td>
               </tr>

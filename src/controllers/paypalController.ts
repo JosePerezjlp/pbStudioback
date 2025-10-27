@@ -44,11 +44,51 @@ export const createPayPalOrderController = async (
       amount,
       currency = "USD",
       description = "Pago en p&B Studio",
+      packageId,
+      couponCode,
     } = req.body as {
       amount: string | number;
       currency?: string;
       description?: string;
+      packageId?: string;
+      couponCode?: string;
     };
+
+    // Validar cupón y calcular precio final si es necesario
+    let finalAmount = Number(amount);
+    
+    if (couponCode && packageId) {
+      const db = admin.firestore();
+      const couponsCol = db.collection("coupons");
+      
+      // Buscar cupón por código
+      const couponQuery = await couponsCol
+        .where("code", "==", couponCode)
+        .limit(1)
+        .get();
+      
+      if (!couponQuery.empty) {
+        const couponDoc = couponQuery.docs[0];
+        const couponData = couponDoc.data();
+        
+        // Verificar si el cupón aplica al paquete
+        if (couponData.isUniversal || couponData.packageIds.includes(packageId)) {
+          const now = new Date();
+          const start = new Date(couponData.startDate);
+          const end = new Date(couponData.endDate);
+          const usosDisponibles = (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0);
+          
+          if (now >= start && now < end && usosDisponibles > 0) {
+            // Calcular descuento
+            const discountAmount = (finalAmount * couponData.discount) / 100;
+            finalAmount = Math.max(0, finalAmount - discountAmount);
+            
+            console.log(`💰 PayPal - Cupón aplicado: ${couponData.discount}%`);
+            console.log(`💰 PayPal - Precio final: $${finalAmount}`);
+          }
+        }
+      }
+    }
 
     const accessToken = await getAccessToken();
 
@@ -60,7 +100,7 @@ export const createPayPalOrderController = async (
           {
             amount: {
               currency_code: currency,
-              value: Number(amount).toFixed(2),
+              value: finalAmount.toFixed(2),
             },
             description,
           },
@@ -74,7 +114,11 @@ export const createPayPalOrderController = async (
       }
     );
 
-    res.status(201).json({ orderID: data.id });
+    res.status(201).json({ 
+      orderID: data.id,
+      finalAmount: finalAmount,
+      originalAmount: Number(amount)
+    });
   } catch (err) {
     console.error(
       "❌ PayPal create-order error:",
