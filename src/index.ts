@@ -83,11 +83,11 @@ app.use("/instructors", instructorRouter);
 app.use("/rooms", salonsRouter);
 app.use("/disciplines", disciplinesRouter);
 app.use("/branches", branchRouter);
-app.use("/classes", verifyToken, adminSessionGuard, classesRouter);
+app.use("/classes", verifyToken, classesRouter); // adminSessionGuard aplicado en router individual
 app.use("/daily-classes", dailyClassesRouter);
 app.use("/paypal", paypalRouter);
-app.use("/transactions", verifyToken, adminSessionGuard, transactionsRouter);
-app.use("/reservations", verifyToken, adminSessionGuard, reservationRoutes);
+app.use("/transactions", verifyToken, transactionsRouter); // adminSessionGuard aplicado en router individual
+app.use("/reservations", verifyToken, reservationRoutes); // adminSessionGuard aplicado en router individual
 app.use("/contact", contactRouter);
 app.use("/password-reset", passwordResetRouter);
 app.use("/config", configRouter);
@@ -96,7 +96,7 @@ app.get("/coupons/validate", validateCouponController);
 app.use("/coupons", verifyToken, adminSessionGuard, couponsRouter);
 app.use("/staff", verifyToken, adminSessionGuard, staffRouter);
 app.use("/attendance", verifyToken, adminSessionGuard, attendanceRouter);
-app.use("/waitlist", verifyToken, adminSessionGuard, waitListRouter);
+app.use("/waitlist", verifyToken, waitListRouter); // adminSessionGuard aplicado en router individual
 
 const startServer = async () => {
   try {
