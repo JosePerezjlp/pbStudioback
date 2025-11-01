@@ -7,6 +7,55 @@ const db = admin.firestore();
 const couponsCol = db.collection("coupons");
 const packagesCol = db.collection("packages");
 
+/**
+ * Normaliza una fecha de inicio al inicio del día (00:00:00)
+ * Siempre normaliza para comparar solo por día, sin considerar hora
+ * Maneja strings, Date objects y Firestore Timestamps
+ */
+const normalizeStartDate = (dateInput: string | Date | any): Date => {
+  let date: Date;
+  if (typeof dateInput === 'string') {
+    date = new Date(dateInput);
+  } else if (dateInput?.toDate && typeof dateInput.toDate === 'function') {
+    // Firestore Timestamp
+    date = dateInput.toDate();
+  } else {
+    date = dateInput as Date;
+  }
+  const normalized = new Date(date);
+  normalized.setUTCHours(0, 0, 0, 0);
+  return normalized;
+};
+
+/**
+ * Normaliza una fecha de fin al final del día (23:59:59.999)
+ * Siempre normaliza para comparar solo por día, sin considerar hora
+ * Maneja strings, Date objects y Firestore Timestamps
+ */
+const normalizeEndDate = (dateInput: string | Date | any): Date => {
+  let date: Date;
+  if (typeof dateInput === 'string') {
+    date = new Date(dateInput);
+  } else if (dateInput?.toDate && typeof dateInput.toDate === 'function') {
+    // Firestore Timestamp
+    date = dateInput.toDate();
+  } else {
+    date = dateInput as Date;
+  }
+  const normalized = new Date(date);
+  normalized.setUTCHours(23, 59, 59, 999);
+  return normalized;
+};
+
+/**
+ * Normaliza la fecha actual al inicio del día (00:00:00) para comparación
+ */
+const normalizeToday = (): Date => {
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  return today;
+};
+
 const rangesOverlap = (
   aStart: Date,
   aEnd: Date,
@@ -88,8 +137,8 @@ export const createCouponController = async (
 
     // Validar conflictos si tiene paquetes específicos
     if (packageIds.length > 0) {
-      const pkgDocs = await fetchPackagesByIds(packageIds);
-      
+    const pkgDocs = await fetchPackagesByIds(packageIds);
+
       if (pkgDocs.length !== packageIds.length) {
         res.status(400).json({
           error: "Algunos paquetes no existen"
@@ -99,26 +148,43 @@ export const createCouponController = async (
 
       // Solo validar conflictos si NO es universal
       if (!isUniversal) {
-        const couponIdsToCheck = Array.from(
-          new Set(pkgDocs.map((d) => d.data().couponId).filter(Boolean))
-        );
-        const couponsById = await fetchCouponsByIds(couponIdsToCheck, couponsCol);
+    const couponIdsToCheck = Array.from(
+      new Set(pkgDocs.map((d) => d.data().couponId).filter(Boolean))
+    );
+    const couponsById = await fetchCouponsByIds(couponIdsToCheck, couponsCol);
 
-        const conflicts = buildConflictList(pkgDocs, couponsById, newStart, newEnd);
-        if (conflicts.length > 0) {
-          res.status(400).json({
-            error: "Algunos paquetes ya tienen un cupón vigente.",
-            conflicts,
-          });
-          return;
-        }
+    const conflicts = buildConflictList(pkgDocs, couponsById, newStart, newEnd);
+    if (conflicts.length > 0) {
+      res.status(400).json({
+        error: "Algunos paquetes ya tienen un cupón vigente.",
+        conflicts,
+      });
+      return;
+    }
       }
     }
 
-    const isExpired = newEnd < new Date();
+    // Verificar vigencia completa usando normalización por día (sin considerar hora)
+    const today = normalizeToday();
+    const normalizedStart = normalizeStartDate(newStart);
+    const normalizedEnd = normalizeEndDate(newEnd);
+    
+    // Un cupón está activo si: startDate <= hoy <= endDate
+    const isActive = today >= normalizedStart && today <= normalizedEnd;
+    const isExpired = normalizedEnd < today;
+    const isNotYetActive = today < normalizedStart;
     const isUsedUp = totalUses <= 0;
-    const effectiveDiscount = isExpired || isUsedUp ? 0 : discount;
-    console.log("TCL: effectiveDiscount", effectiveDiscount);
+    
+    // Solo aplicar descuento si el cupón está vigente (no expirado, no antes de startDate, y con usos)
+    const effectiveDiscount = (isActive && !isUsedUp) ? discount : 0;
+    
+    if (isNotYetActive) {
+      console.log(`⚠️ Cupón creado pero aún no está vigente (startDate: ${normalizedStart.toISOString()}, hoy: ${today.toISOString()})`);
+    }
+    if (isExpired) {
+      console.log(`⚠️ Cupón creado pero ya está expirado (endDate: ${normalizedEnd.toISOString()}, hoy: ${today.toISOString()})`);
+    }
+    console.log("TCL: effectiveDiscount", effectiveDiscount, "isActive:", isActive);
 
     const newCoupon: Coupon = {
       name,
@@ -140,39 +206,39 @@ export const createCouponController = async (
     // Actualizar paquetes si NO es universal y tiene paquetes específicos
     if (!isUniversal && packageIds.length > 0) {
       const pkgDocs = await fetchPackagesByIds(packageIds);
-      
-      await Promise.all(
-        pkgDocs.map((pkgDoc) => {
-          const rawAmount = pkgDoc.data().amount;
-          const amount =
-            typeof rawAmount === "number" ? rawAmount : parseFloat(rawAmount);
 
-          if (amount === null || Number.isNaN(amount)) {
-            console.error(
-              `❌ Paquete con ID ${pkgDoc.id} tiene amount inválido:`,
-              rawAmount
-            );
-            throw new Error(`Paquete con ID ${pkgDoc.id} no tiene amount válido`);
-          }
+    await Promise.all(
+      pkgDocs.map((pkgDoc) => {
+        const rawAmount = pkgDoc.data().amount;
+        const amount =
+          typeof rawAmount === "number" ? rawAmount : parseFloat(rawAmount);
 
-          const specialPrice =
-            effectiveDiscount > 0
-              ? Math.max(0, amount - (amount * effectiveDiscount) / 100)
-              : 0;
+        if (amount === null || Number.isNaN(amount)) {
+          console.error(
+            `❌ Paquete con ID ${pkgDoc.id} tiene amount inválido:`,
+            rawAmount
+          );
+          throw new Error(`Paquete con ID ${pkgDoc.id} no tiene amount válido`);
+        }
 
-          const updateData = {
-            couponId: docRef.id,
-            discount: effectiveDiscount,
-            discountInfo: effectiveDiscount > 0 ? name : "--",
+        const specialPrice =
+          effectiveDiscount > 0
+            ? Math.max(0, amount - (amount * effectiveDiscount) / 100)
+            : 0;
+
+        const updateData = {
+          couponId: docRef.id,
+          discount: effectiveDiscount,
+          discountInfo: effectiveDiscount > 0 ? name : "--",
             applyToSpecialPrice,
-            specialPrice,
-            updatedAt: now,
-          };
-          console.log("TCL: updateData", updateData);
+          specialPrice,
+          updatedAt: now,
+        };
+        console.log("TCL: updateData", updateData);
 
-          return pkgDoc.ref.update(updateData);
-        })
-      );
+        return pkgDoc.ref.update(updateData);
+      })
+    );
     }
 
     res.status(201).json({
@@ -217,9 +283,19 @@ export const updateCouponController = async (
     const newStart = new Date(startDate);
     const newEnd = new Date(endDate);
 
-    const isExpired = newEnd < new Date();
+    // Verificar vigencia completa usando normalización por día (sin considerar hora)
+    const today = normalizeToday();
+    const normalizedStart = normalizeStartDate(newStart);
+    const normalizedEnd = normalizeEndDate(newEnd);
+    
+    // Un cupón está activo si: startDate <= hoy <= endDate
+    const isActive = today >= normalizedStart && today <= normalizedEnd;
+    const isExpired = normalizedEnd < today;
+    const isNotYetActive = today < normalizedStart;
     const isUsedUp = totalUses <= usedCount;
-    const effectiveDiscount = isExpired || isUsedUp ? 0 : discount;
+    
+    // Solo aplicar descuento si el cupón está vigente (no expirado, no antes de startDate, y con usos)
+    const effectiveDiscount = (isActive && !isUsedUp) ? discount : 0;
 
     const pkgDocs = await fetchPackagesByIds(packageIds);
     const packagesWithOtherCoupon = pkgDocs.filter(
@@ -414,21 +490,21 @@ export const validateCouponController = async (
     const couponDoc = couponQuery.docs[0];
     const couponData = couponDoc.data() as Coupon;
 
-    // Verificar fechas
-    const now = new Date();
-    const start = new Date(couponData.startDate);
-    const end = new Date(couponData.endDate);
+    // Verificar fechas - normalizar para comparar solo por día (sin hora)
+    const today = normalizeToday(); // Fecha actual normalizada a inicio del día
+    const start = normalizeStartDate(couponData.startDate); // Inicio del día
+    const end = normalizeEndDate(couponData.endDate); // Fin del día
     const usosDisponibles = (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0);
 
     let isValid = true;
     let message = "";
     let discountInfo = null;
 
-    // Verificar vigencia
-    if (now < start) {
+    // Verificar vigencia: startDate <= hoy <= endDate (inclusive)
+    if (today < start) {
       isValid = false;
       message = "El cupón aún no está vigente";
-    } else if (now >= end) {
+    } else if (today > end) {
       isValid = false;
       message = "El cupón ha expirado";
     } else if (usosDisponibles <= 0) {
@@ -436,11 +512,57 @@ export const validateCouponController = async (
       message = "El cupón ha alcanzado su límite de usos";
     }
 
-    // Si se proporciona packageId, verificar si aplica
+    // Si se proporciona packageId, verificar si aplica y si el paquete está publicado
     if (isValid && packageId) {
-      if (!couponData.isUniversal && !couponData.packageIds.includes(packageId)) {
+      const isUniversal = couponData.isUniversal === true;
+      const packageIds = couponData.packageIds || [];
+      
+      if (!isUniversal && !packageIds.includes(packageId)) {
         isValid = false;
         message = "Este cupón no aplica para el paquete seleccionado";
+      } else {
+        // Verificar que el paquete esté publicado (dentro de su rango de fechas)
+        const pkgDoc = await packagesCol.doc(packageId).get();
+        if (pkgDoc.exists) {
+          const pkgData = pkgDoc.data();
+          const pkgStartDate = pkgData?.startDate;
+          const pkgEndDate = pkgData?.endDate;
+          
+          if (pkgStartDate || pkgEndDate) {
+            // Normalizar fechas del paquete (manejar Firestore Timestamps)
+            let pkgStart: Date | null = null;
+            let pkgEnd: Date | null = null;
+            
+            if (pkgStartDate) {
+              if (typeof pkgStartDate === 'string') {
+                pkgStart = normalizeStartDate(pkgStartDate);
+              } else if (pkgStartDate?.toDate && typeof pkgStartDate.toDate === 'function') {
+                pkgStart = normalizeStartDate(pkgStartDate.toDate());
+              } else {
+                pkgStart = normalizeStartDate(pkgStartDate as Date);
+              }
+            }
+            
+            if (pkgEndDate) {
+              if (typeof pkgEndDate === 'string') {
+                pkgEnd = normalizeEndDate(pkgEndDate);
+              } else if (pkgEndDate?.toDate && typeof pkgEndDate.toDate === 'function') {
+                pkgEnd = normalizeEndDate(pkgEndDate.toDate());
+              } else {
+                pkgEnd = normalizeEndDate(pkgEndDate as Date);
+              }
+            }
+            
+            // Verificar si el paquete está publicado
+            if (pkgStart && today < pkgStart) {
+              isValid = false;
+              message = "El paquete aún no está disponible";
+            } else if (pkgEnd && today > pkgEnd) {
+              isValid = false;
+              message = "El paquete ya no está disponible";
+            }
+          }
+        }
       }
     }
 

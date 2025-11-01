@@ -8,6 +8,7 @@ import {
   deleteReservationController,
   getAllReservationsController,
   getReservationByIdController,
+  getReservationsByClassController,
   updateReservationController,
 } from "../controllers/reservationController";
 
@@ -16,6 +17,7 @@ const router = express.Router();
 // Rutas públicas para usuarios comunes (ORDEN IMPORTANTE: específicas primero)
 router.get("/my", verifyToken, getAllReservationsController); // Obtener reservas del usuario actual
 router.post("/", verifyToken, createReservationController); // Crear reserva
+router.get("/by-class/:classId", verifyToken, adminSessionGuard, checkPermission("clases", "reservaciones"), getReservationsByClassController); // Obtener reservas de una clase específica
 router.get("/", verifyToken, adminSessionGuard, checkPermission("clases", "reservaciones"), getAllReservationsController); // Ver todas las reservas (admin)
 
 // Ruta para cambiar clase (pública para usuarios autenticados)

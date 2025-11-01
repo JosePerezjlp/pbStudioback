@@ -3,6 +3,7 @@ import { Request, Response } from "express";
 import admin from "../config/firebase";
 import { ClassType } from "../types/enums";
 import { getRoomTypeById } from "../utils/getRoomType";
+import { AuthRequest } from "../middleware/authMiddleware";
 
 interface ClassDoc {
   day: string;
@@ -85,20 +86,31 @@ export const createClassController = async (
     const roomType =
       (await getRoomTypeById(String(room))) ?? ClassType.INDIVIDUAL;
 
-    const ref = await admin.firestore().collection("classes").add({
+    // Normalizar info como opcional (si viene undefined, null o string vacío, no se guarda o se guarda como "")
+    const infoNormalized = info && typeof info === 'string' && info.trim() !== '' 
+      ? info.trim() 
+      : '';
+
+    const classData: Record<string, unknown> = {
       day,
       hour,
       branch,
       room,
       discipline,
       instructor,
-      info,
       capacity: parsedCapacity,
       occupied: parsedOccupied,
       status,
       type: roomType, // enum
       createdAt: new Date().toISOString(),
-    });
+    };
+
+    // Solo agregar info si tiene valor
+    if (infoNormalized) {
+      classData.info = infoNormalized;
+    }
+
+    const ref = await admin.firestore().collection("classes").add(classData);
 
     res.status(201).json({ message: "Clase creada correctamente", id: ref.id });
   } catch (error) {
@@ -113,18 +125,37 @@ export const createClassController = async (
 /* ============================================================
    LIST – todas las clases
    ============================================================ */
-export const getAllClassesController = async (_req: Request, res: Response) => {
+export const getAllClassesController = async (req: Request | AuthRequest, res: Response) => {
   try {
-    const snapshot = await admin
+    const authReq = req as AuthRequest;
+    const user = authReq.user;
+
+    let query = admin
       .firestore()
       .collection("classes")
-      .orderBy("createdAt", "desc")
-      .get();
+      .orderBy("createdAt", "desc");
 
-    const classes = snapshot.docs.map((doc) => ({
+    // Si el usuario es employee (no admin) y tiene branches limitadas, filtrar
+    let classes = [];
+    if (user && user.role === "employee" && user.branches && user.branches.length > 0) {
+      // Obtener todas y filtrar en memoria (Firestore no soporta "in" con orderBy fácilmente)
+      const snapshot = await query.get();
+      const allClasses = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      // Filtrar solo las clases de las branches permitidas
+      classes = allClasses.filter((classItem: any) => 
+        classItem.branch && user.branches!.includes(classItem.branch)
+      );
+    } else {
+      // Admin o sin autenticación: devolver todas
+      const snapshot = await query.get();
+      classes = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
+    }
 
     res.status(200).json({ classes });
   } catch (error) {

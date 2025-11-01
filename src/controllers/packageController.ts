@@ -2,6 +2,49 @@ import { Request, Response } from "express";
 import { validationResult } from "express-validator";
 import admin from "../config/firebase";
 
+/**
+ * Normaliza una fecha de inicio al inicio del día (00:00:00)
+ */
+const normalizeStartDate = (dateInput: string | Date | any): Date => {
+  let date: Date;
+  if (typeof dateInput === 'string') {
+    date = new Date(dateInput);
+  } else if (dateInput?.toDate && typeof dateInput.toDate === 'function') {
+    date = dateInput.toDate();
+  } else {
+    date = dateInput as Date;
+  }
+  const normalized = new Date(date);
+  normalized.setUTCHours(0, 0, 0, 0);
+  return normalized;
+};
+
+/**
+ * Normaliza una fecha de fin al final del día (23:59:59.999)
+ */
+const normalizeEndDate = (dateInput: string | Date | any): Date => {
+  let date: Date;
+  if (typeof dateInput === 'string') {
+    date = new Date(dateInput);
+  } else if (dateInput?.toDate && typeof dateInput.toDate === 'function') {
+    date = dateInput.toDate();
+  } else {
+    date = dateInput as Date;
+  }
+  const normalized = new Date(date);
+  normalized.setUTCHours(23, 59, 59, 999);
+  return normalized;
+};
+
+/**
+ * Normaliza la fecha actual al inicio del día (00:00:00) para comparación
+ */
+const normalizeToday = (): Date => {
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  return today;
+};
+
 const collection = admin.firestore().collection("packages");
 
 export const createPackageController = async (
@@ -44,13 +87,14 @@ export const getAllPackagesController = async (
       .orderBy("createdAt", "desc")
       .get();
 
-    const now = new Date().toISOString();
+    // Normalizar fecha actual para comparación por día (sin hora)
+    const today = normalizeToday();
     
     // Filtrar paquetes por fechas de publicación
     const packages = snapshot.docs
       .map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
+      id: doc.id,
+      ...doc.data(),
       }))
       .filter((pkg: any) => {
         // Si no tiene fechas de publicación, mostrarlo (compatibilidad)
@@ -58,17 +102,17 @@ export const getAllPackagesController = async (
           return true;
         }
         
-        // Normalizar fechas para comparación consistente
-        const startDate = pkg.startDate ? (pkg.startDate.toDate ? pkg.startDate.toDate().toISOString() : pkg.startDate) : null;
-        const endDate = pkg.endDate ? (pkg.endDate.toDate ? pkg.endDate.toDate().toISOString() : pkg.endDate) : null;
+        // Normalizar fechas del paquete para comparación por día
+        const startDate = pkg.startDate ? normalizeStartDate(pkg.startDate) : null;
+        const endDate = pkg.endDate ? normalizeEndDate(pkg.endDate) : null;
         
-        // Verificar fecha de inicio
-        if (startDate && now < startDate) {
+        // Verificar fecha de inicio: startDate <= hoy
+        if (startDate && today < startDate) {
           return false; // Aún no se publica
         }
         
-        // Verificar fecha de fin
-        if (endDate && now > endDate) {
+        // Verificar fecha de fin: hoy <= endDate
+        if (endDate && today > endDate) {
           return false; // Ya expiró
         }
         

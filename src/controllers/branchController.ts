@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import admin from "../config/firebase";
+import { AuthRequest } from "../middleware/authMiddleware";
 
 export const createBranchController = async (
   req: Request,
@@ -42,19 +43,38 @@ export const createBranchController = async (
 };
 
 export const getAllBranchesController = async (
-  _req: Request,
+  req: Request | AuthRequest,
   res: Response
 ): Promise<void> => {
   try {
-    const snapshot = await admin
+    const authReq = req as AuthRequest;
+    const user = authReq.user;
+    
+    let query = admin
       .firestore()
       .collection("branches")
-      .orderBy("createdAt", "desc")
-      .get();
-    const branches = snapshot.docs.map((doc) => ({
+      .orderBy("createdAt", "desc");
+
+    // Si el usuario es employee (no admin) y tiene branches limitadas, filtrar
+    let branches = [];
+    if (user && user.role === "employee" && user.branches && user.branches.length > 0) {
+      // Obtener todas y filtrar en memoria (Firestore no soporta "in" con orderBy fácilmente)
+      const snapshot = await query.get();
+      const allBranches = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      // Filtrar solo las branches permitidas
+      branches = allBranches.filter((branch) => user.branches!.includes(branch.id));
+    } else {
+      // Admin o sin autenticación: devolver todas
+      const snapshot = await query.get();
+      branches = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
+    }
+
     res.status(200).json({ branches });
   } catch (error) {
     res
