@@ -2,6 +2,7 @@
 import { Request, Response } from "express";
 import admin from "../config/firebase";
 import { ERROR_CODES, ClassType } from "../types/enums";
+import { AuthRequest } from "../middleware/authMiddleware";
 import {
   sendWaitlistEntryEmail,
   sendWaitlistAcceptedEmail,
@@ -202,15 +203,65 @@ export const createWaitlistController = async (
    2) Listar todas
    =============================================================== */
 export const getAllWaitlistsController = async (
-  _req: Request,
+  req: Request | AuthRequest,
   res: Response
 ): Promise<void> => {
   try {
-    const snap = await waitlistCol.orderBy("createdAt", "asc").get();
-    const list = snap.docs.map((d) => ({
+    const authReq = req as AuthRequest;
+    const user = authReq.user;
+
+    let query = waitlistCol.orderBy("createdAt", "asc");
+
+    // Si es la ruta /my, filtrar por usuario actual
+    if (req.path === '/my' || req.originalUrl.includes('/my')) {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        res.status(401).json({ error: "Token no proporcionado" });
+        return;
+      }
+
+      const idToken = authHeader.slice(7);
+      const decoded = await admin.auth().verifyIdToken(idToken);
+      const userId = decoded.uid;
+      
+      query = waitlistCol.where("userId", "==", userId).orderBy("createdAt", "asc");
+    }
+
+    const snap = await query.get();
+    let list = snap.docs.map((d) => ({
       id: d.id,
       ...(d.data() as WaitlistDoc),
     }));
+
+    // Si el usuario es employee (no admin) y tiene branches limitadas, filtrar por branch de las clases
+    if (user && user.role === "employee" && user.branches && user.branches.length > 0) {
+      // Obtener todas las clases únicas de las waitlists
+      const classIds = Array.from(new Set(
+        list.map((wl: any) => wl.classId).filter(Boolean)
+      ));
+      
+      // Obtener las clases en chunks (Firestore limita "in" a 10 items)
+      const allClasses: Map<string, any> = new Map();
+      
+      for (let i = 0; i < classIds.length; i += 10) {
+        const chunk = classIds.slice(i, i + 10);
+        const classesSnap = await admin
+          .firestore()
+          .collection("classes")
+          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+          .get();
+        classesSnap.docs.forEach(doc => {
+          allClasses.set(doc.id, doc.data());
+        });
+      }
+
+      // Filtrar waitlists por branch de las clases
+      list = list.filter((wl: any) => {
+        const classData = allClasses.get(wl.classId);
+        return classData && classData.branch && user.branches!.includes(classData.branch);
+      });
+    }
+
     res.status(200).json({ waitlists: list });
   } catch (err) {
     console.error("getAllWaitlists error:", err);

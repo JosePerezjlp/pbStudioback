@@ -2,6 +2,7 @@
 import { Request, Response } from "express";
 import admin from "../config/firebase";
 import { ERROR_CODES, ClassType } from "../types/enums";
+import { AuthRequest } from "../middleware/authMiddleware";
 import {
   sendReservationCancelledEmail,
   sendReservationConfirmationEmail,
@@ -101,6 +102,13 @@ const statusFromMessage = (m: string): number => {
     m === ERROR_CODES.NO_COMPATIBLE_PACKAGE
   ) return 409;
 
+  // Validación de clase pasada
+  if (
+    m === "No se puede reservar una clase que ya pasó" ||
+    m === "La clase no tiene fecha u hora definida" ||
+    m === "La fecha u hora de la clase no es válida"
+  ) return 400;
+
   return 500;
 };
 
@@ -114,6 +122,9 @@ const codeFromMessage = (m: string): string => {
   if (m === ERROR_CODES.NO_PACKAGES) return "NO_PACKAGES";
   if (m === ERROR_CODES.NO_COMPATIBLE_PACKAGE) return "NO_COMPATIBLE_PACKAGE";
   if (m === ERROR_CODES.UNLIMITED_DAILY_LIMIT) return "UNLIMITED_DAILY_LIMIT";
+  if (m === "No se puede reservar una clase que ya pasó") return "CLASS_ALREADY_PAST";
+  if (m === "La clase no tiene fecha u hora definida") return "CLASS_MISSING_DATETIME";
+  if (m === "La fecha u hora de la clase no es válida") return "CLASS_INVALID_DATETIME";
   return "INTERNAL_ERROR";
 };
 
@@ -143,6 +154,31 @@ export const createReservationController = async (
 
       const user = userSnapTx.data() as UserDoc;
       const cls = classSnapTx.data() as ClassDoc;
+
+      // Validar que la clase NO haya pasado (día + hora exacta)
+      const currentTime = new Date();
+      const classDay = cls.day ?? "";
+      const classHour = cls.hour ?? "";
+      
+      if (!classDay || !classHour) {
+        throw new Error("La clase no tiene fecha u hora definida");
+      }
+
+      // Normalizar formato de hora: si viene "HH:mm", agregar ":00" para segundos
+      const normalizedHour = classHour.length === 5 ? `${classHour}:00` : classHour;
+      
+      // Combinar día + hora para crear fecha/hora exacta de la clase
+      const classDateTime = new Date(`${classDay}T${normalizedHour}`);
+      
+      // Validar que la fecha/hora sea válida
+      if (isNaN(classDateTime.getTime())) {
+        throw new Error("La fecha u hora de la clase no es válida");
+      }
+
+      // Si la clase ya pasó (o está empezando ahora), rechazar
+      if (classDateTime <= currentTime) {
+        throw new Error("No se puede reservar una clase que ya pasó");
+      }
 
       // Duplicada
       const dup = await reservationsRef
@@ -290,10 +326,13 @@ export const createReservationController = async (
    LIST / GET ONE
    =============================================================== */
 export const getAllReservationsController = async (
-  req: Request,
+  req: Request | AuthRequest,
   res: Response
 ): Promise<void> => {
   try {
+    const authReq = req as AuthRequest;
+    const user = authReq.user;
+
     let query = admin
       .firestore()
       .collection("reservations")
@@ -319,8 +358,48 @@ export const getAllReservationsController = async (
     }
 
     const snapshot = await query.get();
-    const reservations: Array<{ id: string } & Record<string, unknown>> =
+    let reservations: Array<{ id: string } & Record<string, unknown>> =
       snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+
+    // Si el usuario es employee (no admin) y tiene branches limitadas, filtrar por branch de las clases
+    if (user && user.role === "employee" && user.branches && user.branches.length > 0) {
+      // Obtener todas las clases únicas de las reservaciones
+      const classIds = Array.from(new Set(
+        reservations.map((res: any) => res.classId).filter(Boolean)
+      ));
+      
+      // Obtener las clases
+      const classesSnap = await admin
+        .firestore()
+        .collection("classes")
+        .where(admin.firestore.FieldPath.documentId(), "in", classIds.slice(0, 10)) // Firestore limita "in" a 10 items
+        .get();
+      
+      // Para más de 10 clases, hacer múltiples queries
+      const allClasses: Map<string, any> = new Map();
+      classesSnap.docs.forEach(doc => {
+        allClasses.set(doc.id, doc.data());
+      });
+
+      // Procesar en chunks si hay más de 10 clases
+      for (let i = 10; i < classIds.length; i += 10) {
+        const chunk = classIds.slice(i, i + 10);
+        const chunkSnap = await admin
+          .firestore()
+          .collection("classes")
+          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+          .get();
+        chunkSnap.docs.forEach(doc => {
+          allClasses.set(doc.id, doc.data());
+        });
+      }
+
+      // Filtrar reservaciones por branch de las clases
+      reservations = reservations.filter((res: any) => {
+        const classData = allClasses.get(res.classId);
+        return classData && classData.branch && user.branches!.includes(classData.branch);
+      });
+    }
 
     res.status(200).json({ reservations });
   } catch (error) {
@@ -328,6 +407,83 @@ export const getAllReservationsController = async (
     res
       .status(500)
       .json({ error: "Error al obtener reservas", details: String(error) });
+  }
+};
+
+/* ===============================================================
+   GET RESERVATIONS BY CLASS ID
+   =============================================================== */
+export const getReservationsByClassController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { classId } = req.params;
+
+    if (!classId) {
+      res.status(400).json({ error: "classId es requerido" });
+      return;
+    }
+
+    // Obtener todas las reservaciones activas de esta clase
+    const reservationsSnap = await admin
+      .firestore()
+      .collection("reservations")
+      .where("classId", "==", classId)
+      .where("status", "==", "active")
+      .orderBy("createdAt", "desc")
+      .get();
+
+    const reservations = reservationsSnap.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    // Obtener información de los usuarios para cada reservación
+    const userIds = Array.from(new Set(
+      reservations.map((res: any) => res.userId).filter(Boolean)
+    ));
+
+    // Obtener usuarios en chunks (Firestore limita "in" a 10 items)
+    const usersMap: Map<string, any> = new Map();
+    
+    for (let i = 0; i < userIds.length; i += 10) {
+      const chunk = userIds.slice(i, i + 10);
+      const usersSnap = await admin
+        .firestore()
+        .collection("users")
+        .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+        .get();
+      
+      usersSnap.docs.forEach(doc => {
+        usersMap.set(doc.id, doc.data());
+      });
+    }
+
+    // Combinar reservaciones con información de usuarios
+    const reservationsWithUsers = reservations.map((res: any) => {
+      const userData = usersMap.get(res.userId);
+      return {
+        ...res,
+        user: userData ? {
+          id: res.userId,
+          firstName: userData.firstName || '',
+          lastName: userData.lastName || '',
+          email: userData.email || '',
+          phone: userData.phone || '',
+        } : null,
+      };
+    });
+
+    res.status(200).json({ 
+      reservations: reservationsWithUsers,
+      total: reservationsWithUsers.length 
+    });
+  } catch (error) {
+    console.error("Error en getReservationsByClassController:", error);
+    res
+      .status(500)
+      .json({ error: "Error al obtener reservas de la clase", details: String(error) });
   }
 };
 

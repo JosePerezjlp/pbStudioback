@@ -15,6 +15,56 @@ import { sendPackagePurchaseEmail } from "../utils/emailService";
 
 dotenv.config();
 
+/* ---------- helpers de fecha ---------- */
+/**
+ * Normaliza una fecha de inicio al inicio del día (00:00:00)
+ * Siempre normaliza para comparar solo por día, sin considerar hora
+ * Maneja strings, Date objects y Firestore Timestamps
+ */
+const normalizeStartDate = (dateInput: string | Date | any): Date => {
+  let date: Date;
+  if (typeof dateInput === 'string') {
+    date = new Date(dateInput);
+  } else if (dateInput?.toDate && typeof dateInput.toDate === 'function') {
+    // Firestore Timestamp
+    date = dateInput.toDate();
+  } else {
+    date = dateInput as Date;
+  }
+  const normalized = new Date(date);
+  normalized.setUTCHours(0, 0, 0, 0);
+  return normalized;
+};
+
+/**
+ * Normaliza una fecha de fin al final del día (23:59:59.999)
+ * Siempre normaliza para comparar solo por día, sin considerar hora
+ * Maneja strings, Date objects y Firestore Timestamps
+ */
+const normalizeEndDate = (dateInput: string | Date | any): Date => {
+  let date: Date;
+  if (typeof dateInput === 'string') {
+    date = new Date(dateInput);
+  } else if (dateInput?.toDate && typeof dateInput.toDate === 'function') {
+    // Firestore Timestamp
+    date = dateInput.toDate();
+  } else {
+    date = dateInput as Date;
+  }
+  const normalized = new Date(date);
+  normalized.setUTCHours(23, 59, 59, 999);
+  return normalized;
+};
+
+/**
+ * Normaliza la fecha actual al inicio del día (00:00:00) para comparación
+ */
+const normalizeToday = (): Date => {
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  return today;
+};
+
 const PAYPAL_API = "https://api-m.sandbox.paypal.com";
 const CLIENT_ID = process.env.PAYPAL_CLIENT_ID!;
 const CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET!;
@@ -60,30 +110,48 @@ export const createPayPalOrderController = async (
     if (couponCode && packageId) {
       const db = admin.firestore();
       const couponsCol = db.collection("coupons");
+      const packageRef = db.doc(`packages/${packageId}`);
       
-      // Buscar cupón por código
-      const couponQuery = await couponsCol
-        .where("code", "==", couponCode)
-        .limit(1)
-        .get();
+      // Obtener datos del paquete y cupón en paralelo
+      const [pkgSnap, couponQuery] = await Promise.all([
+        packageRef.get(),
+        couponsCol.where("code", "==", couponCode).limit(1).get()
+      ]);
       
-      if (!couponQuery.empty) {
+      if (!couponQuery.empty && pkgSnap.exists) {
         const couponDoc = couponQuery.docs[0];
         const couponData = couponDoc.data();
+        const pkgData = pkgSnap.data()!;
         
         // Verificar si el cupón aplica al paquete
-        if (couponData.isUniversal || couponData.packageIds.includes(packageId)) {
-          const now = new Date();
-          const start = new Date(couponData.startDate);
-          const end = new Date(couponData.endDate);
+        // Si es universal, aplica a todos los paquetes
+        const isUniversal = couponData.isUniversal === true;
+        const packageIds = couponData.packageIds || [];
+        
+        if (isUniversal || packageIds.includes(packageId)) {
+          // Normalizar fechas para comparar solo por día (sin hora)
+          const today = normalizeToday(); // Fecha actual normalizada a inicio del día
+          const start = normalizeStartDate(couponData.startDate); // Inicio del día
+          const end = normalizeEndDate(couponData.endDate); // Fin del día
           const usosDisponibles = (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0);
           
-          if (now >= start && now < end && usosDisponibles > 0) {
-            // Calcular descuento
-            const discountAmount = (finalAmount * couponData.discount) / 100;
-            finalAmount = Math.max(0, finalAmount - discountAmount);
+          // Verificar vigencia: startDate <= hoy <= endDate (inclusive)
+          if (today >= start && today <= end && usosDisponibles > 0) {
+            // Calcular descuento considerando specialPrice si aplica
+            // Si applyToSpecialPrice === true y el paquete tiene specialPrice, usar specialPrice como base
+            // Si no, usar el amount original
+            const baseAmount = (
+              couponData.applyToSpecialPrice === true && 
+              pkgData.specialPrice && 
+              typeof pkgData.specialPrice === 'number' &&
+              pkgData.specialPrice > 0
+            ) ? pkgData.specialPrice : finalAmount;
+            
+            const discountAmount = (baseAmount * couponData.discount) / 100;
+            finalAmount = Math.max(0, baseAmount - discountAmount);
             
             console.log(`💰 PayPal - Cupón aplicado: ${couponData.discount}%`);
+            console.log(`💰 PayPal - Base de cálculo: $${baseAmount}`);
             console.log(`💰 PayPal - Precio final: $${finalAmount}`);
           }
         }
@@ -163,13 +231,52 @@ export const capturePayPalOrderController = async (
       res.status(404).json({ error: "Paquete no encontrado" });
       return;
     }
-    const pkgData = pkgSnap.data() as {
-      totalClasses: number;
-      type: string;
-      modality?: string;
-      isUnlimited?: boolean;
-      daysExpiry?: number;
-    };
+    const pkgData = pkgSnap.data()!;
+
+    // Validar que el paquete esté publicado (dentro de su rango de fechas)
+    const today = normalizeToday();
+    const pkgStartDate = pkgData.startDate;
+    const pkgEndDate = pkgData.endDate;
+    
+    if (pkgStartDate || pkgEndDate) {
+      // Normalizar fechas del paquete (manejar Firestore Timestamps)
+      let pkgStart: Date | null = null;
+      let pkgEnd: Date | null = null;
+      
+      if (pkgStartDate) {
+        if (typeof pkgStartDate === 'string') {
+          pkgStart = normalizeStartDate(pkgStartDate);
+        } else if (pkgStartDate && typeof pkgStartDate === 'object' && 'toDate' in pkgStartDate && typeof pkgStartDate.toDate === 'function') {
+          pkgStart = normalizeStartDate(pkgStartDate.toDate());
+        } else {
+          pkgStart = normalizeStartDate(pkgStartDate as Date);
+        }
+      }
+      
+      if (pkgEndDate) {
+        if (typeof pkgEndDate === 'string') {
+          pkgEnd = normalizeEndDate(pkgEndDate);
+        } else if (pkgEndDate && typeof pkgEndDate === 'object' && 'toDate' in pkgEndDate && typeof pkgEndDate.toDate === 'function') {
+          pkgEnd = normalizeEndDate(pkgEndDate.toDate());
+        } else {
+          pkgEnd = normalizeEndDate(pkgEndDate as Date);
+        }
+      }
+      
+      if (pkgStart && today < pkgStart) {
+        res.status(400).json({ 
+          error: "Este paquete aún no está disponible para la venta" 
+        });
+        return;
+      }
+      
+      if (pkgEnd && today > pkgEnd) {
+        res.status(400).json({ 
+          error: "Este paquete ya no está disponible" 
+        });
+        return;
+      }
+    }
 
     const cleanedPackage = cleanUndefined({
       id: packageId,

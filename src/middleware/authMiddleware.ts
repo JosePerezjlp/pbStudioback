@@ -9,6 +9,7 @@ export interface AuthRequest extends Request {
     uid: string;
     role: string;
     isAdmin: boolean;
+    branches?: string[]; // Branches permitidas para employees
   };
 }
 
@@ -41,13 +42,25 @@ export const verifyToken: RequestHandler = (req: AuthRequest, res: Response, nex
         db.collection("instructors").doc(decoded.uid).get(),
       ]).then(([userSnap, staffSnap, instrSnap]) => {
         let role: string | null = null;
+        let branches: string[] = [];
 
         if (userSnap.exists) {
-          role = (userSnap.data()?.role as string) ?? "user";
+          const userData = userSnap.data();
+          role = (userData?.role as string) ?? "user";
+          // Para staff, obtener branches si existen
+          if (role === "employee" || role === "admin") {
+            branches = (userData?.branches as string[]) || [];
+          }
         } else if (staffSnap.exists) {
-          role = (staffSnap.data()?.role as string) ?? "employee";
+          const staffData = staffSnap.data();
+          role = (staffData?.role as string) ?? "employee";
+          branches = (staffData?.branches as string[]) || [];
         } else if (instrSnap.exists) {
-          role = (instrSnap.data()?.role as string) ?? "employee";
+          const instrData = instrSnap.data();
+          role = (instrData?.role as string) ?? "employee";
+          // Instructors pueden tener un branch o branches
+          const branch = instrData?.branch as string;
+          branches = branch ? [branch] : ((instrData?.branches as string[]) || []);
         }
 
         if (!role) {
@@ -59,6 +72,8 @@ export const verifyToken: RequestHandler = (req: AuthRequest, res: Response, nex
           uid: decoded.uid,
           role,
           isAdmin: role === "admin",
+          // Solo incluir branches si es employee (admin ve todas)
+          branches: role === "admin" ? [] : branches,
         };
 
         next();
