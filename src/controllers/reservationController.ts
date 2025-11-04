@@ -550,7 +550,7 @@ export const deleteReservationController = async (
   const { reservationId } = req.params;
 
   // Para notificar por email después
-  let promotedFromWaitlist: { userId: string; classId: string } | null = null;
+  let promotedFromWaitlist: { userId: string; classId: string; seat?: number | null } | null = null;
 
   try {
     const db = admin.firestore();
@@ -695,13 +695,57 @@ export const deleteReservationController = async (
 
       // 2.3 Si hay candidato, crear su reserva y aceptar waitlist
       let finalOccupied = occupiedAfter;
+      let assignedSeatForPromotion: number | null = null;
+      
       if (candidate) {
+        // Determinar tipo de clase y asignar asiento si es grupal
+        const classType: ClassType =
+          (cls.type === ClassType.GROUPS || cls.type === ClassType.INDIVIDUAL
+            ? (cls.type as ClassType)
+            : normalizeClassType(
+                typeof cls.type === "string" ? cls.type : undefined
+              )) ?? ClassType.INDIVIDUAL;
+        
+        // Si es clase grupal, encontrar el primer asiento disponible
+        if (classType === ClassType.GROUPS) {
+          // Obtener todos los asientos ocupados para esta clase (excluyendo la reserva que se está cancelando)
+          const occupiedSeatsSnap = await reservationsRef
+            .where("classId", "==", candidate!.wl.classId)
+            .where("status", "==", "active")
+            .where("seat", "!=", null)
+            .get();
+          
+          const occupiedSeats = occupiedSeatsSnap.docs
+            .map(doc => {
+              const data = doc.data() as ReservationDoc;
+              // Excluir el asiento de la reserva que se está cancelando
+              if (doc.id === reservationId) return null;
+              return data.seat;
+            })
+            .filter((seat): seat is number => seat !== null && typeof seat === 'number')
+            .sort((a, b) => a - b);
+          
+          // Encontrar el primer asiento disponible (del 1 al capacity)
+          const capacity = cls.capacity ?? 0;
+          for (let seatNum = 1; seatNum <= capacity; seatNum++) {
+            if (!occupiedSeats.includes(seatNum)) {
+              assignedSeatForPromotion = seatNum;
+              break;
+            }
+          }
+          
+          // Si no se encontró asiento disponible, usar null (no debería pasar si hay cupo)
+          if (assignedSeatForPromotion === null && capacity > 0) {
+            assignedSeatForPromotion = capacity; // Fallback: usar el último asiento
+          }
+        }
+        
         const newResRef = reservationsRef.doc();
         const payload: ReservationDoc = {
           id: newResRef.id,
           userId: candidate!.wl.userId,
           classId: candidate!.wl.classId,
-          seat: null,
+          seat: assignedSeatForPromotion,
           status: "active",
           classDay,
           createdAt: new Date().toISOString(),
@@ -719,6 +763,7 @@ export const deleteReservationController = async (
         promotedFromWaitlist = {
           userId: candidate!.wl.userId,
           classId: candidate!.wl.classId,
+          seat: assignedSeatForPromotion, // Incluir asiento asignado
         };
       }
 
@@ -765,7 +810,7 @@ export const deleteReservationController = async (
 
     // 2) Email al usuario promovido desde waitlist (si hubo)
     if (promotedFromWaitlist) {
-      const { userId: promotedUserId, classId: promotedClassId } =
+      const { userId: promotedUserId, classId: promotedClassId, seat: promotedSeat } =
         promotedFromWaitlist;
       try {
         const promotedUserSnapEmail = await admin
@@ -786,11 +831,31 @@ export const deleteReservationController = async (
           const promotedClassData = promotedClassSnap.data() as ClassDoc | undefined;
           const promotedClassType = promotedClassData?.type || "individual";
           
+          // Obtener el asiento asignado (si viene en promotedFromWaitlist, usarlo; sino buscar)
+          let assignedSeat: number | null = promotedSeat ?? null;
+          if (assignedSeat === null || assignedSeat === undefined) {
+            // Buscar la reserva recién creada para obtener el asiento
+            const reservationSnap = await admin
+              .firestore()
+              .collection("reservations")
+              .where("userId", "==", promotedUserId)
+              .where("classId", "==", promotedClassId)
+              .where("status", "==", "active")
+              .orderBy("createdAt", "desc")
+              .limit(1)
+              .get();
+            
+            if (!reservationSnap.empty) {
+              const reservationData = reservationSnap.docs[0].data() as ReservationDoc;
+              assignedSeat = reservationData.seat ?? null;
+            }
+          }
+          
           await sendWaitlistAcceptedEmail(
             promotedUserEmail.email,
             promotedUserEmail.firstName,
             promotedClassId,
-            null, // Asiento null para promociones desde waitlist
+            assignedSeat, // Asiento asignado
             promotedClassType // Tipo de clase
           );
         }

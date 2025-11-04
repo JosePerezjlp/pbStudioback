@@ -8,7 +8,8 @@ export type Coupon = {
   usedCount?: number;
   packageIds: string[]; // Paquetes específicos (opcional)
   applyToSpecialPrice: boolean;
-  isUniversal: boolean; // Nuevo: si aplica a cualquier paquete
+  isUniversal: boolean; // Si aplica a cualquier paquete
+  isAutomatic?: boolean; // Si se aplica automáticamente al paquete (sin código)
   createdAt: string;
   updatedAt: string;
 };
