@@ -205,10 +205,12 @@ export const capturePayPalOrderController = async (
 ): Promise<void> => {
   try {
     /* ---------- Validaciones ---------- */
-    const { orderID, packageId, branchId } = req.body as {
+    const { orderID, packageId, branchId, couponCode, couponId } = req.body as {
       orderID: string;
       packageId: string;
       branchId?: string;
+      couponCode?: string;
+      couponId?: string;
     };
     const uid = req.user?.uid;
 
@@ -278,10 +280,22 @@ export const capturePayPalOrderController = async (
       }
     }
 
+    // Formatear tipo de paquete para mostrar en español
+    // Detecta: "group", "groups", "grupal", "grupales" → "Grupal"
+    const formatPackageType = (type: string | undefined): string => {
+      if (!type) return "Individual";
+      const normalizedType = type.toLowerCase();
+      // Detecta "group", "groups", "grupal", "grupales" (con o sin 's')
+      if (normalizedType.includes("group") || normalizedType.includes("grupal")) {
+        return "Grupal";
+      }
+      return "Individual";
+    };
+    
     const cleanedPackage = cleanUndefined({
       id: packageId,
       totalClasses: pkgData.totalClasses,
-      type: pkgData.type,
+      type: formatPackageType(pkgData.type), // Formatear tipo para mostrar "Grupal" en lugar de "groups"
       modality: pkgData.modality,
     });
 
@@ -331,6 +345,82 @@ export const capturePayPalOrderController = async (
 
     await admin.firestore().collection("paypal_transactions").add(paypalTx);
 
+    /* ---------- Manejar cupones (automáticos o por código) ---------- */
+    let finalCouponId: string | null = couponId || null;
+    let couponIsValid = false;
+    let automaticCouponId: string | null = null;
+    const db = admin.firestore();
+    const couponsCol = db.collection("coupons");
+    
+    // 1. Buscar cupón por código si no hay couponId
+    if (couponCode && !finalCouponId) {
+      const couponQuery = await couponsCol
+        .where("code", "==", couponCode)
+        .limit(1)
+        .get();
+      
+      if (!couponQuery.empty) {
+        finalCouponId = couponQuery.docs[0].id;
+      }
+    }
+    
+    // 2. Si NO hay cupón por código, verificar si el paquete tiene un cupón automático
+    if (!finalCouponId && !couponCode && pkgData.couponId) {
+      automaticCouponId = pkgData.couponId as string;
+      const automaticCouponRef = db.doc(`coupons/${automaticCouponId}`);
+      const automaticCouponSnap = await automaticCouponRef.get();
+      
+      if (automaticCouponSnap.exists) {
+        const automaticCouponData = automaticCouponSnap.data()!;
+        // Verificar que sea un cupón automático
+        if (automaticCouponData.isAutomatic === true) {
+          finalCouponId = automaticCouponId;
+        }
+      }
+    }
+    
+    // 3. Validar cupón si existe
+    if (finalCouponId) {
+      const couponRef = db.doc(`coupons/${finalCouponId}`);
+      const couponSnap = await couponRef.get();
+      
+      if (couponSnap.exists) {
+        const couponData = couponSnap.data()!;
+        const today = normalizeToday();
+        const start = normalizeStartDate(couponData.startDate);
+        const end = normalizeEndDate(couponData.endDate);
+        const usosDisponibles = (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0);
+        
+        const isUniversal = couponData.isUniversal === true;
+        const packageIds = couponData.packageIds || [];
+        
+        // Verificar si aplica al paquete
+        if (isUniversal || packageIds.includes(packageId) || automaticCouponId) {
+          // Verificar si el usuario ya usó este cupón antes (solo para cupones con código)
+          if (!automaticCouponId) {
+            const existingTx = await db
+              .collection("transactions")
+              .where("userId", "==", uid)
+              .where("couponId", "==", finalCouponId)
+              .limit(1)
+              .get();
+            
+            if (!existingTx.empty) {
+              res.status(400).json({ 
+                error: "Ya has usado este cupón anteriormente" 
+              });
+              return;
+            }
+          }
+          
+          // Verificar vigencia
+          if (today >= start && today <= end && usosDisponibles > 0) {
+            couponIsValid = true;
+          }
+        }
+      }
+    }
+
     /* ---------- Registro genérico (para /transactions) ---------- */
     const genericStatus: TransactionStatus =
       data.status === "COMPLETED" ? "paid" : "pending";
@@ -342,7 +432,9 @@ export const capturePayPalOrderController = async (
       package: cleanedPackage,
       amount: Number(paypalTx.amount),
       currency: paypalTx.currency,
-      couponUsed: false,
+      couponUsed: couponIsValid,
+      couponCode: couponCode || undefined,
+      couponId: finalCouponId || undefined,
       paymentMethod: "paypal",
       status: genericStatus,
       paypal: { orderID: data.id, captureID },
@@ -373,6 +465,15 @@ export const capturePayPalOrderController = async (
         "classes.total": admin.firestore.FieldValue.increment(addTotal),
         "classes.available": admin.firestore.FieldValue.increment(addTotal),
       });
+      
+      // Incrementar usedCount para cualquier cupón usado (automático o por código)
+      if (finalCouponId && couponIsValid) {
+        const couponRefToUpdate = db.doc(`coupons/${finalCouponId}`);
+        t.update(couponRefToUpdate, {
+          usedCount: admin.firestore.FieldValue.increment(1),
+          updatedAt: new Date().toISOString(),
+        });
+      }
     });
 
     const updatedSnap = await userRef.get();
@@ -389,7 +490,7 @@ export const capturePayPalOrderController = async (
         await sendPackagePurchaseEmail(
           userEmailForMail,
           userFirstName,
-          `Paquete ${pkgData.type}`,
+          `Paquete ${formatPackageType(pkgData.type)}`,
           pkgData.totalClasses,
           userPackage.expiresAt,
           pkgData.modality

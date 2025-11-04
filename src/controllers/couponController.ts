@@ -127,7 +127,8 @@ export const createCouponController = async (
       totalUses,
       packageIds = [], // Opcional para cupones universales
       applyToSpecialPrice,
-      isUniversal = false, // Nuevo campo
+      isUniversal = false,
+      isAutomatic = false, // Si es true, se aplica automáticamente al paquete
     } = req.body;
 
     
@@ -197,14 +198,16 @@ export const createCouponController = async (
       packageIds: isUniversal ? [] : packageIds, // Vacío para universales
       applyToSpecialPrice,
       isUniversal,
+      isAutomatic,
       createdAt: now,
       updatedAt: now,
     };
 
     const docRef = await couponsCol.add(newCoupon);
 
-    // Actualizar paquetes si NO es universal y tiene paquetes específicos
-    if (!isUniversal && packageIds.length > 0) {
+    // Actualizar paquetes SOLO si es automático, NO es universal y tiene paquetes específicos
+    // Los cupones específicos (isAutomatic === false) NO se aplican automáticamente
+    if (isAutomatic && !isUniversal && packageIds.length > 0) {
       const pkgDocs = await fetchPackagesByIds(packageIds);
 
     await Promise.all(
@@ -266,6 +269,7 @@ export const updateCouponController = async (
       totalUses,
       packageIds,
       applyToSpecialPrice,
+      isAutomatic = false,
     } = req.body;
 
     const couponRef = couponsCol.doc(couponId);
@@ -334,10 +338,11 @@ export const updateCouponController = async (
       usedCount, // 🔒 no lo toca el frontend
       packageIds,
       applyToSpecialPrice,
+      isAutomatic,
       updatedAt: now,
     });
 
-    // Limpia paquetes desvinculados
+    // Limpia paquetes desvinculados (solo si el cupón era automático)
     const oldAssignedSnap = await packagesCol
       .where("couponId", "==", couponId)
       .get();
@@ -355,8 +360,9 @@ export const updateCouponController = async (
         })
       );
 
-    // Asigna a paquetes nuevos o existentes
-    const toAssign = pkgDocs.map((pkgDoc) => {
+    // Asigna a paquetes nuevos o existentes SOLO si es automático
+    // Los cupones específicos (isAutomatic === false) NO se aplican automáticamente
+    const toAssign = isAutomatic ? pkgDocs.map((pkgDoc) => {
       const rawAmount = pkgDoc.data().amount;
       const amount =
         typeof rawAmount === "number" ? rawAmount : parseFloat(rawAmount);
@@ -378,7 +384,7 @@ export const updateCouponController = async (
         specialPrice,
         updatedAt: now,
       });
-    });
+    }) : [];
 
     await Promise.all([...toClean, ...toAssign]);
 

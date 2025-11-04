@@ -8,6 +8,20 @@ import { sendPackagePurchaseEmail } from "../utils/emailService";
 
 /* ---------- helpers ---------- */
 /**
+ * Formatea el tipo de paquete/clase para mostrar en español
+ * Detecta: "group", "groups", "grupal", "grupales" → "Grupal"
+ */
+const formatPackageType = (type: string | undefined): string => {
+  if (!type) return "Individual";
+  const normalizedType = type.toLowerCase();
+  // Detecta "group", "groups", "grupal", "grupales" (con o sin 's')
+  if (normalizedType.includes("group") || normalizedType.includes("grupal")) {
+    return "Grupal";
+  }
+  return "Individual";
+};
+
+/**
  * Normaliza una fecha de inicio al inicio del día (00:00:00)
  * Siempre normaliza para comparar solo por día, sin considerar hora
  * Maneja strings, Date objects y Firestore Timestamps
@@ -193,12 +207,17 @@ export const createCashTransactionController = async (
     }
     
     const couponRef = finalCouponId ? db.doc(`coupons/${finalCouponId}`) : null;
+    let couponSnap = null;
 
-    const [userSnap, pkgSnap, couponSnap] = await Promise.all([
+    const [userSnap, pkgSnap] = await Promise.all([
       userRef.get(),
       packageRef.get(),
-      couponRef ? couponRef.get() : Promise.resolve(null),
     ]);
+    
+    // Obtener cupón si existe
+    if (couponRef) {
+      couponSnap = await couponRef.get();
+    }
 
     if (!userSnap.exists) {
       res.status(404).json({ error: "Usuario no encontrado" });
@@ -261,7 +280,25 @@ export const createCashTransactionController = async (
     // Validar cupón si existe y calcular descuento
     let couponIsValid = false;
     let finalAmount = amount; // Precio final (con descuento aplicado)
-
+    let automaticCouponId: string | null = null;
+    
+    // 1. Si NO hay cupón por código, verificar si el paquete tiene un cupón automático
+    if (!finalCouponId && !couponCode && pkgData.couponId) {
+      automaticCouponId = pkgData.couponId as string;
+      const automaticCouponRef = db.doc(`coupons/${automaticCouponId}`);
+      const automaticCouponSnap = await automaticCouponRef.get();
+      
+      if (automaticCouponSnap.exists) {
+        const automaticCouponData = automaticCouponSnap.data()!;
+        // Verificar que sea un cupón automático
+        if (automaticCouponData.isAutomatic === true) {
+          finalCouponId = automaticCouponId;
+          couponSnap = automaticCouponSnap;
+        }
+      }
+    }
+    
+    // 2. Validar cupón (por código o automático)
     if (finalCouponId && couponSnap && couponSnap.exists) {
       const couponData = couponSnap.data()!;
       // Normalizar fechas para comparar solo por día (sin hora)
@@ -283,39 +320,46 @@ export const createCashTransactionController = async (
         return;
       }
 
-      // Verificar si el usuario ya usó este cupón antes
-      const existingTx = await db
-        .collection("transactions")
-        .where("userId", "==", uid)
-        .where("couponId", "==", finalCouponId)
-        .limit(1)
-        .get();
+      // Verificar si el usuario ya usó este cupón antes (solo para cupones con código, no automáticos)
+      // Los cupones automáticos pueden ser usados múltiples veces por diferentes usuarios
+      if (!automaticCouponId) {
+        const existingTx = await db
+          .collection("transactions")
+          .where("userId", "==", uid)
+          .where("couponId", "==", finalCouponId)
+          .limit(1)
+          .get();
 
-      if (!existingTx.empty) {
-        res.status(400).json({ 
-          error: "Ya has usado este cupón anteriormente" 
-        });
-        return;
+        if (!existingTx.empty) {
+          res.status(400).json({ 
+            error: "Ya has usado este cupón anteriormente" 
+          });
+          return;
+        }
       }
 
       // Verificar vigencia: startDate <= hoy <= endDate (inclusive)
       if (today >= start && today <= end && usosDisponibles > 0) {
         couponIsValid = true;
         
-        // Calcular descuento considerando specialPrice si aplica
-        // Si applyToSpecialPrice === true y el paquete tiene specialPrice, usar specialPrice como base
-        // Si no, usar el amount original
-        const baseAmount = (
-          couponData.applyToSpecialPrice === true && 
-          pkgData.specialPrice && 
-          typeof pkgData.specialPrice === 'number' &&
-          pkgData.specialPrice > 0
-        ) ? pkgData.specialPrice : amount;
-        
-        const discountAmount = (baseAmount * couponData.discount) / 100;
-        finalAmount = Math.max(0, baseAmount - discountAmount);
-        
-        
+        // Si es cupón automático, el descuento ya está en specialPrice
+        // Si es cupón por código, calcular el descuento
+        if (automaticCouponId && pkgData.specialPrice && typeof pkgData.specialPrice === 'number' && pkgData.specialPrice > 0) {
+          finalAmount = pkgData.specialPrice;
+        } else {
+          // Calcular descuento considerando specialPrice si aplica
+          // Si applyToSpecialPrice === true y el paquete tiene specialPrice, usar specialPrice como base
+          // Si no, usar el amount original
+          const baseAmount = (
+            couponData.applyToSpecialPrice === true && 
+            pkgData.specialPrice && 
+            typeof pkgData.specialPrice === 'number' &&
+            pkgData.specialPrice > 0
+          ) ? pkgData.specialPrice : amount;
+          
+          const discountAmount = (baseAmount * couponData.discount) / 100;
+          finalAmount = Math.max(0, baseAmount - discountAmount);
+        }
       } else {
         res
           .status(400)
@@ -337,7 +381,7 @@ export const createCashTransactionController = async (
       package: {
         id: packageId,
         totalClasses: pkgData.totalClasses,
-        type: pkgData.type,
+        type: formatPackageType(pkgData.type), // Formatear tipo para mostrar "Grupal" en lugar de "groups"
         ...(pkgData.modality && { modality: pkgData.modality }),
       },
       amount: finalAmount,
@@ -379,8 +423,10 @@ export const createCashTransactionController = async (
         "classes.taken": admin.firestore.FieldValue.increment(0),
       });
 
-      if (couponRef && couponIsValid) {
-        t.update(couponRef, {
+      // Incrementar usedCount para cualquier cupón usado (automático o por código)
+      if (finalCouponId && couponIsValid) {
+        const couponRefToUpdate = db.doc(`coupons/${finalCouponId}`);
+        t.update(couponRefToUpdate, {
           usedCount: admin.firestore.FieldValue.increment(1),
           updatedAt: new Date().toISOString(),
         });
@@ -391,7 +437,7 @@ export const createCashTransactionController = async (
       await sendPackagePurchaseEmail(
         userData.email,
         userData.firstName || "Usuario",
-        `Paquete ${pkgData.type}`,
+        `Paquete ${formatPackageType(pkgData.type)}`,
         pkgData.totalClasses,
         userPackage.expiresAt,
         pkgData.modality
@@ -423,7 +469,14 @@ export const getAllTransactionsController = async (
       .collection("transactions")
       .orderBy("createdAt", "desc")
       .get();
-    const transactions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const transactions = snap.docs.map((d) => {
+      const data = d.data();
+      // Formatear tipo de paquete en las respuestas
+      if (data.package && data.package.type) {
+        data.package.type = formatPackageType(data.package.type);
+      }
+      return { id: d.id, ...data };
+    });
     res.status(200).json({ transactions });
   } catch (err) {
     console.error("❌ Error listando transacciones:", err);
@@ -460,7 +513,14 @@ export const getUserTransactionsController = async (
       .where("userId", "==", userId)
       .get();
 
-    const transactions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const transactions = snap.docs.map((d) => {
+      const data = d.data();
+      // Formatear tipo de paquete en las respuestas
+      if (data.package && data.package.type) {
+        data.package.type = formatPackageType(data.package.type);
+      }
+      return { id: d.id, ...data };
+    });
     res.status(200).json({ transactions });
   } catch (err) {
     console.error("❌ Error listando transacciones de usuario:", err);
@@ -606,7 +666,14 @@ export const getCajaTransactionsController = async (
       .orderBy("createdAt", "desc")
       .get();
 
-    const transactions = snapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as any[];
+    const transactions = snapshot.docs.map((d) => {
+      const data = d.data();
+      // Formatear tipo de paquete en las respuestas
+      if (data.package && data.package.type) {
+        data.package.type = formatPackageType(data.package.type);
+      }
+      return { id: d.id, ...data };
+    }) as any[];
     
     // Calcular totales
     const totalAmount = transactions.reduce((sum, tx) => sum + (tx.amount || 0), 0);
