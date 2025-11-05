@@ -135,13 +135,13 @@ export const loginController = async (
       return;
     }
 
-    // users (admin)
+    // users (admin o employee)
     const userRef = db.collection(collection).doc(uid);
 
     let newSessionId: string | null = null;
     let sessionNotice: string | null = null;
 
-    if (role === "admin") {
+    if (role === "admin" || role === "employee") {
       newSessionId = uuidv4();
       await userRef.update({
         sessionId: newSessionId,
@@ -149,6 +149,34 @@ export const loginController = async (
       });
       await admin.auth().revokeRefreshTokens(uid);
       sessionNotice = "Esta sesión reemplazará otras activas por seguridad.";
+    }
+
+    // Normalizar branches y permissions para employees
+    let normalizedBranches: string[] = [];
+    let normalizedPermissions: Record<string, string[]> = {};
+
+    if (role === "employee") {
+      // Normalizar branches
+      if (Array.isArray(data.branches)) {
+        normalizedBranches = data.branches.filter((b: unknown) => typeof b === "string");
+      } else if (typeof data.branch === "string") {
+        normalizedBranches = [data.branch];
+      }
+
+      // Normalizar permissions
+      if (isRecord(data.permissions)) {
+        normalizedPermissions = Object.fromEntries(
+          Object.entries(data.permissions).map(([k, v]) => [
+            k,
+            Array.isArray(v) ? v.filter((x: unknown) => typeof x === "string") : [],
+          ])
+        );
+      }
+    } else if (role === "admin") {
+      // Admin no tiene branches limitadas (array vacío)
+      normalizedBranches = [];
+      // Admin tiene todos los permisos, pero no se guardan en permissions
+      normalizedPermissions = {};
     }
 
     // nunca exponer password
@@ -159,6 +187,14 @@ export const loginController = async (
       email: str(rest.email),
       ...rest,
       role,
+      // Asegurar que employees tengan branches y permissions en la respuesta
+      ...(role === "employee" && {
+        branches: normalizedBranches,
+        permissions: normalizedPermissions,
+      }),
+      ...(role === "admin" && {
+        branches: [],
+      }),
       sessionId: newSessionId,
       sessionNotice,
     });

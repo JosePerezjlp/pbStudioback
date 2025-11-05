@@ -2,13 +2,14 @@ import { Request, Response } from "express";
 import admin from "../config/firebase";
 import { fetchCouponsByIds, fetchPackagesByIds } from "../helpers/firestore";
 import { Coupon } from "../types/types";
+import { DateTime } from "luxon";
 
 const db = admin.firestore();
 const couponsCol = db.collection("coupons");
 const packagesCol = db.collection("packages");
 
 /**
- * Normaliza una fecha de inicio al inicio del día (00:00:00)
+ * Normaliza una fecha de inicio al inicio del día (00:00:00) en horario mexicano
  * Siempre normaliza para comparar solo por día, sin considerar hora
  * Maneja strings, Date objects y Firestore Timestamps
  */
@@ -22,13 +23,14 @@ const normalizeStartDate = (dateInput: string | Date | any): Date => {
   } else {
     date = dateInput as Date;
   }
-  const normalized = new Date(date);
-  normalized.setUTCHours(0, 0, 0, 0);
+  // Convertir a horario mexicano y normalizar al inicio del día
+  const mexicanDate = DateTime.fromJSDate(date).setZone("America/Mexico_City");
+  const normalized = mexicanDate.startOf("day").toJSDate();
   return normalized;
 };
 
 /**
- * Normaliza una fecha de fin al final del día (23:59:59.999)
+ * Normaliza una fecha de fin al final del día (23:59:59.999) en horario mexicano
  * Siempre normaliza para comparar solo por día, sin considerar hora
  * Maneja strings, Date objects y Firestore Timestamps
  */
@@ -42,18 +44,18 @@ const normalizeEndDate = (dateInput: string | Date | any): Date => {
   } else {
     date = dateInput as Date;
   }
-  const normalized = new Date(date);
-  normalized.setUTCHours(23, 59, 59, 999);
+  // Convertir a horario mexicano y normalizar al final del día
+  const mexicanDate = DateTime.fromJSDate(date).setZone("America/Mexico_City");
+  const normalized = mexicanDate.endOf("day").toJSDate();
   return normalized;
 };
 
 /**
- * Normaliza la fecha actual al inicio del día (00:00:00) para comparación
+ * Normaliza la fecha actual al inicio del día (00:00:00) en horario mexicano para comparación
  */
 const normalizeToday = (): Date => {
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-  return today;
+  const nowMexico = DateTime.now().setZone("America/Mexico_City");
+  return nowMexico.startOf("day").toJSDate();
 };
 
 const rangesOverlap = (

@@ -77,6 +77,92 @@ export const createStaffUser = async (
       status: StatusTypeEnum;
     } = req.body;
 
+    // Validar email
+    if (!email || typeof email !== "string" || !email.includes("@")) {
+      res.status(400).json({
+        error: "Email inválido o faltante",
+      });
+      return;
+    }
+
+    // Validar password mínimo 8 caracteres
+    if (!password || typeof password !== "string" || password.length < 8) {
+      res.status(400).json({
+        error: "La contraseña debe tener al menos 8 caracteres",
+      });
+      return;
+    }
+
+    // Validar role
+    if (!role || (role !== RolTypeEnum.ADMIN && role !== RolTypeEnum.EMPLOYEE)) {
+      res.status(400).json({
+        error: "Role inválido. Debe ser 'admin' o 'employee'",
+      });
+      return;
+    }
+
+    // Validar branches
+    if (!Array.isArray(branches) || branches.length === 0) {
+      res.status(400).json({
+        error: "Debe asignar al menos una sucursal",
+      });
+      return;
+    }
+
+    // Validar que todas las branches existan
+    const branchesCollection = admin.firestore().collection("branches");
+    const branchesSnapshots = await Promise.all(
+      branches.map((branchId) => branchesCollection.doc(branchId).get())
+    );
+    
+    const invalidBranches = branches.filter((_, index) => !branchesSnapshots[index].exists);
+    if (invalidBranches.length > 0) {
+      res.status(400).json({
+        error: `Las siguientes sucursales no existen: ${invalidBranches.join(", ")}`,
+      });
+      return;
+    }
+
+    // Validar permissions
+    if (!permissions || typeof permissions !== "object" || Array.isArray(permissions)) {
+      res.status(400).json({
+        error: "Permissions debe ser un objeto",
+      });
+      return;
+    }
+
+    // Validar estructura de permissions (módulos y acciones)
+    // Por ahora aceptamos cualquier estructura, pero validamos que sea objeto con arrays como valores
+    for (const [module, actions] of Object.entries(permissions)) {
+      if (typeof module !== "string") {
+        res.status(400).json({
+          error: "Los módulos en permissions deben ser strings",
+        });
+        return;
+      }
+      if (!Array.isArray(actions)) {
+        res.status(400).json({
+          error: `Las acciones del módulo '${module}' deben ser un array`,
+        });
+        return;
+      }
+      // Validar que todas las acciones sean strings
+      if (!actions.every((action) => typeof action === "string")) {
+        res.status(400).json({
+          error: `Las acciones del módulo '${module}' deben ser strings`,
+        });
+        return;
+      }
+    }
+
+    // Validar status
+    if (!status || (status !== StatusTypeEnum.ACTIVE && status !== StatusTypeEnum.INACTIVE)) {
+      res.status(400).json({
+        error: "Status inválido. Debe ser 'Activo' o 'Inactivo'",
+      });
+      return;
+    }
+
     // 🔍 Verificamos si ya hay un usuario con ese email en Firestore
     const existingQuery = await staffCollection
       .where("email", "==", email)
@@ -102,15 +188,15 @@ export const createStaffUser = async (
     await staffCollection.doc(userRecord.uid).set({
       email,
       role,
-      branches,
-      permissions,
+      branches, // Array de sucursales
+      permissions, // Objeto con módulos y acciones
       status,
       firstName: "Staff",
       lastName: "Fake",
       phone: "0000000000",
-      branch: branches[0] ?? "",
+      branch: branches[0] ?? "", // Fallback para compatibilidad
       createdAt: new Date().toISOString(),
-      isAdmin: true,
+      isAdmin: role === RolTypeEnum.ADMIN, // Solo true si es admin
     });
 
     res.status(201).json({
@@ -207,13 +293,21 @@ export const getStaffUserById = async (
       return;
     }
 
+    // Asegurar que branches y permissions estén en la respuesta
+    const branches = Array.isArray(data.branches) ? data.branches : [];
+    const permissions = (data.permissions && typeof data.permissions === "object" && !Array.isArray(data.permissions))
+      ? data.permissions
+      : {};
+
     res.status(200).json({
       id: doc.id,
       ...data,
       firstName: data.firstName ?? "Staff",
       lastName: data.lastName ?? "",
       phone: data.phone ?? "0000000000",
-      branch: data.branch ?? data.branches?.[0] ?? "",
+      branch: data.branch ?? branches[0] ?? "",
+      branches, // Asegurar que siempre esté como array
+      permissions, // Asegurar que siempre esté como objeto
     });
   } catch (error) {
     console.error("Error al obtener staff:", error);
@@ -244,6 +338,115 @@ export const updateStaffUser = async (
     const existingData = doc.data() as Record<string, unknown>;
     const changes: Record<string, unknown> = {};
 
+    // Validar campos si vienen en el update
+    if ("email" in updateData) {
+      const email = updateData.email;
+      if (!email || typeof email !== "string" || !email.includes("@")) {
+        res.status(400).json({
+          error: "Email inválido",
+        });
+        return;
+      }
+      // Verificar que el email no esté en uso por otro usuario
+      const existingQuery = await staffCollection
+        .where("email", "==", email)
+        .limit(1)
+        .get();
+      if (!existingQuery.empty && existingQuery.docs[0].id !== id) {
+        res.status(400).json({
+          error: "Este correo ya está registrado en la base de datos",
+          code: "firestore/email-already-exists",
+        });
+        return;
+      }
+    }
+
+    if ("role" in updateData) {
+      const role = updateData.role;
+      if (role !== RolTypeEnum.ADMIN && role !== RolTypeEnum.EMPLOYEE) {
+        res.status(400).json({
+          error: "Role inválido. Debe ser 'admin' o 'employee'",
+        });
+        return;
+      }
+      // Actualizar isAdmin según el role
+      changes.isAdmin = role === RolTypeEnum.ADMIN;
+    }
+
+    if ("branches" in updateData) {
+      const branches = updateData.branches;
+      if (!Array.isArray(branches) || branches.length === 0) {
+        res.status(400).json({
+          error: "Debe asignar al menos una sucursal",
+        });
+        return;
+      }
+      // Validar que todas las branches existan
+      const branchesCollection = admin.firestore().collection("branches");
+      const branchesSnapshots = await Promise.all(
+        branches.map((branchId: unknown) => {
+          if (typeof branchId !== "string") return null;
+          return branchesCollection.doc(branchId).get();
+        })
+      );
+      
+      const invalidBranches = branches.filter((branchId: unknown, index: number) => {
+        if (typeof branchId !== "string") return true;
+        return !branchesSnapshots[index]?.exists;
+      });
+      
+      if (invalidBranches.length > 0) {
+        res.status(400).json({
+          error: `Las siguientes sucursales no existen: ${invalidBranches.join(", ")}`,
+        });
+        return;
+      }
+      // Actualizar branch como fallback
+      changes.branch = branches[0] ?? "";
+    }
+
+    if ("permissions" in updateData) {
+      const permissions = updateData.permissions;
+      if (!permissions || typeof permissions !== "object" || Array.isArray(permissions)) {
+        res.status(400).json({
+          error: "Permissions debe ser un objeto",
+        });
+        return;
+      }
+      // Validar estructura de permissions
+      for (const [module, actions] of Object.entries(permissions)) {
+        if (typeof module !== "string") {
+          res.status(400).json({
+            error: "Los módulos en permissions deben ser strings",
+          });
+          return;
+        }
+        if (!Array.isArray(actions)) {
+          res.status(400).json({
+            error: `Las acciones del módulo '${module}' deben ser un array`,
+          });
+          return;
+        }
+        if (!actions.every((action: unknown) => typeof action === "string")) {
+          res.status(400).json({
+            error: `Las acciones del módulo '${module}' deben ser strings`,
+          });
+          return;
+        }
+      }
+    }
+
+    if ("status" in updateData) {
+      const status = updateData.status;
+      if (status !== StatusTypeEnum.ACTIVE && status !== StatusTypeEnum.INACTIVE) {
+        res.status(400).json({
+          error: "Status inválido. Debe ser 'Activo' o 'Inactivo'",
+        });
+        return;
+      }
+    }
+
+    // Comparar y agregar solo cambios
     Object.keys(updateData).forEach((key) => {
       if (
         JSON.stringify(updateData[key]) !== JSON.stringify(existingData[key])
