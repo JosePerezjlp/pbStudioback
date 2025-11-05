@@ -5,6 +5,7 @@ import { Request, Response } from "express";
 import admin from "../config/firebase";
 import { AuthRequest } from "../middleware/authMiddleware";
 import { sendPackagePurchaseEmail } from "../utils/emailService";
+import { DateTime } from "luxon";
 
 /* ---------- helpers ---------- */
 /**
@@ -22,7 +23,7 @@ const formatPackageType = (type: string | undefined): string => {
 };
 
 /**
- * Normaliza una fecha de inicio al inicio del día (00:00:00)
+ * Normaliza una fecha de inicio al inicio del día (00:00:00) en horario mexicano
  * Siempre normaliza para comparar solo por día, sin considerar hora
  * Maneja strings, Date objects y Firestore Timestamps
  */
@@ -36,13 +37,14 @@ const normalizeStartDate = (dateInput: string | Date | any): Date => {
   } else {
     date = dateInput as Date;
   }
-  const normalized = new Date(date);
-  normalized.setUTCHours(0, 0, 0, 0);
+  // Convertir a horario mexicano y normalizar al inicio del día
+  const mexicanDate = DateTime.fromJSDate(date).setZone("America/Mexico_City");
+  const normalized = mexicanDate.startOf("day").toJSDate();
   return normalized;
 };
 
 /**
- * Normaliza una fecha de fin al final del día (23:59:59.999)
+ * Normaliza una fecha de fin al final del día (23:59:59.999) en horario mexicano
  * Siempre normaliza para comparar solo por día, sin considerar hora
  * Maneja strings, Date objects y Firestore Timestamps
  */
@@ -56,18 +58,18 @@ const normalizeEndDate = (dateInput: string | Date | any): Date => {
   } else {
     date = dateInput as Date;
   }
-  const normalized = new Date(date);
-  normalized.setUTCHours(23, 59, 59, 999);
+  // Convertir a horario mexicano y normalizar al final del día
+  const mexicanDate = DateTime.fromJSDate(date).setZone("America/Mexico_City");
+  const normalized = mexicanDate.endOf("day").toJSDate();
   return normalized;
 };
 
 /**
- * Normaliza la fecha actual al inicio del día (00:00:00) para comparación
+ * Normaliza la fecha actual al inicio del día (00:00:00) en horario mexicano para comparación
  */
 const normalizeToday = (): Date => {
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-  return today;
+  const nowMexico = DateTime.now().setZone("America/Mexico_City");
+  return nowMexico.startOf("day").toJSDate();
 };
 
 export function cleanUndefined<T>(obj: T): T {
@@ -339,6 +341,28 @@ export const createCashTransactionController = async (
       }
 
       // Verificar vigencia: startDate <= hoy <= endDate (inclusive)
+      if (today < start) {
+        res.status(400).json({ 
+          error: "El cupón aún no está vigente" 
+        });
+        return;
+      }
+      
+      if (today > end) {
+        res.status(400).json({ 
+          error: "El cupón ha expirado" 
+        });
+        return;
+      }
+      
+      if (usosDisponibles <= 0) {
+        res.status(400).json({ 
+          error: "El cupón ha alcanzado su límite de usos" 
+        });
+        return;
+      }
+      
+      // Si todas las validaciones pasan, el cupón es válido
       if (today >= start && today <= end && usosDisponibles > 0) {
         couponIsValid = true;
         
@@ -360,11 +384,6 @@ export const createCashTransactionController = async (
           const discountAmount = (baseAmount * couponData.discount) / 100;
           finalAmount = Math.max(0, baseAmount - discountAmount);
         }
-      } else {
-        res
-          .status(400)
-          .json({ error: "Cupón inválido o sin usos disponibles" });
-        return;
       }
     } else if (couponCode && !finalCouponId) {
       // Si se envió código pero no se encontró cupón

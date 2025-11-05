@@ -425,18 +425,80 @@ export const getUserByIdController = async (
       userId = req.params.userId;
     }
 
-    const userDoc = await admin
-      .firestore()
-      .collection("users")
-      .doc(userId)
-      .get();
+    // Buscar en users, staff e instructors (como en loginController)
+    const db = admin.firestore();
+    const [userDoc, staffDoc, instrDoc] = await Promise.all([
+      db.collection("users").doc(userId).get(),
+      db.collection("staff").doc(userId).get(),
+      db.collection("instructors").doc(userId).get(),
+    ]);
 
-    if (!userDoc.exists) {
+    let doc: FirebaseFirestore.DocumentSnapshot<FirebaseFirestore.DocumentData> | null = null;
+    let collection: "users" | "staff" | "instructors" | null = null;
+
+    if (userDoc.exists) {
+      collection = "users";
+      doc = userDoc;
+    } else if (staffDoc.exists) {
+      collection = "staff";
+      doc = staffDoc;
+    } else if (instrDoc.exists) {
+      collection = "instructors";
+      doc = instrDoc;
+    }
+
+    if (!doc || !doc.exists) {
       res.status(404).json({ error: "Usuario no encontrado" });
       return;
     }
 
-    res.status(200).json({ id: userDoc.id, ...userDoc.data() });
+    const data = doc.data() || {};
+    const role = (data.role as string)?.toLowerCase() || "";
+
+    // Normalizar branches y permissions para employees y admins
+    let normalizedBranches: string[] = [];
+    let normalizedPermissions: Record<string, string[]> = {};
+
+    if (role === "employee" || role === "admin") {
+      // Normalizar branches
+      if (Array.isArray(data.branches)) {
+        normalizedBranches = data.branches.filter((b: unknown) => typeof b === "string");
+      } else if (typeof data.branch === "string") {
+        normalizedBranches = [data.branch];
+      }
+
+      // Normalizar permissions
+      if (data.permissions && typeof data.permissions === "object" && !Array.isArray(data.permissions)) {
+        normalizedPermissions = Object.fromEntries(
+          Object.entries(data.permissions).map(([k, v]) => [
+            k,
+            Array.isArray(v) ? v.filter((x: unknown) => typeof x === "string") : [],
+          ])
+        );
+      }
+
+      // Para admins, branches debe ser array vacío
+      if (role === "admin") {
+        normalizedBranches = [];
+      }
+
+      // Construir respuesta con datos normalizados
+      const { password: _omit, ...safeData } = data;
+      res.status(200).json({
+        id: doc.id,
+        ...safeData,
+        role,
+        branches: normalizedBranches,
+        permissions: normalizedPermissions,
+      });
+    } else {
+      // Para usuarios regulares (no employees ni admins), devolver datos tal cual
+      const { password: _omit, ...safeData } = data;
+      res.status(200).json({
+        id: doc.id,
+        ...safeData,
+      });
+    }
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
     console.error("Error al obtener usuario:", msg);

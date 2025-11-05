@@ -32,18 +32,22 @@ export const checkPermission = (
       if (role === "employee") {
         const db = admin.firestore();
         
-        // Buscar en staff o instructors
-        const [staffSnap, instrSnap] = await Promise.all([
+        // Buscar en users, staff o instructors (prioridad: users -> staff -> instructors)
+        const [userSnap, staffSnap, instrSnap] = await Promise.all([
+          db.collection("users").doc(uid).get(),
           db.collection("staff").doc(uid).get(),
           db.collection("instructors").doc(uid).get(),
         ]);
 
         let permissions: Record<string, string[]> = {};
 
-        if (staffSnap.exists) {
-          permissions = staffSnap.data()?.permissions || {};
+        if (userSnap.exists) {
+          // Staff guardado en users collection
+          permissions = (userSnap.data()?.permissions as Record<string, string[]>) || {};
+        } else if (staffSnap.exists) {
+          permissions = (staffSnap.data()?.permissions as Record<string, string[]>) || {};
         } else if (instrSnap.exists) {
-          permissions = instrSnap.data()?.permissions || {};
+          permissions = (instrSnap.data()?.permissions as Record<string, string[]>) || {};
         }
 
         // Verificar si tiene el permiso específico
@@ -99,17 +103,22 @@ export const checkAnyPermission = (
       if (role === "employee") {
         const db = admin.firestore();
         
-        const [staffSnap, instrSnap] = await Promise.all([
+        // Buscar en users, staff o instructors (prioridad: users -> staff -> instructors)
+        const [userSnap, staffSnap, instrSnap] = await Promise.all([
+          db.collection("users").doc(uid).get(),
           db.collection("staff").doc(uid).get(),
           db.collection("instructors").doc(uid).get(),
         ]);
 
         let permissions: Record<string, string[]> = {};
 
-        if (staffSnap.exists) {
-          permissions = staffSnap.data()?.permissions || {};
+        if (userSnap.exists) {
+          // Staff guardado en users collection
+          permissions = (userSnap.data()?.permissions as Record<string, string[]>) || {};
+        } else if (staffSnap.exists) {
+          permissions = (staffSnap.data()?.permissions as Record<string, string[]>) || {};
         } else if (instrSnap.exists) {
-          permissions = instrSnap.data()?.permissions || {};
+          permissions = (instrSnap.data()?.permissions as Record<string, string[]>) || {};
         }
 
         // Verificar si tiene al menos uno de los permisos
