@@ -307,8 +307,10 @@ export const createCashTransactionController = async (
       const today = normalizeToday(); // Fecha actual normalizada a inicio del día
       const start = normalizeStartDate(couponData.startDate); // Inicio del día
       const end = normalizeEndDate(couponData.endDate); // Fin del día
-      const usosDisponibles =
-        (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0);
+      const limitUses = couponData.limitUses !== false;
+      const usosDisponibles = limitUses
+        ? (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0)
+        : Number.POSITIVE_INFINITY;
 
       // Verificar si el cupón aplica al paquete
       // Si es universal, aplica a todos los paquetes
@@ -355,7 +357,7 @@ export const createCashTransactionController = async (
         return;
       }
       
-      if (usosDisponibles <= 0) {
+      if (limitUses && usosDisponibles <= 0) {
         res.status(400).json({ 
           error: "El cupón ha alcanzado su límite de usos" 
         });
@@ -363,7 +365,7 @@ export const createCashTransactionController = async (
       }
       
       // Si todas las validaciones pasan, el cupón es válido
-      if (today >= start && today <= end && usosDisponibles > 0) {
+      if (today >= start && today <= end && (limitUses ? usosDisponibles > 0 : true)) {
         couponIsValid = true;
         
         // Si es cupón automático, el descuento ya está en specialPrice
