@@ -58,6 +58,23 @@ const normalizeToday = (): Date => {
   return nowMexico.startOf("day").toJSDate();
 };
 
+const usesAreLimited = (limitUses?: boolean): boolean => limitUses !== false;
+
+const getRemainingUses = (coupon: {
+  limitUses?: boolean;
+  totalUses?: number | null;
+  usedCount?: number;
+}): number => {
+  if (!usesAreLimited(coupon.limitUses)) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const total =
+    typeof coupon.totalUses === "number" ? coupon.totalUses : 0;
+  const used =
+    typeof coupon.usedCount === "number" ? coupon.usedCount : 0;
+  return total - used;
+};
+
 const rangesOverlap = (
   aStart: Date,
   aEnd: Date,
@@ -74,11 +91,7 @@ const isCouponActiveAndNotUsedUp = (
   const cEnd = new Date(coupon.endDate);
   const overlap = rangesOverlap(cStart, cEnd, newStart, newEnd);
 
-  const remaining =
-    typeof coupon.usedCount === "number"
-      ? coupon.totalUses - coupon.usedCount
-      : coupon.totalUses;
-
+  const remaining = getRemainingUses(coupon);
   return overlap && remaining > 0;
 };
 
@@ -131,9 +144,19 @@ export const createCouponController = async (
       applyToSpecialPrice,
       isUniversal = false,
       isAutomatic = false, // Si es true, se aplica automáticamente al paquete
+      limitUses: limitUsesRaw,
     } = req.body;
 
-    
+    const limitUses = limitUsesRaw === false ? false : true;
+    const normalizedTotalUses = limitUses ? totalUses : null;
+
+    if (limitUses && (typeof normalizedTotalUses !== "number" || normalizedTotalUses <= 0)) {
+      res.status(400).json({
+        error: "Debe especificar un total de usos válido cuando limitUses es true",
+      });
+      return;
+    }
+
     const newStart = new Date(startDate);
     const newEnd = new Date(endDate);
     const now = new Date().toISOString();
@@ -176,7 +199,8 @@ export const createCouponController = async (
     const isActive = today >= normalizedStart && today <= normalizedEnd;
     const isExpired = normalizedEnd < today;
     const isNotYetActive = today < normalizedStart;
-    const isUsedUp = totalUses <= 0;
+    const isUsedUp =
+      limitUses && (normalizedTotalUses ?? 0) <= 0;
     
     // Solo aplicar descuento si el cupón está vigente (no expirado, no antes de startDate, y con usos)
     const effectiveDiscount = (isActive && !isUsedUp) ? discount : 0;
@@ -195,12 +219,13 @@ export const createCouponController = async (
       startDate,
       endDate,
       discount,
-      totalUses,
+      totalUses: limitUses ? normalizedTotalUses ?? 0 : null,
       usedCount: 0,
       packageIds: isUniversal ? [] : packageIds, // Vacío para universales
       applyToSpecialPrice,
       isUniversal,
       isAutomatic,
+      limitUses,
       createdAt: now,
       updatedAt: now,
     };
@@ -246,9 +271,14 @@ export const createCouponController = async (
     );
     }
 
+    const createdCouponSnapshot = await docRef.get();
+    const createdCoupon = { id: docRef.id, ...createdCouponSnapshot.data() };
+
     res.status(201).json({
-      message: isUniversal ? "Cupón universal creado correctamente" : "Cupón creado y paquetes actualizados",
-      id: docRef.id,
+      message: isUniversal
+        ? "Cupón universal creado correctamente"
+        : "Cupón creado y paquetes actualizados",
+      coupon: createdCoupon,
     });
   } catch (error) {
     console.error("Error al crear cupón:", error);
@@ -272,6 +302,7 @@ export const updateCouponController = async (
       packageIds,
       applyToSpecialPrice,
       isAutomatic = false,
+      limitUses: limitUsesRaw,
     } = req.body;
 
     const couponRef = couponsCol.doc(couponId);
@@ -284,6 +315,17 @@ export const updateCouponController = async (
 
     const existingData = existing.data();
     const usedCount = existingData?.usedCount ?? 0; // 🔒 Aseguramos que no se pierda
+
+    const limitUses = limitUsesRaw === false ? false : true;
+
+    const normalizedTotalUses = limitUses ? totalUses : null;
+
+    if (limitUses && (typeof normalizedTotalUses !== "number" || normalizedTotalUses <= 0)) {
+      res.status(400).json({
+        error: "Debe especificar un total de usos válido cuando limitUses es true",
+      });
+      return;
+    }
 
     const now = new Date().toISOString();
     const newStart = new Date(startDate);
@@ -298,7 +340,8 @@ export const updateCouponController = async (
     const isActive = today >= normalizedStart && today <= normalizedEnd;
     const isExpired = normalizedEnd < today;
     const isNotYetActive = today < normalizedStart;
-    const isUsedUp = totalUses <= usedCount;
+    const isUsedUp =
+      limitUses && (normalizedTotalUses ?? 0) <= usedCount;
     
     // Solo aplicar descuento si el cupón está vigente (no expirado, no antes de startDate, y con usos)
     const effectiveDiscount = (isActive && !isUsedUp) ? discount : 0;
@@ -336,11 +379,12 @@ export const updateCouponController = async (
       startDate,
       endDate,
       discount,
-      totalUses,
+      totalUses: limitUses ? normalizedTotalUses ?? 0 : null,
       usedCount, // 🔒 no lo toca el frontend
       packageIds,
       applyToSpecialPrice,
       isAutomatic,
+      limitUses,
       updatedAt: now,
     });
 
@@ -390,7 +434,13 @@ export const updateCouponController = async (
 
     await Promise.all([...toClean, ...toAssign]);
 
-    res.status(200).json({ message: "Cupón actualizado correctamente" });
+    const updatedSnap = await couponRef.get();
+    const updatedCoupon = { id: couponRef.id, ...updatedSnap.data() };
+
+    res.status(200).json({
+      message: "Cupón actualizado correctamente",
+      coupon: updatedCoupon,
+    });
   } catch (error) {
     console.error("Error al actualizar cupón:", error);
     res.status(500).json({ error: "Error interno", details: String(error) });
@@ -502,7 +552,10 @@ export const validateCouponController = async (
     const today = normalizeToday(); // Fecha actual normalizada a inicio del día
     const start = normalizeStartDate(couponData.startDate); // Inicio del día
     const end = normalizeEndDate(couponData.endDate); // Fin del día
-    const usosDisponibles = (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0);
+    const limitUses = couponData.limitUses !== false;
+    const usosDisponibles = limitUses
+      ? (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0)
+      : Number.POSITIVE_INFINITY;
 
     let isValid = true;
     let message = "";
@@ -515,7 +568,7 @@ export const validateCouponController = async (
     } else if (today > end) {
       isValid = false;
       message = "El cupón ha expirado";
-    } else if (usosDisponibles <= 0) {
+    } else if (limitUses && usosDisponibles <= 0) {
       isValid = false;
       message = "El cupón ha alcanzado su límite de usos";
     }

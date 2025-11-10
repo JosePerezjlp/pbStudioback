@@ -391,7 +391,10 @@ export const capturePayPalOrderController = async (
         const today = normalizeToday();
         const start = normalizeStartDate(couponData.startDate);
         const end = normalizeEndDate(couponData.endDate);
-        const usosDisponibles = (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0);
+        const limitUses = couponData.limitUses !== false;
+        const usosDisponibles = limitUses
+          ? (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0)
+          : Number.POSITIVE_INFINITY;
         
         const isUniversal = couponData.isUniversal === true;
         const packageIds = couponData.packageIds || [];
@@ -430,7 +433,7 @@ export const capturePayPalOrderController = async (
             return;
           }
           
-          if (usosDisponibles <= 0) {
+          if (limitUses && usosDisponibles <= 0) {
             res.status(400).json({ 
               error: "El cupón ha alcanzado su límite de usos" 
             });
@@ -438,7 +441,7 @@ export const capturePayPalOrderController = async (
           }
           
           // Si todas las validaciones pasan, el cupón es válido
-          if (today >= start && today <= end && usosDisponibles > 0) {
+          if (today >= start && today <= end && (limitUses ? usosDisponibles > 0 : true)) {
             couponIsValid = true;
           }
         }
