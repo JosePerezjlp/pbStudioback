@@ -56,6 +56,9 @@ const allowedOrigins = [
   "http://localhost:5173",
   "https://www.pbstudioapp.com",
   "https://pbstudioapp.com",
+  "https://pbstudio.com.mx",
+  "https://www.pbstudio.com.mx",
+  "https://webpbstudio-produccion.onrender.com",
 ];
 
 app.use(
