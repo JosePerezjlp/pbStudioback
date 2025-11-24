@@ -1,18 +1,85 @@
 import express from "express";
 import { verifyToken } from "../middleware/authMiddleware";
+import { checkPermission } from "../middleware/permissionMiddleware";
+import { adminSessionGuard } from "../middleware/adminSessionGuard";
 import {
   createCashTransactionController,
   getAllTransactionsController,
   getUserTransactionsController,
   updateTransactionStatusController,
+  cancelTransactionController,
+  updateTransactionExpirationController,
+  getCajaTransactionsController,
+  getTransactionSummaryController,
+  getRankingsController,
+  getRecentTransactionsController,
 } from "../controllers/transactionController";
+// Resumen de transacciones (solo admins)
 
 const router = express.Router();
 
-/* Solo usuarios autenticados: */
-router.post("/cash", verifyToken, createCashTransactionController);
-router.get("/", verifyToken, getAllTransactionsController);
-router.get("/user/:userId", verifyToken, getUserTransactionsController);
-router.patch("/:id", verifyToken, updateTransactionStatusController);
+/* Rutas públicas para usuarios comunes: */
+router.get("/my", verifyToken, getUserTransactionsController); // Obtener transacciones del usuario actual
+
+/* Rutas administrativas (requieren permisos específicos y validación de sesión): */
+router.get(
+  "/",
+  verifyToken,
+  adminSessionGuard,
+  checkPermission("transacciones", "listado"),
+  getAllTransactionsController
+);
+router.get(
+  "/recent",
+  verifyToken,
+  adminSessionGuard,
+  checkPermission("transacciones", "listado"),
+  getRecentTransactionsController
+);
+router.get(
+  "/caja",
+  verifyToken,
+  adminSessionGuard,
+  checkPermission("transacciones", "caja"),
+  getCajaTransactionsController
+);
+router.get(
+  "/summary",
+
+  // checkPermission("transacciones", "listado"),
+  getTransactionSummaryController
+);
+router.get(
+  "/rankings",
+  getRankingsController
+);
+router.get(
+  "/:userId",
+  verifyToken,
+  adminSessionGuard,
+  checkPermission("transacciones", "detalle"),
+  getUserTransactionsController
+);
+router.post(
+  "/cash",
+  verifyToken,
+  adminSessionGuard,
+  checkPermission("transacciones", "crear"),
+  createCashTransactionController
+);
+router.patch(
+  "/:id/cancel",
+  verifyToken,
+  adminSessionGuard,
+  checkPermission("transacciones", "cancelar"),
+  cancelTransactionController
+);
+router.patch(
+  "/:id/expiration",
+  verifyToken,
+  adminSessionGuard,
+  checkPermission("transacciones", "editar_fecha_expiracion"),
+  updateTransactionExpirationController
+);
 
 export default router;

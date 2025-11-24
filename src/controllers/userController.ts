@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import { validationResult } from "express-validator";
 import admin from "../config/firebase";
+import { DateTime } from "luxon";
 import { sendWelcomeEmail } from "../utils/emailService";
 
 export const completeProfileFromAuthController = async (
@@ -242,6 +243,128 @@ export const userController = async (
   }
 };
 
+export const getUsersStatsController = async (
+  _req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const ttlMs = 60_000;
+    const nowMs = Date.now();
+    // @ts-ignore
+    const cached = (global as any).__usersStatsCache as { ts: number; data: any } | undefined;
+    if (cached && nowMs - cached.ts < ttlMs) {
+      res.status(200).json(cached.data);
+      return;
+    }
+
+    const db = admin.firestore();
+
+    const now = DateTime.now().setZone("America/Mexico_City");
+    const startOfMonth = now.startOf("month").toJSDate().toISOString();
+    const endOfMonth = now.endOf("month").toJSDate().toISOString();
+
+    // Total usuarios finales
+    const endUsersSnap = await db
+      .collection("users")
+      .where("role", "==", "user")
+      .select("role")
+      .get();
+    const totalUsers = endUsersSnap.size;
+
+    // Activos (enabled === true)
+    let activeUsers = 0;
+    try {
+      const activeSnap = await db
+        .collection("users")
+        .where("role", "==", "user")
+        .where("enabled", "==", true)
+        .select("enabled")
+        .get();
+      activeUsers = activeSnap.size;
+    } catch {
+      const fallbackSnap = await db
+        .collection("users")
+        .where("role", "==", "user")
+        .select("enabled")
+        .get();
+      activeUsers = fallbackSnap.docs.filter((d) => (d.data() as any).enabled === true).length;
+    }
+
+    // Nuevos del mes por registrationDate
+    let newThisMonth = 0;
+    try {
+      const newSnap = await db
+        .collection("users")
+        .where("role", "==", "user")
+        .where("registrationDate", ">=", startOfMonth)
+        .where("registrationDate", "<=", endOfMonth)
+        .select("registrationDate")
+        .get();
+      newThisMonth = newSnap.size;
+    } catch {
+      const fallbackSnap = await db
+        .collection("users")
+        .where("role", "==", "user")
+        .select("registrationDate")
+        .get();
+      newThisMonth = fallbackSnap.docs.filter((d) => {
+        const v = (d.data() as any).registrationDate;
+        if (!v) return false;
+        const dd = typeof v === "string" ? new Date(v) : v?.toDate?.() ?? v;
+        if (!(dd instanceof Date)) return false;
+        return dd.toISOString() >= startOfMonth && dd.toISOString() <= endOfMonth;
+      }).length;
+    }
+
+    const payload = { totalUsers, newThisMonth, activeUsers };
+    // @ts-ignore
+    (global as any).__usersStatsCache = { ts: nowMs, data: payload };
+    res.status(200).json(payload);
+  } catch (err) {
+    res.status(500).json({ error: "Error al obtener estadísticas de usuarios", details: String(err) });
+  }
+};
+
+// Controlador para habilitar usuario
+export const enableUserController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const { userId } = req.params;
+
+  try {
+    await admin.firestore().collection("users").doc(userId).update({
+      enabled: true,
+      updatedAt: new Date().toISOString(),
+    });
+
+    res.status(200).json({ message: "Usuario habilitado correctamente" });
+  } catch (error) {
+    console.error("Error al habilitar usuario:", error);
+    res.status(500).json({ error: "Error interno al habilitar usuario" });
+  }
+};
+
+// Controlador para deshabilitar usuario
+export const disableUserController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const { userId } = req.params;
+
+  try {
+    await admin.firestore().collection("users").doc(userId).update({
+      enabled: false,
+      updatedAt: new Date().toISOString(),
+    });
+
+    res.status(200).json({ message: "Usuario deshabilitado correctamente" });
+  } catch (error) {
+    console.error("Error al deshabilitar usuario:", error);
+    res.status(500).json({ error: "Error interno al deshabilitar usuario" });
+  }
+};
+
 export const updateUserController = async (
   req: Request,
   res: Response
@@ -276,12 +399,43 @@ export const updateUserController = async (
       }
     }
 
-    const userRef = admin.firestore().collection("users").doc(userId);
-    const userDoc = await userRef.get();
+    const db = admin.firestore();
+    let userRef: FirebaseFirestore.DocumentReference<FirebaseFirestore.DocumentData> = db
+      .collection("users")
+      .doc(userId);
+    let userDoc = await userRef.get();
 
     if (!userDoc.exists) {
-      res.status(404).json({ error: "Usuario no encontrado" });
-      return;
+      const legacyRaw = String(userId || "").trim();
+      const candidates: Array<{ field: string; value: unknown }> = [];
+      const num = Number(legacyRaw);
+      if (Number.isFinite(num)) {
+        candidates.push({ field: "legacyId", value: num });
+        candidates.push({ field: "legacyID", value: num });
+        candidates.push({ field: "legacy_id", value: num });
+      }
+      candidates.push({ field: "legacyId", value: legacyRaw });
+      candidates.push({ field: "legacyID", value: legacyRaw });
+      candidates.push({ field: "legacy_id", value: legacyRaw });
+
+      let found: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData> | null = null;
+      for (const c of candidates) {
+        const snap = await db
+          .collection("users")
+          .where(c.field, "==", c.value)
+          .limit(1)
+          .get();
+        if (!snap.empty) {
+          found = snap.docs[0];
+          break;
+        }
+      }
+      if (!found) {
+        res.status(404).json({ error: "Usuario no encontrado" });
+        return;
+      }
+      userRef = found.ref;
+      userDoc = await userRef.get();
     }
 
     Object.keys(updateData).forEach((key) => {
@@ -340,24 +494,193 @@ export const deleteUserController = async (
 };
 
 export const getAllUsersController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const db = admin.firestore();
+    const col = db.collection("users");
+
+    const qp = req.query as Record<string, unknown>;
+    const pageNum = Number(qp.page ?? 1);
+    const limitNum = Number(qp.limit ?? 20);
+    const idFilter = typeof qp.id === "string" ? qp.id.trim() : undefined;
+    const firstNameFilter = typeof qp.firstName === "string" ? qp.firstName.trim() : (typeof qp.name === "string" ? (qp.name as string).trim() : undefined);
+    const lastNameFilter = typeof qp.lastName === "string" ? qp.lastName.trim() : undefined;
+    const emailFilter = typeof qp.email === "string" ? qp.email.trim() : undefined;
+    const statusFilter = typeof qp.status === "string" ? qp.status.toLowerCase() : undefined; // "active" | "inactive"
+    const hasActivePackageFilterRaw = typeof qp.hasActivePackage === "string" ? qp.hasActivePackage.toLowerCase() : undefined; // "true" | "false"
+    const hasActivePackageFilter = hasActivePackageFilterRaw === "true" ? true : hasActivePackageFilterRaw === "false" ? false : undefined;
+    const startDateRaw = typeof qp.startDate === "string" ? qp.startDate : undefined;
+    const endDateRaw = typeof qp.endDate === "string" ? qp.endDate : undefined;
+
+    const page = Number.isFinite(pageNum) && pageNum > 0 ? pageNum : 1;
+    const limit = Number.isFinite(limitNum) && limitNum > 0 ? limitNum : 20;
+
+    const toStartISO = (s: string | undefined): string | undefined => {
+      if (!s) return undefined;
+      const dt = DateTime.fromISO(s);
+      if (!dt.isValid) return undefined;
+      return dt.toUTC().toISO();
+    };
+    const toEndISO = (s: string | undefined): string | undefined => {
+      if (!s) return undefined;
+      const dt = DateTime.fromISO(s).endOf("day");
+      if (!dt.isValid) return undefined;
+      return dt.toUTC().toISO();
+    };
+
+    const startISO = toStartISO(startDateRaw);
+    const endISO = toEndISO(endDateRaw);
+
+    const normalize = (v: unknown): string => String(v ?? "").toLowerCase();
+    const contains = (src: unknown, q: string | undefined): boolean => {
+      if (!q) return true;
+      return normalize(src).includes(q.toLowerCase());
+    };
+    const hasActivePkg = (u: any): boolean => {
+      const pkgs: any[] = Array.isArray(u.packages) ? u.packages : [];
+      const now = new Date();
+      return pkgs.some((p) => {
+        const active = p?.active === true;
+        const exp = p?.expiresAt ? new Date(p.expiresAt) : null;
+        const notExpired = !exp || exp > now;
+        return active && notExpired;
+      });
+    };
+
+    let docs: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>[] = [];
+    let indexFallback = false;
+
+    if (idFilter) {
+      const snap = await col.doc(idFilter).get();
+      if (snap.exists) {
+        docs = [snap as FirebaseFirestore.QueryDocumentSnapshot];
+      } else {
+        docs = [];
+      }
+    } else {
+      try {
+        let q: FirebaseFirestore.Query = col.where("role", "==", "user");
+        if (statusFilter === "active") q = q.where("enabled", "==", true);
+        if (statusFilter === "inactive") q = q.where("enabled", "==", false);
+
+        if (startISO || endISO) {
+          if (startISO) q = q.where("registrationDate", ">=", startISO);
+          if (endISO) q = q.where("registrationDate", "<=", endISO);
+          q = q.orderBy("registrationDate", "desc");
+        } else {
+          q = q.orderBy("createdAt", "desc");
+        }
+
+        const snap = await q.get();
+        docs = snap.docs;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes("FAILED_PRECONDITION")) {
+          indexFallback = true;
+          const snap2 = await col.orderBy("createdAt", "desc").get();
+          docs = snap2.docs;
+        } else {
+          throw e;
+        }
+      }
+    }
+
+    const allUsers = docs.map((d) => ({ id: d.id, ...d.data() }));
+    const filtered = allUsers.filter((u: any) => {
+      if (firstNameFilter && !contains(u.firstName, firstNameFilter)) return false;
+      if (lastNameFilter && !contains(u.lastName, lastNameFilter)) return false;
+      if (emailFilter && !contains(u.email, emailFilter)) return false;
+      if (typeof hasActivePackageFilter === "boolean" && hasActivePkg(u) !== hasActivePackageFilter) return false;
+      if (!idFilter && statusFilter === "active" && u.enabled !== true) return false;
+      if (!idFilter && statusFilter === "inactive" && u.enabled !== false) return false;
+      if (indexFallback && (startISO || endISO)) {
+        const reg = u.registrationDate;
+        if (startISO && (!reg || String(reg) < startISO)) return false;
+        if (endISO && (!reg || String(reg) > endISO)) return false;
+      }
+      return true;
+    });
+
+    const toLegacyNum = (u: any): number => {
+      const raw = (u?.legacyId ?? u?.legacyID ?? u?.legacy_id);
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : Number.MAX_SAFE_INTEGER;
+    };
+    const sorted = [...filtered].sort((a, b) => toLegacyNum(a) - toLegacyNum(b));
+    const total = sorted.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const currentPage = Math.min(page, totalPages);
+    const startIdx = (currentPage - 1) * limit;
+    const usersPage = sorted.slice(startIdx, startIdx + limit);
+
+    const branchIds = Array.from(
+      new Set(
+        usersPage
+          .map((u: any) => (typeof u.branch === "string" ? u.branch : String(u.branch || "")))
+          .filter((id) => !!id)
+      )
+    );
+
+    let branchNameMap: Record<string, string> = {};
+    if (branchIds.length > 0) {
+      const BATCH = 10;
+      for (let i = 0; i < branchIds.length; i += BATCH) {
+        const chunk = branchIds.slice(i, i + BATCH);
+        const snap = await db
+          .collection("branches")
+          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+          .get();
+        snap.docs.forEach((d) => {
+          const data = d.data() as { name?: string };
+          branchNameMap[d.id] = String(data?.name || "");
+        });
+      }
+    }
+
+    const usersWithBranchName = usersPage.map((u: any) => {
+      const bid = typeof u.branch === "string" ? u.branch : String(u.branch || "");
+      const branchName = bid ? branchNameMap[bid] ?? null : null;
+      return { ...u, branchName };
+    });
+
+    res.status(200).json({ users: usersWithBranchName, total, totalPages, page: currentPage, indexFallback });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Error desconocido";
+    console.error("Error fetching users:", msg);
+    res.status(500).json({ error: "Internal server error", details: msg });
+  }
+};
+
+export const getRecentUsersController = async (
   _req: Request,
   res: Response
 ): Promise<void> => {
   try {
-    const usersSnapshot = await admin
-      .firestore()
-      .collection("users")
-      .orderBy("createdAt", "desc")
-      .get();
-    const users = usersSnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    res.status(200).json({ users, total: users.length });
+    const col = admin.firestore().collection("users");
+    try {
+      const snap = await col
+        .where("role", "==", "user")
+        .orderBy("registrationDate", "desc")
+        .limit(8)
+        .get();
+      const users = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      res.status(200).json({ users, total: users.length });
+      return;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("FAILED_PRECONDITION")) throw e;
+      // Fallback sin índice compuesto: ordenar y filtrar en memoria sobre un rango pequeño
+      const snap2 = await col.orderBy("registrationDate", "desc").limit(40).get();
+      const candidates = snap2.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const users = candidates.filter((u: any) => (u.role || "").toLowerCase() === "user").slice(0, 8);
+      res.status(200).json({ users, total: users.length, indexFallback: true });
+      return;
+    }
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
-    console.error("Error al obtener usuarios:", msg);
+    console.error("Error al obtener últimos usuarios:", msg);
     res.status(500).json({ error: "Error interno del servidor", details: msg });
   }
 };
@@ -366,24 +689,176 @@ export const getUserByIdController = async (
   req: Request,
   res: Response
 ): Promise<void> => {
-  const { userId } = req.params;
-
   try {
-    const userDoc = await admin
-      .firestore()
-      .collection("users")
-      .doc(userId)
-      .get();
+    let userId: string;
 
-    if (!userDoc.exists) {
+    // Si es la ruta /me, obtener el UID del token
+    if (req.path === '/me' || req.originalUrl.includes('/me')) {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        res.status(401).json({ error: "Token no proporcionado" });
+        return;
+      }
+
+      const idToken = authHeader.slice(7);
+      const decoded = await admin.auth().verifyIdToken(idToken);
+      userId = decoded.uid;
+    } else {
+      // Si es la ruta /:userId, usar el parámetro
+      userId = req.params.userId;
+    }
+
+    // Buscar en users, staff e instructors (como en loginController)
+    const db = admin.firestore();
+    const [userDoc, staffDoc, instrDoc] = await Promise.all([
+      db.collection("users").doc(userId).get(),
+      db.collection("staff").doc(userId).get(),
+      db.collection("instructors").doc(userId).get(),
+    ]);
+
+    let doc: FirebaseFirestore.DocumentSnapshot<FirebaseFirestore.DocumentData> | null = null;
+    let collection: "users" | "staff" | "instructors" | null = null;
+
+    if (userDoc.exists) {
+      collection = "users";
+      doc = userDoc;
+    } else if (staffDoc.exists) {
+      collection = "staff";
+      doc = staffDoc;
+    } else if (instrDoc.exists) {
+      collection = "instructors";
+      doc = instrDoc;
+    }
+
+    // Fallback: si no existe por documentId, intentar resolver por legacyId
+    if (!doc) {
+      const legacyRaw = String(userId || "").trim();
+      const candidates: Array<{ field: string; value: unknown }> = [];
+      const num = Number(legacyRaw);
+      if (Number.isFinite(num)) {
+        candidates.push({ field: "legacyId", value: num });
+        candidates.push({ field: "legacyID", value: num });
+        candidates.push({ field: "legacy_id", value: num });
+      }
+      candidates.push({ field: "legacyId", value: legacyRaw });
+      candidates.push({ field: "legacyID", value: legacyRaw });
+      candidates.push({ field: "legacy_id", value: legacyRaw });
+
+      let found: FirebaseFirestore.QuerySnapshot | null = null;
+      for (const c of candidates) {
+        // eslint-disable-next-line no-await-in-loop
+        const snap = await db
+          .collection("users")
+          .where(c.field, "==", c.value)
+          .limit(1)
+          .get();
+        if (!snap.empty) {
+          found = snap;
+          break;
+        }
+      }
+      if (found && !found.empty) {
+        doc = found.docs[0];
+        collection = "users";
+      }
+    }
+
+    if (!doc || !doc.exists) {
       res.status(404).json({ error: "Usuario no encontrado" });
       return;
     }
 
-    res.status(200).json({ id: userDoc.id, ...userDoc.data() });
+    const data = doc.data() || {};
+    const role = (data.role as string)?.toLowerCase() || "";
+
+    // Normalizar branches y permissions para employees y admins
+    let normalizedBranches: string[] = [];
+    let normalizedPermissions: Record<string, string[]> = {};
+
+    if (role === "employee" || role === "admin") {
+      // Normalizar branches
+      if (Array.isArray(data.branches)) {
+        normalizedBranches = data.branches.filter((b: unknown) => typeof b === "string");
+      } else if (typeof data.branch === "string") {
+        normalizedBranches = [data.branch];
+      }
+
+      // Normalizar permissions
+      if (data.permissions && typeof data.permissions === "object" && !Array.isArray(data.permissions)) {
+        normalizedPermissions = Object.fromEntries(
+          Object.entries(data.permissions).map(([k, v]) => [
+            k,
+            Array.isArray(v) ? v.filter((x: unknown) => typeof x === "string") : [],
+          ])
+        );
+      }
+
+      // Para admins, branches debe ser array vacío
+      if (role === "admin") {
+        normalizedBranches = [];
+      }
+
+      // Construir respuesta con datos normalizados
+      const { password: _omit, ...safeData } = data;
+      res.status(200).json({
+        id: doc.id,
+        ...safeData,
+        role,
+        branches: normalizedBranches,
+        permissions: normalizedPermissions,
+      });
+    } else {
+      // Para usuarios regulares (no employees ni admins), devolver datos tal cual
+      const { password: _omit, ...safeData } = data;
+      let txDocs: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>[] = [];
+      let resDocs: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>[] = [];
+      try {
+        const [txSnap, rSnap] = await Promise.all([
+          db
+            .collection("transactions")
+            .where("userId", "==", doc.id)
+            .orderBy("createdAt", "desc")
+            .limit(50)
+            .get(),
+          db
+            .collection("reservations")
+            .where("userId", "==", doc.id)
+            .orderBy("createdAt", "desc")
+            .limit(50)
+            .get(),
+        ]);
+        txDocs = txSnap.docs;
+        resDocs = rSnap.docs;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes("FAILED_PRECONDITION")) {
+          const [txSnap2, rSnap2] = await Promise.all([
+            db
+              .collection("transactions")
+              .where("userId", "==", doc.id)
+              .limit(50)
+              .get(),
+            db
+              .collection("reservations")
+              .where("userId", "==", doc.id)
+              .limit(50)
+              .get(),
+          ]);
+          txDocs = txSnap2.docs;
+          resDocs = rSnap2.docs;
+        } else {
+          throw e;
+        }
+      }
+
+      const transactions = txDocs.map((d) => ({ id: d.id, ...d.data() }));
+      const reservations = resDocs.map((d) => ({ id: d.id, ...d.data() }));
+
+      res.status(200).json({ id: doc.id, ...safeData, transactions, reservations });
+    }
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
-    console.error("Error al obtener usuario por ID:", msg);
+    console.error("Error al obtener usuario:", msg);
     res.status(500).json({ error: "Error interno del servidor", details: msg });
   }
 };
@@ -438,31 +913,46 @@ export const adminResetPasswordController = async (
       return;
     }
 
-    // Verificar que exista el doc en Firestore (opcional pero útil)
-    const userDoc = await admin
-      .firestore()
-      .collection("users")
-      .doc(userId)
-      .get();
+    const db = admin.firestore();
+    let targetUid = userId.trim();
+    let userDoc = await db.collection("users").doc(targetUid).get();
     if (!userDoc.exists) {
-      res
-        .status(404)
-        .json({ error: "USER_NOT_FOUND", message: "Usuario no encontrado" });
-      return;
+      const legacyRaw = String(userId || "").trim();
+      const candidates: Array<{ field: string; value: unknown }> = [];
+      const num = Number(legacyRaw);
+      if (Number.isFinite(num)) {
+        candidates.push({ field: "legacyId", value: num });
+        candidates.push({ field: "legacyID", value: num });
+        candidates.push({ field: "legacy_id", value: num });
+      }
+      candidates.push({ field: "legacyId", value: legacyRaw });
+      candidates.push({ field: "legacyID", value: legacyRaw });
+      candidates.push({ field: "legacy_id", value: legacyRaw });
+
+      let found: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData> | null = null;
+      for (const c of candidates) {
+        // eslint-disable-next-line no-await-in-loop
+        const snap = await db
+          .collection("users")
+          .where(c.field, "==", c.value)
+          .limit(1)
+          .get();
+        if (!snap.empty) {
+          found = snap.docs[0];
+          break;
+        }
+      }
+      if (!found) {
+        res.status(404).json({ error: "USER_NOT_FOUND", message: "Usuario no encontrado" });
+        return;
+      }
+      targetUid = found.id;
+      userDoc = await db.collection("users").doc(targetUid).get();
     }
 
-    // Actualizar password en Firebase Auth
-    await admin.auth().updateUser(userId, { password: newPassword.trim() });
-
-    // Revocar tokens para forzar re-login en todos los dispositivos
-    await admin.auth().revokeRefreshTokens(userId);
-
-    // Marcar actualizado en el doc (opcional)
-    await admin
-      .firestore()
-      .collection("users")
-      .doc(userId)
-      .update({ updatedAt: new Date().toISOString() });
+    await admin.auth().updateUser(targetUid, { password: newPassword.trim() });
+    await admin.auth().revokeRefreshTokens(targetUid);
+    await db.collection("users").doc(targetUid).update({ updatedAt: new Date().toISOString() });
 
     res
       .status(200)

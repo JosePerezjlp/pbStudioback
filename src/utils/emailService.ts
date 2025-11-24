@@ -15,6 +15,17 @@ const escapeHtml = (s: string) =>
       ]!
   );
 
+// utilidad para convertir tipo de clase a formato legible
+const formatClassType = (type: string | undefined): string => {
+  if (!type) return "Individual";
+  
+  const normalizedType = type.toLowerCase();
+  if (normalizedType.includes("group") || normalizedType.includes("grupal")) {
+    return "Grupal";
+  }
+  return "Individual";
+};
+
 // Envia con imagen al registrar
 export const sendWelcomeEmail = async (to: string, name: string) => {
   try {
@@ -68,11 +79,23 @@ export const sendReservationConfirmationEmail = async (
   to: string,
   name: string,
   classInfo: string,
-  typeClass:string
+  typeClass: string,
+  seatNumber?: number | null
 ) => {
   try {
     const safeName = escapeHtml(name);
     const safeClass = escapeHtml(classInfo);
+    
+    // Determinar tipo de reserva
+    const classTypeLower = typeClass.toLowerCase();
+    const isGrupal = classTypeLower.includes("grup") || classTypeLower.includes("groups");
+    const reservationType = isGrupal ? "Reserva Grupal" : "Reserva Individual";
+    
+    // Generar información del asiento para clases grupales
+    let seatInfo = "";
+    if (seatNumber !== null && seatNumber !== undefined && isGrupal) {
+      seatInfo = `<br/><br/><strong>🎫 Tu lugar:</strong> Asiento #${seatNumber}`;
+    }
 
     await resend.emails.send({
       from: FROM,
@@ -110,7 +133,7 @@ export const sendReservationConfirmationEmail = async (
               <tr>
                 <td align="center" style="padding:0 24px 8px 24px;">
                   <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
-                    Hola ${safeName}, tu reserva para <strong>${safeClass}</strong> <strong>${typeClass}</strong> ha sido confirmada.
+                    Hola ${safeName}, tu <strong>${reservationType}</strong> para <strong>${safeClass}</strong> ha sido confirmada.${seatInfo}
                   </p>
                 </td>
               </tr>
@@ -118,7 +141,7 @@ export const sendReservationConfirmationEmail = async (
               <tr>
                 <td align="center" style="padding:0 24px 24px 24px;">
                   <p style="margin:0;font-size:14px;line-height:21px;color:#555555;">
-                    Si necesitas cancelar, hazlo desde tu cuenta con la antelación indicada para evitar penalidades.
+                    Si necesitas cancelar, hazlo desde tu cuenta con 12 horas de anticipación para evitar penalidades.
                   </p>
                 </td>
               </tr>
@@ -138,11 +161,13 @@ export const sendReservationConfirmationEmail = async (
 export const sendReservationCancelledEmail = async (
   to: string,
   name: string,
-  classInfo: string
+  classInfo: string,
+  classType?: string
 ) => {
   try {
     const safeName = escapeHtml(name);
     const safeClass = escapeHtml(classInfo);
+    const formattedClassType = formatClassType(classType);
 
     await resend.emails.send({
       from: FROM,
@@ -180,7 +205,7 @@ export const sendReservationCancelledEmail = async (
               <tr>
                 <td align="center" style="padding:0 24px 8px 24px;">
                   <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
-                    Hola ${safeName}, tu reserva para <strong>${safeClass}</strong> ha sido cancelada.
+                    Hola ${safeName}, tu reserva para <strong>${safeClass} ${formattedClassType}</strong> ha sido cancelada.
                   </p>
                 </td>
               </tr>
@@ -377,9 +402,11 @@ export const sendPackageExpiryWarningEmail = async (
 export const sendClassReminderEmail = async (
   to: string,
   name: string,
-  info: { day: string; hour: string; discipline: string; branch: string }
+  info: { day: string; hour: string; discipline: string; branch: string },
+  classType?: string
 ) => {
   const { day, hour, discipline, branch } = info;
+  const formattedClassType = formatClassType(classType);
 
   await resend.emails.send({
     from: FROM,
@@ -389,7 +416,7 @@ export const sendClassReminderEmail = async (
       <p>Hola ${name},</p>
       <p>Este es un recordatorio de tu clase:</p>
       <ul>
-        <li><strong>Disciplina:</strong> ${discipline}</li>
+        <li><strong>Disciplina:</strong> ${discipline} ${formattedClassType}</li>
         <li><strong>Fecha:</strong> ${day}</li>
         <li><strong>Hora:</strong> ${hour}</li>
         <li><strong>Sucursal:</strong> ${branch}</li>
@@ -651,7 +678,9 @@ export const sendWaitlistEntryEmail = async (
 export const sendWaitlistAcceptedEmail = async (
   to: string,
   name: string,
-  classId: string
+  classId: string,
+  seatNumber?: number | null,
+  classType?: string
 ) => {
   try {
     const { discipline, dateStr, hour } = await getClassInfo(classId);
@@ -660,6 +689,17 @@ export const sendWaitlistAcceptedEmail = async (
     const safeDiscipline = escapeHtml(discipline);
     const safeDate = escapeHtml(dateStr);
     const safeHour = escapeHtml(hour);
+    const formattedClassType = formatClassType(classType);
+    
+    // Determinar tipo de reserva
+    const isGrupal = classType && (classType.toLowerCase().includes("grup") || classType.toLowerCase().includes("groups"));
+    const reservationType = isGrupal ? "Reserva Grupal" : "Reserva Individual";
+    
+    // Generar información del asiento para clases grupales
+    let seatInfo = "";
+    if (seatNumber !== null && seatNumber !== undefined && isGrupal) {
+      seatInfo = `<br/><br/><strong>🎫 Tu lugar:</strong> Asiento #${seatNumber}`;
+    }
 
     await resend.emails.send({
       from: FROM,
@@ -696,8 +736,8 @@ export const sendWaitlistAcceptedEmail = async (
               <tr>
                 <td align="center" style="padding:0 24px 8px 24px;">
                   <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
-                    Hola ${safeName}, ¡buenas noticias! Se liberó un cupo para
-                    <strong>${safeDiscipline}</strong> el <strong>${safeDate}</strong> a las <strong>${safeHour}</strong>.
+                    Hola ${safeName}, ¡buenas noticias! Se liberó un cupo para tu <strong>${reservationType}</strong> de
+                    <strong>${safeDiscipline}</strong> el <strong>${safeDate}</strong> a las <strong>${safeHour}</strong>.${seatInfo}
                   </p>
                 </td>
               </tr>
@@ -705,7 +745,7 @@ export const sendWaitlistAcceptedEmail = async (
               <tr>
                 <td align="center" style="padding:0 24px 24px 24px;">
                   <p style="margin:0;font-size:14px;line-height:21px;color:#555555;">
-                    Tu reserva fue creada automáticamente. Si no puedes asistir, recuerda cancelarla con la antelación establecida.
+                    Tu reserva fue creada automáticamente. Si no puedes asistir, recuerda cancelarla con 12 horas de anticipación.
                   </p>
                 </td>
               </tr>

@@ -1,22 +1,31 @@
 import express from "express";
 import { verifyToken } from "../middleware/authMiddleware";
+import { checkPermission } from "../middleware/permissionMiddleware";
+import { adminSessionGuard } from "../middleware/adminSessionGuard";
 import {
+  changeReservationController,
   createReservationController,
   deleteReservationController,
   getAllReservationsController,
   getReservationByIdController,
+  getReservationsByClassController,
   updateReservationController,
 } from "../controllers/reservationController";
 
 const router = express.Router();
 
-// Puedes dejar este público o protegido (según tu caso)
-router.get("/", getAllReservationsController);
+// Rutas públicas para usuarios comunes (ORDEN IMPORTANTE: específicas primero)
+router.get("/my", verifyToken, getAllReservationsController); // Obtener reservas del usuario actual
+router.post("/", verifyToken, createReservationController); // Crear reserva
+router.get("/by-class/:classId", verifyToken, adminSessionGuard, checkPermission("clases", "reservaciones"), getReservationsByClassController); // Obtener reservas de una clase específica
+router.get("/", verifyToken, adminSessionGuard, checkPermission("clases", "reservaciones"), getAllReservationsController); // Ver todas las reservas (admin)
 
-// Protegidas
-router.get("/:reservationId", verifyToken, getReservationByIdController);
-router.post("/", verifyToken, createReservationController);
-router.put("/:reservationId", verifyToken, updateReservationController);
-router.delete("/:reservationId", verifyToken, deleteReservationController);
+// Ruta para cambiar clase (pública para usuarios autenticados)
+router.post("/:reservationId/change", verifyToken, changeReservationController);
+
+// Rutas administrativas con validación de sesión
+router.get("/:reservationId", verifyToken, adminSessionGuard, getReservationByIdController); // Ver reserva específica
+router.put("/:reservationId", verifyToken, adminSessionGuard, updateReservationController); // Actualizar reserva
+router.delete("/:reservationId", verifyToken, adminSessionGuard, deleteReservationController); // Cancelar reserva
 
 export default router;

@@ -13,8 +13,8 @@ const instructorsCol = db.collection("instructors");
 
 // Permisos fijos SOLO de clases, dentro de permissions.clases
 const CLASES_PERMISOS: ReadonlyArray<
-  "listado" | "crear" | "editar" | "detalle"
-> = ["listado", "crear", "editar", "detalle"];
+  "listado" | "crear" | "editar" | "cancelar" | "reservaciones" | "lista_espera"
+> = ["listado", "crear", "editar", "cancelar", "reservaciones", "lista_espera"];
 
 /* ─────────────────────────────
    Tipos

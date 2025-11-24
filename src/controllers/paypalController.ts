@@ -5,6 +5,7 @@ import { Request, Response } from "express";
 import axios from "axios";
 import dotenv from "dotenv";
 import admin from "../config/firebase";
+import { incrementMetrics } from "../utils/metrics";
 import { AuthRequest } from "../middleware/authMiddleware";
 import {
   PayPalCapture,
@@ -12,8 +13,60 @@ import {
   TransactionStatus,
 } from "./transactionController";
 import { sendPackagePurchaseEmail } from "../utils/emailService";
+import { DateTime } from "luxon";
 
 dotenv.config();
+
+/* ---------- helpers de fecha ---------- */
+/**
+ * Normaliza una fecha de inicio al inicio del día (00:00:00) en horario mexicano
+ * Siempre normaliza para comparar solo por día, sin considerar hora
+ * Maneja strings, Date objects y Firestore Timestamps
+ */
+const normalizeStartDate = (dateInput: string | Date | any): Date => {
+  let date: Date;
+  if (typeof dateInput === 'string') {
+    date = new Date(dateInput);
+  } else if (dateInput?.toDate && typeof dateInput.toDate === 'function') {
+    // Firestore Timestamp
+    date = dateInput.toDate();
+  } else {
+    date = dateInput as Date;
+  }
+  // Convertir a horario mexicano y normalizar al inicio del día
+  const mexicanDate = DateTime.fromJSDate(date).setZone("America/Mexico_City");
+  const normalized = mexicanDate.startOf("day").toJSDate();
+  return normalized;
+};
+
+/**
+ * Normaliza una fecha de fin al final del día (23:59:59.999) en horario mexicano
+ * Siempre normaliza para comparar solo por día, sin considerar hora
+ * Maneja strings, Date objects y Firestore Timestamps
+ */
+const normalizeEndDate = (dateInput: string | Date | any): Date => {
+  let date: Date;
+  if (typeof dateInput === 'string') {
+    date = new Date(dateInput);
+  } else if (dateInput?.toDate && typeof dateInput.toDate === 'function') {
+    // Firestore Timestamp
+    date = dateInput.toDate();
+  } else {
+    date = dateInput as Date;
+  }
+  // Convertir a horario mexicano y normalizar al final del día
+  const mexicanDate = DateTime.fromJSDate(date).setZone("America/Mexico_City");
+  const normalized = mexicanDate.endOf("day").toJSDate();
+  return normalized;
+};
+
+/**
+ * Normaliza la fecha actual al inicio del día (00:00:00) en horario mexicano para comparación
+ */
+const normalizeToday = (): Date => {
+  const nowMexico = DateTime.now().setZone("America/Mexico_City");
+  return nowMexico.startOf("day").toJSDate();
+};
 
 const PAYPAL_API = "https://api-m.sandbox.paypal.com";
 const CLIENT_ID = process.env.PAYPAL_CLIENT_ID!;
@@ -44,11 +97,69 @@ export const createPayPalOrderController = async (
       amount,
       currency = "USD",
       description = "Pago en p&B Studio",
+      packageId,
+      couponCode,
     } = req.body as {
       amount: string | number;
       currency?: string;
       description?: string;
+      packageId?: string;
+      couponCode?: string;
     };
+
+    // Validar cupón y calcular precio final si es necesario
+    let finalAmount = Number(amount);
+    
+    if (couponCode && packageId) {
+      const db = admin.firestore();
+      const couponsCol = db.collection("coupons");
+      const packageRef = db.doc(`packages/${packageId}`);
+      
+      // Obtener datos del paquete y cupón en paralelo
+      const [pkgSnap, couponQuery] = await Promise.all([
+        packageRef.get(),
+        couponsCol.where("code", "==", couponCode).limit(1).get()
+      ]);
+      
+      if (!couponQuery.empty && pkgSnap.exists) {
+        const couponDoc = couponQuery.docs[0];
+        const couponData = couponDoc.data();
+        const pkgData = pkgSnap.data()!;
+        
+        // Verificar si el cupón aplica al paquete
+        // Si es universal, aplica a todos los paquetes
+        const isUniversal = couponData.isUniversal === true;
+        const packageIds = couponData.packageIds || [];
+        
+        if (isUniversal || packageIds.includes(packageId)) {
+          // Normalizar fechas para comparar solo por día (sin hora)
+          const today = normalizeToday(); // Fecha actual normalizada a inicio del día
+          const start = normalizeStartDate(couponData.startDate); // Inicio del día
+          const end = normalizeEndDate(couponData.endDate); // Fin del día
+          const usosDisponibles = (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0);
+          
+          // Verificar vigencia: startDate <= hoy <= endDate (inclusive)
+          if (today >= start && today <= end && usosDisponibles > 0) {
+            // Calcular descuento considerando specialPrice si aplica
+            // Si applyToSpecialPrice === true y el paquete tiene specialPrice, usar specialPrice como base
+            // Si no, usar el amount original
+            const baseAmount = (
+              couponData.applyToSpecialPrice === true && 
+              pkgData.specialPrice && 
+              typeof pkgData.specialPrice === 'number' &&
+              pkgData.specialPrice > 0
+            ) ? pkgData.specialPrice : finalAmount;
+            
+            const discountAmount = (baseAmount * couponData.discount) / 100;
+            finalAmount = Math.max(0, baseAmount - discountAmount);
+            
+            console.log(`💰 PayPal - Cupón aplicado: ${couponData.discount}%`);
+            console.log(`💰 PayPal - Base de cálculo: $${baseAmount}`);
+            console.log(`💰 PayPal - Precio final: $${finalAmount}`);
+          }
+        }
+      }
+    }
 
     const accessToken = await getAccessToken();
 
@@ -60,7 +171,7 @@ export const createPayPalOrderController = async (
           {
             amount: {
               currency_code: currency,
-              value: Number(amount).toFixed(2),
+              value: finalAmount.toFixed(2),
             },
             description,
           },
@@ -74,7 +185,11 @@ export const createPayPalOrderController = async (
       }
     );
 
-    res.status(201).json({ orderID: data.id });
+    res.status(201).json({ 
+      orderID: data.id,
+      finalAmount: finalAmount,
+      originalAmount: Number(amount)
+    });
   } catch (err) {
     console.error(
       "❌ PayPal create-order error:",
@@ -93,10 +208,12 @@ export const capturePayPalOrderController = async (
 ): Promise<void> => {
   try {
     /* ---------- Validaciones ---------- */
-    const { orderID, packageId, branchId } = req.body as {
+    const { orderID, packageId, branchId, couponCode, couponId } = req.body as {
       orderID: string;
       packageId: string;
       branchId?: string;
+      couponCode?: string;
+      couponId?: string;
     };
     const uid = req.user?.uid;
 
@@ -119,18 +236,69 @@ export const capturePayPalOrderController = async (
       res.status(404).json({ error: "Paquete no encontrado" });
       return;
     }
-    const pkgData = pkgSnap.data() as {
-      totalClasses: number;
-      type: string;
-      modality?: string;
-      isUnlimited?: boolean;
-      daysExpiry?: number;
-    };
+    const pkgData = pkgSnap.data()!;
 
+    // Validar que el paquete esté publicado (dentro de su rango de fechas)
+    const today = normalizeToday();
+    const pkgStartDate = pkgData.startDate;
+    const pkgEndDate = pkgData.endDate;
+    
+    if (pkgStartDate || pkgEndDate) {
+      // Normalizar fechas del paquete (manejar Firestore Timestamps)
+      let pkgStart: Date | null = null;
+      let pkgEnd: Date | null = null;
+      
+      if (pkgStartDate) {
+        if (typeof pkgStartDate === 'string') {
+          pkgStart = normalizeStartDate(pkgStartDate);
+        } else if (pkgStartDate && typeof pkgStartDate === 'object' && 'toDate' in pkgStartDate && typeof pkgStartDate.toDate === 'function') {
+          pkgStart = normalizeStartDate(pkgStartDate.toDate());
+        } else {
+          pkgStart = normalizeStartDate(pkgStartDate as Date);
+        }
+      }
+      
+      if (pkgEndDate) {
+        if (typeof pkgEndDate === 'string') {
+          pkgEnd = normalizeEndDate(pkgEndDate);
+        } else if (pkgEndDate && typeof pkgEndDate === 'object' && 'toDate' in pkgEndDate && typeof pkgEndDate.toDate === 'function') {
+          pkgEnd = normalizeEndDate(pkgEndDate.toDate());
+        } else {
+          pkgEnd = normalizeEndDate(pkgEndDate as Date);
+        }
+      }
+      
+      if (pkgStart && today < pkgStart) {
+        res.status(400).json({ 
+          error: "Este paquete aún no está disponible para la venta" 
+        });
+        return;
+      }
+      
+      if (pkgEnd && today > pkgEnd) {
+        res.status(400).json({ 
+          error: "Este paquete ya no está disponible" 
+        });
+        return;
+      }
+    }
+
+    // Formatear tipo de paquete para mostrar en español
+    // Detecta: "group", "groups", "grupal", "grupales" → "Grupal"
+    const formatPackageType = (type: string | undefined): string => {
+      if (!type) return "Individual";
+      const normalizedType = type.toLowerCase();
+      // Detecta "group", "groups", "grupal", "grupales" (con o sin 's')
+      if (normalizedType.includes("group") || normalizedType.includes("grupal")) {
+        return "Grupal";
+      }
+      return "Individual";
+    };
+    
     const cleanedPackage = cleanUndefined({
       id: packageId,
       totalClasses: pkgData.totalClasses,
-      type: pkgData.type,
+      type: formatPackageType(pkgData.type), // Formatear tipo para mostrar "Grupal" en lugar de "groups"
       modality: pkgData.modality,
     });
 
@@ -139,10 +307,23 @@ export const capturePayPalOrderController = async (
     const userSnap = await admin.firestore().doc(`users/${uid}`).get();
     const userDoc = (userSnap.data() || {}) as UserDoc;
 
-    // branchId efectivo: prioriza body, luego perfil del usuario
     let effectiveBranchId = (branchId ?? "").trim();
     if (!effectiveBranchId) {
       effectiveBranchId = userDoc.branch ?? "";
+    }
+    if (effectiveBranchId) {
+      const branchesCol = admin.firestore().collection("branches");
+      const direct = await branchesCol.doc(effectiveBranchId).get();
+      if (!direct.exists) {
+        const num = Number(effectiveBranchId);
+        if (Number.isFinite(num)) {
+          const q = await branchesCol.where("legacyId", "==", num).limit(1).get();
+          if (!q.empty) effectiveBranchId = q.docs[0].id;
+        } else {
+          const q = await branchesCol.where("legacyId", "==", effectiveBranchId).limit(1).get();
+          if (!q.empty) effectiveBranchId = q.docs[0].id;
+        }
+      }
     }
 
     // email "de la web" para guardar en /transactions y para el correo
@@ -180,6 +361,107 @@ export const capturePayPalOrderController = async (
 
     await admin.firestore().collection("paypal_transactions").add(paypalTx);
 
+    /* ---------- Manejar cupones (automáticos o por código) ---------- */
+    let finalCouponId: string | null = couponId || null;
+    let couponIsValid = false;
+    let automaticCouponId: string | null = null;
+    const db = admin.firestore();
+    const couponsCol = db.collection("coupons");
+    
+    // 1. Buscar cupón por código si no hay couponId
+    if (couponCode && !finalCouponId) {
+      const couponQuery = await couponsCol
+        .where("code", "==", couponCode)
+        .limit(1)
+        .get();
+      
+      if (!couponQuery.empty) {
+        finalCouponId = couponQuery.docs[0].id;
+      }
+    }
+    
+    // 2. Si NO hay cupón por código, verificar si el paquete tiene un cupón automático
+    if (!finalCouponId && !couponCode && pkgData.couponId) {
+      automaticCouponId = pkgData.couponId as string;
+      const automaticCouponRef = db.doc(`coupons/${automaticCouponId}`);
+      const automaticCouponSnap = await automaticCouponRef.get();
+      
+      if (automaticCouponSnap.exists) {
+        const automaticCouponData = automaticCouponSnap.data()!;
+        // Verificar que sea un cupón automático
+        if (automaticCouponData.isAutomatic === true) {
+          finalCouponId = automaticCouponId;
+        }
+      }
+    }
+    
+    // 3. Validar cupón si existe
+    if (finalCouponId) {
+      const couponRef = db.doc(`coupons/${finalCouponId}`);
+      const couponSnap = await couponRef.get();
+      
+      if (couponSnap.exists) {
+        const couponData = couponSnap.data()!;
+        const today = normalizeToday();
+        const start = normalizeStartDate(couponData.startDate);
+        const end = normalizeEndDate(couponData.endDate);
+        const limitUses = couponData.limitUses !== false;
+        const usosDisponibles = limitUses
+          ? (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0)
+          : Number.POSITIVE_INFINITY;
+        
+        const isUniversal = couponData.isUniversal === true;
+        const packageIds = couponData.packageIds || [];
+        
+        // Verificar si aplica al paquete
+        if (isUniversal || packageIds.includes(packageId) || automaticCouponId) {
+          // Verificar si el usuario ya usó este cupón antes (solo para cupones con código)
+          if (!automaticCouponId) {
+            const existingTx = await db
+              .collection("transactions")
+              .where("userId", "==", uid)
+              .where("couponId", "==", finalCouponId)
+              .limit(1)
+              .get();
+            
+            if (!existingTx.empty) {
+              res.status(400).json({ 
+                error: "Ya has usado este cupón anteriormente" 
+              });
+              return;
+            }
+          }
+          
+          // Verificar vigencia con mensajes específicos
+          if (today < start) {
+            res.status(400).json({ 
+              error: "El cupón aún no está vigente" 
+            });
+            return;
+          }
+          
+          if (today > end) {
+            res.status(400).json({ 
+              error: "El cupón ha expirado" 
+            });
+            return;
+          }
+          
+          if (limitUses && usosDisponibles <= 0) {
+            res.status(400).json({ 
+              error: "El cupón ha alcanzado su límite de usos" 
+            });
+            return;
+          }
+          
+          // Si todas las validaciones pasan, el cupón es válido
+          if (today >= start && today <= end && (limitUses ? usosDisponibles > 0 : true)) {
+            couponIsValid = true;
+          }
+        }
+      }
+    }
+
     /* ---------- Registro genérico (para /transactions) ---------- */
     const genericStatus: TransactionStatus =
       data.status === "COMPLETED" ? "paid" : "pending";
@@ -191,13 +473,19 @@ export const capturePayPalOrderController = async (
       package: cleanedPackage,
       amount: Number(paypalTx.amount),
       currency: paypalTx.currency,
-      couponUsed: false,
+      couponUsed: couponIsValid,
+      couponCode: couponCode || undefined,
+      couponId: finalCouponId || undefined,
       paymentMethod: "paypal",
       status: genericStatus,
       paypal: { orderID: data.id, captureID },
       branchId: effectiveBranchId || undefined,
       createdAt: new Date().toISOString(),
     });
+
+    if (genericStatus === "paid") {
+      await incrementMetrics(Number(paypalTx.amount), capturedAt);
+    }
 
     /* ---------- Actualizar usuario (incluye modality) ---------- */
     const userRef = admin.firestore().doc(`users/${uid}`);
@@ -222,6 +510,15 @@ export const capturePayPalOrderController = async (
         "classes.total": admin.firestore.FieldValue.increment(addTotal),
         "classes.available": admin.firestore.FieldValue.increment(addTotal),
       });
+      
+      // Incrementar usedCount para cualquier cupón usado (automático o por código)
+      if (finalCouponId && couponIsValid) {
+        const couponRefToUpdate = db.doc(`coupons/${finalCouponId}`);
+        t.update(couponRefToUpdate, {
+          usedCount: admin.firestore.FieldValue.increment(1),
+          updatedAt: new Date().toISOString(),
+        });
+      }
     });
 
     const updatedSnap = await userRef.get();
@@ -238,7 +535,7 @@ export const capturePayPalOrderController = async (
         await sendPackagePurchaseEmail(
           userEmailForMail,
           userFirstName,
-          `Paquete ${pkgData.type}`,
+          `Paquete ${formatPackageType(pkgData.type)}`,
           pkgData.totalClasses,
           userPackage.expiresAt,
           pkgData.modality

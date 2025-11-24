@@ -2,6 +2,7 @@
 import { Request, Response } from "express";
 import admin from "../config/firebase";
 import { ERROR_CODES, ClassType } from "../types/enums";
+import { AuthRequest } from "../middleware/authMiddleware";
 import {
   sendWaitlistEntryEmail,
   sendWaitlistAcceptedEmail,
@@ -202,15 +203,65 @@ export const createWaitlistController = async (
    2) Listar todas
    =============================================================== */
 export const getAllWaitlistsController = async (
-  _req: Request,
+  req: Request | AuthRequest,
   res: Response
 ): Promise<void> => {
   try {
-    const snap = await waitlistCol.orderBy("createdAt", "asc").get();
-    const list = snap.docs.map((d) => ({
+    const authReq = req as AuthRequest;
+    const user = authReq.user;
+
+    let query = waitlistCol.orderBy("createdAt", "asc");
+
+    // Si es la ruta /my, filtrar por usuario actual
+    if (req.path === '/my' || req.originalUrl.includes('/my')) {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        res.status(401).json({ error: "Token no proporcionado" });
+        return;
+      }
+
+      const idToken = authHeader.slice(7);
+      const decoded = await admin.auth().verifyIdToken(idToken);
+      const userId = decoded.uid;
+      
+      query = waitlistCol.where("userId", "==", userId).orderBy("createdAt", "asc");
+    }
+
+    const snap = await query.get();
+    let list = snap.docs.map((d) => ({
       id: d.id,
       ...(d.data() as WaitlistDoc),
     }));
+
+    // Si el usuario es employee (no admin) y tiene branches limitadas, filtrar por branch de las clases
+    if (user && user.role === "employee" && user.branches && user.branches.length > 0) {
+      // Obtener todas las clases únicas de las waitlists
+      const classIds = Array.from(new Set(
+        list.map((wl: any) => wl.classId).filter(Boolean)
+      ));
+      
+      // Obtener las clases en chunks (Firestore limita "in" a 10 items)
+      const allClasses: Map<string, any> = new Map();
+      
+      for (let i = 0; i < classIds.length; i += 10) {
+        const chunk = classIds.slice(i, i + 10);
+        const classesSnap = await admin
+          .firestore()
+          .collection("classes")
+          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+          .get();
+        classesSnap.docs.forEach(doc => {
+          allClasses.set(doc.id, doc.data());
+        });
+      }
+
+      // Filtrar waitlists por branch de las clases
+      list = list.filter((wl: any) => {
+        const classData = allClasses.get(wl.classId);
+        return classData && classData.branch && user.branches!.includes(classData.branch);
+      });
+    }
+
     res.status(200).json({ waitlists: list });
   } catch (err) {
     console.error("getAllWaitlists error:", err);
@@ -320,13 +371,55 @@ export const updateWaitlistController = async (
             throw new Error(ERROR_CODES.UNLIMITED_DAILY_LIMIT);
         }
 
-        // Crear reserva con la marca de waitlist
+        // Determinar tipo de clase y asignar asiento si es grupal
+        const classType: ClassType =
+          (cls.type === ClassType.GROUPS || cls.type === ClassType.INDIVIDUAL
+            ? (cls.type as ClassType)
+            : normalizeClassType(
+                typeof cls.type === "string" ? cls.type : undefined
+              )) ?? ClassType.INDIVIDUAL;
+        
+        let assignedSeat: number | null = null;
+        
+        // Si es clase grupal, encontrar el primer asiento disponible
+        if (classType === ClassType.GROUPS) {
+          // Obtener todos los asientos ocupados para esta clase
+          const occupiedSeatsSnap = await reservationsCol
+            .where("classId", "==", wl.classId)
+            .where("status", "==", "active")
+            .where("seat", "!=", null)
+            .get();
+          
+          const occupiedSeats = occupiedSeatsSnap.docs
+            .map(doc => {
+              const data = doc.data() as ReservationDoc;
+              return data.seat;
+            })
+            .filter((seat): seat is number => seat !== null && typeof seat === 'number')
+            .sort((a, b) => a - b);
+          
+          // Encontrar el primer asiento disponible (del 1 al capacity)
+          const capacity = cls.capacity ?? 0;
+          for (let seatNum = 1; seatNum <= capacity; seatNum++) {
+            if (!occupiedSeats.includes(seatNum)) {
+              assignedSeat = seatNum;
+              break;
+            }
+          }
+          
+          // Si no se encontró asiento disponible, usar null (no debería pasar si hay cupo)
+          if (assignedSeat === null && capacity > 0) {
+            assignedSeat = capacity; // Fallback: usar el último asiento
+          }
+        }
+
+        // Crear reserva con la marca de waitlist y asiento asignado
         const resRef = reservationsCol.doc();
         const payload: ReservationDoc = {
           id: resRef.id,
           userId: wl.userId,
           classId: wl.classId,
-          seat: null,
+          seat: assignedSeat,
           status: "active",
           classDay: (cls.day ?? "").slice(0, 10),
           createdAt: new Date().toISOString(),
@@ -345,6 +438,7 @@ export const updateWaitlistController = async (
           userId: wl.userId,
           classId: wl.classId,
           action: "accepted" as const,
+          seat: assignedSeat, // Incluir asiento asignado
         };
       }
 
@@ -409,7 +503,33 @@ export const updateWaitlistController = async (
       const u = userSnap.data() as UserDoc | undefined;
       if (u) {
         if (result.action === "accepted") {
-          await sendWaitlistAcceptedEmail(u.email, u.firstName, result.classId);
+          // Obtener el tipo de clase para el email
+          const classSnap = await classesCol.doc(result.classId).get();
+          const classData = classSnap.data() as ClassDoc | undefined;
+          const classType = classData?.type || "individual";
+          
+          // Obtener el asiento asignado desde la reserva creada
+          let assignedSeat: number | null = null;
+          const acceptedResult = result as { userId: string; classId: string; action: "accepted"; seat?: number | null };
+          if (acceptedResult.seat !== undefined && acceptedResult.seat !== null) {
+            assignedSeat = acceptedResult.seat;
+          } else {
+            // Si no viene en el resultado, buscar la reserva recién creada
+            const reservationSnap = await reservationsCol
+              .where("userId", "==", acceptedResult.userId)
+              .where("classId", "==", acceptedResult.classId)
+              .where("status", "==", "active")
+              .orderBy("createdAt", "desc")
+              .limit(1)
+              .get();
+            
+            if (!reservationSnap.empty) {
+              const reservationData = reservationSnap.docs[0].data() as ReservationDoc;
+              assignedSeat = reservationData.seat ?? null;
+            }
+          }
+          
+          await sendWaitlistAcceptedEmail(u.email, u.firstName, result.classId, assignedSeat, classType);
         } else {
           await sendWaitlistRejectedEmail(u.email, u.firstName, result.classId);
         }

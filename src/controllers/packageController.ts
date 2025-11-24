@@ -1,6 +1,51 @@
 import { Request, Response } from "express";
 import { validationResult } from "express-validator";
 import admin from "../config/firebase";
+import { DateTime } from "luxon";
+
+/**
+ * Normaliza una fecha de inicio al inicio del día (00:00:00) en horario mexicano
+ */
+const normalizeStartDate = (dateInput: string | Date | any): Date => {
+  let date: Date;
+  if (typeof dateInput === 'string') {
+    date = new Date(dateInput);
+  } else if (dateInput?.toDate && typeof dateInput.toDate === 'function') {
+    date = dateInput.toDate();
+  } else {
+    date = dateInput as Date;
+  }
+  // Convertir a horario mexicano y normalizar al inicio del día
+  const mexicanDate = DateTime.fromJSDate(date).setZone("America/Mexico_City");
+  const normalized = mexicanDate.startOf("day").toJSDate();
+  return normalized;
+};
+
+/**
+ * Normaliza una fecha de fin al final del día (23:59:59.999) en horario mexicano
+ */
+const normalizeEndDate = (dateInput: string | Date | any): Date => {
+  let date: Date;
+  if (typeof dateInput === 'string') {
+    date = new Date(dateInput);
+  } else if (dateInput?.toDate && typeof dateInput.toDate === 'function') {
+    date = dateInput.toDate();
+  } else {
+    date = dateInput as Date;
+  }
+  // Convertir a horario mexicano y normalizar al final del día
+  const mexicanDate = DateTime.fromJSDate(date).setZone("America/Mexico_City");
+  const normalized = mexicanDate.endOf("day").toJSDate();
+  return normalized;
+};
+
+/**
+ * Normaliza la fecha actual al inicio del día (00:00:00) en horario mexicano para comparación
+ */
+const normalizeToday = (): Date => {
+  const nowMexico = DateTime.now().setZone("America/Mexico_City");
+  return nowMexico.startOf("day").toJSDate();
+};
 
 const collection = admin.firestore().collection("packages");
 
@@ -41,13 +86,41 @@ export const getAllPackagesController = async (
 ): Promise<void> => {
   try {
     const snapshot = await collection
-      .orderBy("createdAt", "desc") // 👈 Ordena por fecha de creación descendente
+      .orderBy("createdAt", "desc")
       .get();
 
-    const packages = snapshot.docs.map((doc) => ({
+    // Normalizar fecha actual para comparación por día (sin hora)
+    const today = normalizeToday();
+    
+    // Filtrar paquetes por fechas de publicación
+    const packages = snapshot.docs
+      .map((doc) => ({
       id: doc.id,
       ...doc.data(),
-    }));
+      }))
+      .filter((pkg: any) => {
+        // Si no tiene fechas de publicación, mostrarlo (compatibilidad)
+        if (!pkg.startDate && !pkg.endDate) {
+          return true;
+        }
+        
+        // Normalizar fechas del paquete para comparación por día
+        const startDate = pkg.startDate ? normalizeStartDate(pkg.startDate) : null;
+        const endDate = pkg.endDate ? normalizeEndDate(pkg.endDate) : null;
+        
+        // Verificar fecha de inicio: startDate <= hoy
+        if (startDate && today < startDate) {
+          return false; // Aún no se publica
+        }
+        
+        // Verificar fecha de fin: hoy <= endDate
+        if (endDate && today > endDate) {
+          return false; // Ya expiró
+        }
+        
+        return true; // Está en el rango de publicación
+      });
+
     res.status(200).json({ packages, total: packages.length });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";

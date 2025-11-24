@@ -4,27 +4,41 @@ import {
   updateUserController,
   deleteUserController,
   getAllUsersController,
+  getRecentUsersController,
   getUserByIdController,
   completeProfileFromAuthController,
   adminResetPasswordController,
+  enableUserController,
+  disableUserController,
+  getUsersStatsController,
 } from "../controllers/userController";
 import { userRegisterValidations } from "../validations/userValidations";
 import { verifyToken } from "../middleware/authMiddleware";
+import { checkPermission } from "../middleware/permissionMiddleware";
 import { adminSessionGuard } from "../middleware/adminSessionGuard";
 
 const router = express.Router();
 
-router.get("/", verifyToken, getAllUsersController);
-router.get("/:userId", verifyToken, getUserByIdController);
+// Rutas públicas para usuarios comunes
 router.post("/register", userRegisterValidations, userController);
 router.post("/complete-profile", completeProfileFromAuthController);
-router.put("/:userId", verifyToken, updateUserController);
+router.get("/me", verifyToken, getUserByIdController); // Obtener perfil del usuario actual
+router.get("/stats", verifyToken, checkPermission("usuarios", "listado"), getUsersStatsController);
+router.get("/recent", verifyToken, checkPermission("usuarios", "listado"), getRecentUsersController);
+
+// Rutas administrativas (requieren permisos específicos)
+router.get("/", verifyToken, checkPermission("usuarios", "listado"), getAllUsersController);
+router.get("/export", verifyToken, checkPermission("usuarios", "exportar"), getAllUsersController); // TODO: Implementar exportación
+router.get("/:userId", verifyToken, checkPermission("usuarios", "perfil"), getUserByIdController);
+router.put("/:userId", verifyToken, checkPermission("usuarios", "editar"), updateUserController);
+router.put("/:userId/enable", verifyToken, checkPermission("usuarios", "habilitar_deshabilitar"), enableUserController);
+router.put("/:userId/disable", verifyToken, checkPermission("usuarios", "habilitar_deshabilitar"), disableUserController);
 router.delete("/:userId", verifyToken, adminSessionGuard, deleteUserController);
 
 router.post(
   "/:userId/reset-password",
   verifyToken,
-  adminSessionGuard,
+  checkPermission("usuarios", "restablecer_contraseña"),
   adminResetPasswordController
 );
 
