@@ -131,52 +131,86 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
     const authReq = req as AuthRequest;
     const user = authReq.user;
 
-    let query = admin
-      .firestore()
-      .collection("classes")
-      .orderBy("createdAt", "desc");
+    const pageParam = Number(req.query.page ?? 1);
+    const limitParam = Number(req.query.limit ?? 20);
+    const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
+    const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 20;
 
-    // Si el usuario es employee (no admin) y tiene branches limitadas, filtrar
-    let classes = [];
-    if (user && user.role === "employee" && user.branches && user.branches.length > 0) {
-      // Obtener todas y filtrar en memoria (Firestore no soporta "in" con orderBy fácilmente)
-      const snapshot = await query.get();
-      const allClasses = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      // Filtrar solo las clases de las branches permitidas
-      classes = allClasses.filter((classItem: any) => 
-        classItem.branch && user.branches!.includes(classItem.branch)
-      );
-    } else {
-      // Admin o sin autenticación: devolver todas
-      const snapshot = await query.get();
-      classes = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-    }
+    const instructorId = (req.query.instructor as string | undefined) || undefined;
+    const statusParam = (req.query.status as string | undefined) || undefined;
+    const branchId = (req.query.branchId as string | undefined) || undefined;
+    const roomId = (req.query.roomId as string | undefined) || undefined;
+    const hourParam = (req.query.hour as string | undefined) || undefined;
+    const startDate = (req.query.startDate as string | undefined) || undefined;
+    const endDate = (req.query.endDate as string | undefined) || undefined;
 
     const db = admin.firestore();
-    const roomIds = Array.from(
-      new Set(
-        classes
-          .map((c: any) => String(c.room || ""))
-          .filter((v) => v && v !== "")
-      )
-    );
-    const instructorIds = Array.from(
-      new Set(
-        classes
-          .map((c: any) => String(c.instructor || ""))
-          .filter((v) => v && v !== "")
-      )
-    );
+    let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db.collection("classes");
 
-    const roomSnaps = await Promise.all(
-      roomIds.map((id) => db.collection("classrooms").doc(id).get())
-    );
+    if (branchId) q = q.where("branch", "==", branchId);
+    if (instructorId) q = q.where("instructor", "==", instructorId);
+    if (statusParam === "abierta" || statusParam === "cerrada") q = q.where("status", "==", statusParam);
+    if (roomId) q = q.where("room", "==", roomId);
+    if (hourParam) q = q.where("hour", "==", hourParam);
+
+    let orderedByDay = false;
+    if (startDate || endDate) {
+      const start = startDate ?? "0000-01-01";
+      const end = endDate ?? "9999-12-31";
+      q = q.where("day", ">=", start).where("day", "<=", end).orderBy("day", "desc").orderBy("hour", "desc");
+      orderedByDay = true;
+    } else {
+      q = q.orderBy("createdAt", "desc");
+    }
+
+    let snap: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
+    try {
+      snap = await q.get();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("FAILED_PRECONDITION")) throw e;
+      let fallback: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db.collection("classes");
+      fallback = orderedByDay ? fallback.orderBy("day", "desc").orderBy("hour", "desc") : fallback.orderBy("createdAt", "desc");
+      snap = await fallback.get();
+    }
+
+    let classes = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+
+    if (user && user.role === "employee" && Array.isArray(user.branches) && user.branches.length > 0) {
+      classes = classes.filter((c: any) => String(c.branch || "") && user.branches!.includes(String(c.branch)));
+    }
+
+    if (branchId) classes = classes.filter((c: any) => String(c.branch || "") === branchId);
+    if (instructorId) classes = classes.filter((c: any) => String(c.instructor || "") === instructorId);
+    if (statusParam === "abierta" || statusParam === "cerrada") classes = classes.filter((c: any) => String(c.status || "") === statusParam);
+    if (roomId) classes = classes.filter((c: any) => String(c.room || "") === roomId);
+    if (hourParam) classes = classes.filter((c: any) => String(c.hour || "") === hourParam);
+    if (startDate || endDate) {
+      const start = startDate ?? "0000-01-01";
+      const end = endDate ?? "9999-12-31";
+      classes = classes.filter((c: any) => {
+        const d = String(c.day || "");
+        return d >= start && d <= end;
+      });
+    }
+
+    const toLegacyNum = (c: any): number => {
+      const raw = (c?.legacyId ?? c?.legacyID ?? c?.legacy_id);
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : Number.MAX_SAFE_INTEGER;
+    };
+    classes = [...classes].sort((a, b) => toLegacyNum(a) - toLegacyNum(b));
+
+    const total = classes.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const currentPage = Math.min(page, totalPages);
+    const startIdx = (currentPage - 1) * limit;
+    const pageItems = classes.slice(startIdx, startIdx + limit);
+
+    const roomIds = Array.from(new Set(pageItems.map((c: any) => String(c.room || "")).filter((v) => v)));
+    const instructorIds = Array.from(new Set(pageItems.map((c: any) => String(c.instructor || "")).filter((v) => v)));
+
+    const roomSnaps = await Promise.all(roomIds.map((id) => db.collection("classrooms").doc(id).get()));
     const roomsMap = new Map<string, string>();
     roomSnaps.forEach((s) => {
       if (s.exists) {
@@ -185,25 +219,20 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
       }
     });
 
-    const instrSnaps = await Promise.all(
-      instructorIds.map((id) => db.collection("instructors").doc(id).get())
-    );
+    const instrSnaps = await Promise.all(instructorIds.map((id) => db.collection("instructors").doc(id).get()));
     const instrMap = new Map<string, { firstName: string; lastName: string }>();
     instrSnaps.forEach((s) => {
       if (s.exists) {
         const d = s.data() as any;
-        instrMap.set(s.id, {
-          firstName: String(d?.firstName ?? ""),
-          lastName: String(d?.lastName ?? ""),
-        });
+        instrMap.set(s.id, { firstName: String(d?.firstName ?? ""), lastName: String(d?.lastName ?? "") });
       }
     });
 
-    const enriched = classes.map((c: any) => {
-      const roomId = String(c.room || "");
-      const instructorId = String(c.instructor || "");
-      const roomName = roomsMap.get(roomId) ?? null;
-      const instr = instrMap.get(instructorId) || null;
+    const enriched = pageItems.map((c: any) => {
+      const roomIdLocal = String(c.room || "");
+      const instructorIdLocal = String(c.instructor || "");
+      const roomName = roomsMap.get(roomIdLocal) ?? null;
+      const instr = instrMap.get(instructorIdLocal) || null;
       return {
         ...c,
         roomName,
@@ -212,11 +241,9 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
       };
     });
 
-    res.status(200).json({ classes: enriched });
+    res.status(200).json({ classes: enriched, total, totalPages, page: currentPage });
   } catch (error) {
-    res
-      .status(500)
-      .json({ error: "Error al obtener clases", details: String(error) });
+    res.status(500).json({ error: "Error al obtener clases", details: String(error) });
   }
 };
 
