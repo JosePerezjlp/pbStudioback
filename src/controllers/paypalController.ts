@@ -5,6 +5,7 @@ import { Request, Response } from "express";
 import axios from "axios";
 import dotenv from "dotenv";
 import admin from "../config/firebase";
+import { incrementMetrics } from "../utils/metrics";
 import { AuthRequest } from "../middleware/authMiddleware";
 import {
   PayPalCapture,
@@ -306,10 +307,23 @@ export const capturePayPalOrderController = async (
     const userSnap = await admin.firestore().doc(`users/${uid}`).get();
     const userDoc = (userSnap.data() || {}) as UserDoc;
 
-    // branchId efectivo: prioriza body, luego perfil del usuario
     let effectiveBranchId = (branchId ?? "").trim();
     if (!effectiveBranchId) {
       effectiveBranchId = userDoc.branch ?? "";
+    }
+    if (effectiveBranchId) {
+      const branchesCol = admin.firestore().collection("branches");
+      const direct = await branchesCol.doc(effectiveBranchId).get();
+      if (!direct.exists) {
+        const num = Number(effectiveBranchId);
+        if (Number.isFinite(num)) {
+          const q = await branchesCol.where("legacyId", "==", num).limit(1).get();
+          if (!q.empty) effectiveBranchId = q.docs[0].id;
+        } else {
+          const q = await branchesCol.where("legacyId", "==", effectiveBranchId).limit(1).get();
+          if (!q.empty) effectiveBranchId = q.docs[0].id;
+        }
+      }
     }
 
     // email "de la web" para guardar en /transactions y para el correo
@@ -468,6 +482,10 @@ export const capturePayPalOrderController = async (
       branchId: effectiveBranchId || undefined,
       createdAt: new Date().toISOString(),
     });
+
+    if (genericStatus === "paid") {
+      await incrementMetrics(Number(paypalTx.amount), capturedAt);
+    }
 
     /* ---------- Actualizar usuario (incluye modality) ---------- */
     const userRef = admin.firestore().doc(`users/${uid}`);

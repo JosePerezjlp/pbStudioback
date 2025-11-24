@@ -48,6 +48,7 @@ const usersCol = db.collection("users");
 dotenv.config();
 
 const app = express();
+app.disable("etag");
 const port = process.env.PORT ?? 3000;
 
 const allowedOrigins = [
@@ -71,16 +72,41 @@ app.use(
         callback(new Error("No permitido por CORS"));
       }
     },
-    credentials: true, // solo si usas cookies o encabezados especiales
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Session-Id",
+      "x-session-id",
+    ],
   })
 );
 
 app.use(express.json());
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const ms = Date.now() - start;
+    const u = (req as unknown as { user?: { uid?: string } }).user?.uid || "-";
+    console.log(
+      `${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms uid=${u}`
+    );
+  });
+  next();
+});
+app.get("/health", (_req, res) => {
+  res.json({
+    status: "ok",
+    time: new Date().toISOString(),
+    uptime: process.uptime(),
+  });
+});
 app.use("/", homeRouter);
 app.use("/users", usersRouter);
 app.use("/auth", authRouter);
 // app.use(verifyToken, adminSessionGuard);
-app.use("/content",  contentRouter);
+app.use("/content", contentRouter);
 app.use("/packages", packageRouter);
 app.use("/instructors", instructorRouter);
 app.use("/rooms", salonsRouter);
@@ -215,12 +241,17 @@ cron.schedule("*/10 * * * *", async () => {
                   const { email, firstName: name } = userSnap.data()!;
 
                   try {
-                    await sendClassReminderEmail(email, name ?? "Usuario", {
-                      day: classData.day,
-                      hour: classData.hour,
-                      discipline: classData.discipline?.name ?? "Clase",
-                      branch: classData.branch?.name ?? "Sucursal",
-                    }, classData.type);
+                    await sendClassReminderEmail(
+                      email,
+                      name ?? "Usuario",
+                      {
+                        day: classData.day,
+                        hour: classData.hour,
+                        discipline: classData.discipline?.name ?? "Clase",
+                        branch: classData.branch?.name ?? "Sucursal",
+                      },
+                      classData.type
+                    );
 
                     await reservationDoc.ref.update({
                       emailReminderSent: true,
@@ -275,12 +306,17 @@ cron.schedule("0 8 * * *", async () => {
             (async () => {
               try {
                 // 1. Enviar email
-                await sendClassReminderEmail(email, firstName ?? "Usuario", {
-                  day: "Próximas clases",
-                  hour: "¡Atención!",
-                  discipline: `Te queda${remaining === 1 ? "" : "n"} ${remaining} clase${remaining === 1 ? "" : "s"}`,
-                  branch: "¡Aprovecha antes que se acabe tu paquete!",
-                }, "individual"); // Tipo por defecto para emails de expiración
+                await sendClassReminderEmail(
+                  email,
+                  firstName ?? "Usuario",
+                  {
+                    day: "Próximas clases",
+                    hour: "¡Atención!",
+                    discipline: `Te queda${remaining === 1 ? "" : "n"} ${remaining} clase${remaining === 1 ? "" : "s"}`,
+                    branch: "¡Aprovecha antes que se acabe tu paquete!",
+                  },
+                  "individual"
+                ); // Tipo por defecto para emails de expiración
 
                 // 2. Marcar como notificado
                 const userRef = admin.firestore().doc(`users/${doc.id}`);

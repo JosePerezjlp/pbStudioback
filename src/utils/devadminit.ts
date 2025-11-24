@@ -16,48 +16,37 @@ const PERSONAL_ADMIN = {
 
 export const initializePersonalAdmin = async () => {
   try {
-    console.log("Verificando administrador personal...");
+    console.log("Verificando/creando administrador personal en Auth y Firestore...");
 
-    // Verificar si ya existe en Firestore por email
-    const existingDoc = await admin
-      .firestore()
-      .collection("users")
-      .where("email", "==", PERSONAL_ADMIN.email)
-      .limit(1)
-      .get();
-
-    if (!existingDoc.empty) {
-      console.log("Ya existe el administrador personal en Firestore.");
-      return;
-    }
-
-    // Crear usuario en Auth o recuperar existente
     let userRecord;
     try {
+      userRecord = await admin.auth().getUserByEmail(PERSONAL_ADMIN.email);
+      console.log("Administrador personal encontrado en Firebase Auth.");
+    } catch {
       userRecord = await admin.auth().createUser({
         email: PERSONAL_ADMIN.email,
         password: PERSONAL_ADMIN.password,
       });
-    } catch {
-      userRecord = await admin.auth().getUserByEmail(PERSONAL_ADMIN.email);
+      console.log("Administrador personal creado en Firebase Auth.");
     }
 
-    // Hashear contraseña antes de guardar en Firestore
+    await admin.auth().updateUser(userRecord.uid, {
+      password: PERSONAL_ADMIN.password,
+      emailVerified: true,
+    });
+
     const hashedPassword = await bcrypt.hash(PERSONAL_ADMIN.password, 10);
-
-    // Crear documento en Firestore
-    await admin
-      .firestore()
-      .collection("users")
-      .doc(userRecord.uid)
-      .set({
-        ...PERSONAL_ADMIN,
-        password: hashedPassword,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
-
-    console.log("✅ Administrador personal creado exitosamente.");
+    const userRef = admin.firestore().collection("users").doc(userRecord.uid);
+    const snap = await userRef.get();
+    const now = new Date().toISOString();
+    const data = {
+      ...PERSONAL_ADMIN,
+      password: hashedPassword,
+      createdAt: snap.exists ? snap.data()?.createdAt ?? now : now,
+      updatedAt: now,
+    };
+    await userRef.set(data, { merge: true });
+    console.log("✅ Administrador personal verificado/creado.");
   } catch (error) {
     console.error("❌ Error al crear administrador personal:", error);
     throw error;

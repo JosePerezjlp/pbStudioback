@@ -238,7 +238,6 @@ export const getAllStaffUsers = async (
     const snapshot = await admin
       .firestore()
       .collection("users")
-      .where("role", "in", [RolTypeEnum.ADMIN, RolTypeEnum.EMPLOYEE])
       .get();
 
     // Correos de superusuarios que nunca deben mostrarse
@@ -255,7 +254,12 @@ export const getAllStaffUsers = async (
           ...data,
         };
       })
-      .filter((user) => !superUsers.includes((user.email ?? "").toLowerCase()));
+      .filter((user) => {
+        const email = (user.email ?? "").toLowerCase();
+        const role = String(user.role ?? "").toLowerCase();
+        if (superUsers.includes(email)) return false;
+        return role === RolTypeEnum.ADMIN || role === RolTypeEnum.EMPLOYEE;
+      });
 
     res.status(200).json({ staff: staffList });
   } catch (error) {

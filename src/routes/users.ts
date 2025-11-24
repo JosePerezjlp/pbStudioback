@@ -4,11 +4,13 @@ import {
   updateUserController,
   deleteUserController,
   getAllUsersController,
+  getRecentUsersController,
   getUserByIdController,
   completeProfileFromAuthController,
   adminResetPasswordController,
   enableUserController,
   disableUserController,
+  getUsersStatsController,
 } from "../controllers/userController";
 import { userRegisterValidations } from "../validations/userValidations";
 import { verifyToken } from "../middleware/authMiddleware";
@@ -21,6 +23,8 @@ const router = express.Router();
 router.post("/register", userRegisterValidations, userController);
 router.post("/complete-profile", completeProfileFromAuthController);
 router.get("/me", verifyToken, getUserByIdController); // Obtener perfil del usuario actual
+router.get("/stats", verifyToken, checkPermission("usuarios", "listado"), getUsersStatsController);
+router.get("/recent", verifyToken, checkPermission("usuarios", "listado"), getRecentUsersController);
 
 // Rutas administrativas (requieren permisos específicos)
 router.get("/", verifyToken, checkPermission("usuarios", "listado"), getAllUsersController);
