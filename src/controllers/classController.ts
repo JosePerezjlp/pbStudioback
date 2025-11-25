@@ -135,6 +135,7 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
     const limitParam = Number(req.query.limit ?? 20);
     const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
     const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 20;
+    const cursorId = (req.query.cursor as string | undefined) || undefined;
 
     const instructorId = (req.query.instructor as string | undefined) || undefined;
     const statusParam = (req.query.status as string | undefined) || undefined;
@@ -145,7 +146,21 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
     const endDate = (req.query.endDate as string | undefined) || undefined;
 
     const db = admin.firestore();
-    let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db.collection("classes");
+    let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
+      .collection("classes")
+      .select(
+        "day",
+        "hour",
+        "status",
+        "branch",
+        "room",
+        "discipline",
+        "instructor",
+        "capacity",
+        "occupied",
+        "createdAt",
+        "legacyId"
+      );
 
     if (branchId) q = q.where("branch", "==", branchId);
     if (instructorId) q = q.where("instructor", "==", instructorId);
@@ -157,10 +172,85 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
     if (startDate || endDate) {
       const start = startDate ?? "0000-01-01";
       const end = endDate ?? "9999-12-31";
-      q = q.where("day", ">=", start).where("day", "<=", end).orderBy("day", "desc").orderBy("hour", "desc");
+      q = q
+        .where("day", ">=", start)
+        .where("day", "<=", end)
+        .orderBy("day", "desc")
+        .orderBy("hour", "desc");
       orderedByDay = true;
     } else {
       q = q.orderBy("createdAt", "desc");
+    }
+
+    if (user && user.role === "employee" && Array.isArray(user.branches) && user.branches.length > 0) {
+      if (user.branches.length <= 10) {
+        q = q.where("branch", "in", user.branches);
+      }
+    }
+
+    if (cursorId) {
+      const cursorSnap = await db.collection("classes").doc(cursorId).get();
+      if (cursorSnap.exists) {
+        q = q.startAfter(cursorSnap);
+      }
+    }
+    if (!cursorId && page > 1) {
+      q = q.offset((page - 1) * limit);
+    }
+
+    q = q.limit(limit + 1);
+
+    // total y páginas con agregación de Firestore (eficiente)
+    let total: number | null = null;
+    let totalPages: number | null = null;
+    try {
+      const makeBase = () => {
+        let qb: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db.collection("classes");
+        if (branchId) qb = qb.where("branch", "==", branchId);
+        if (instructorId) qb = qb.where("instructor", "==", instructorId);
+        if (statusParam === "abierta" || statusParam === "cerrada") qb = qb.where("status", "==", statusParam);
+        if (roomId) qb = qb.where("room", "==", roomId);
+        if (hourParam) qb = qb.where("hour", "==", hourParam);
+        if (startDate || endDate) {
+          const start = startDate ?? "0000-01-01";
+          const end = endDate ?? "9999-12-31";
+          qb = qb.where("day", ">=", start).where("day", "<=", end);
+        }
+        return qb;
+      };
+
+      if (user && user.role === "employee" && Array.isArray(user.branches) && user.branches.length > 10) {
+        const branches = user.branches.filter((b) => typeof b === "string");
+        if (branches.length > 0) {
+          let sum = 0;
+          const BATCH = 10;
+          for (let i = 0; i < branches.length; i += BATCH) {
+            const chunk = branches.slice(i, i + BATCH);
+            let qb = makeBase();
+            qb = qb.where("branch", "in", chunk);
+            const agg = await qb.count().get();
+            sum += Number(agg.data().count || 0);
+          }
+          total = sum;
+        }
+      } else {
+        let qb = makeBase();
+        if (user && user.role === "employee" && Array.isArray(user.branches) && user.branches.length > 0) {
+          qb = qb.where("branch", "in", user.branches);
+        }
+        const agg = await qb.count().get();
+        total = Number(agg.data().count || 0);
+      }
+      totalPages = Math.max(1, Math.ceil((total ?? 0) / limit));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("FAILED_PRECONDITION") && msg.includes("requires an index")) {
+        // seguimos sin total si el índice falta; la página de datos se devolverá abajo
+        total = null;
+        totalPages = null;
+      } else {
+        throw e;
+      }
     }
 
     let snap: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
@@ -168,44 +258,20 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
       snap = await q.get();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (!msg.includes("FAILED_PRECONDITION")) throw e;
-      let fallback: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db.collection("classes");
-      fallback = orderedByDay ? fallback.orderBy("day", "desc").orderBy("hour", "desc") : fallback.orderBy("createdAt", "desc");
-      snap = await fallback.get();
+      if (msg.includes("FAILED_PRECONDITION")) {
+        res.status(422).json({ error: "index_required", indexRequired: true, details: msg });
+        return;
+      }
+      throw e;
     }
 
-    let classes = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-
-    if (user && user.role === "employee" && Array.isArray(user.branches) && user.branches.length > 0) {
-      classes = classes.filter((c: any) => String(c.branch || "") && user.branches!.includes(String(c.branch)));
+    const docs = snap.docs;
+    const hasMore = docs.length > limit;
+    const pageDocs = hasMore ? docs.slice(0, limit) : docs;
+    let pageItems = pageDocs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    if (user && user.role === "employee" && Array.isArray(user.branches) && user.branches.length > 10) {
+      pageItems = pageItems.filter((c: any) => String(c.branch || "") && user.branches!.includes(String(c.branch)));
     }
-
-    if (branchId) classes = classes.filter((c: any) => String(c.branch || "") === branchId);
-    if (instructorId) classes = classes.filter((c: any) => String(c.instructor || "") === instructorId);
-    if (statusParam === "abierta" || statusParam === "cerrada") classes = classes.filter((c: any) => String(c.status || "") === statusParam);
-    if (roomId) classes = classes.filter((c: any) => String(c.room || "") === roomId);
-    if (hourParam) classes = classes.filter((c: any) => String(c.hour || "") === hourParam);
-    if (startDate || endDate) {
-      const start = startDate ?? "0000-01-01";
-      const end = endDate ?? "9999-12-31";
-      classes = classes.filter((c: any) => {
-        const d = String(c.day || "");
-        return d >= start && d <= end;
-      });
-    }
-
-    const toLegacyNum = (c: any): number => {
-      const raw = (c?.legacyId ?? c?.legacyID ?? c?.legacy_id);
-      const n = Number(raw);
-      return Number.isFinite(n) ? n : Number.MAX_SAFE_INTEGER;
-    };
-    classes = [...classes].sort((a, b) => toLegacyNum(a) - toLegacyNum(b));
-
-    const total = classes.length;
-    const totalPages = Math.max(1, Math.ceil(total / limit));
-    const currentPage = Math.min(page, totalPages);
-    const startIdx = (currentPage - 1) * limit;
-    const pageItems = classes.slice(startIdx, startIdx + limit);
 
     const roomIds = Array.from(new Set(pageItems.map((c: any) => String(c.room || "")).filter((v) => v)));
     const instructorIds = Array.from(new Set(pageItems.map((c: any) => String(c.instructor || "")).filter((v) => v)));
@@ -267,7 +333,8 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
       };
     });
 
-    res.status(200).json({ classes: enriched, total, totalPages, page: currentPage });
+    const nextCursor = hasMore ? String(pageDocs[pageDocs.length - 1].id) : null;
+    res.status(200).json({ classes: enriched, nextCursor, hasMore, limit, page, total, totalPages });
   } catch (error) {
     res.status(500).json({ error: "Error al obtener clases", details: String(error) });
   }

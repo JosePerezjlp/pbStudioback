@@ -1286,11 +1286,53 @@ export const getTransactionSummaryController = async (
     res.set("Expires", "0");
     res.set("ETag", "0");
     console.log("GET /transactions/summary llamado");
-    // Cache simple en memoria para evitar recomputar constantemente
+    const includeRaw = (typeof _req.query?.include === "string" ? (_req.query.include as string) : undefined) ?? undefined;
+    const includeSet = new Set((includeRaw ?? "").split(",").map((s) => s.trim()).filter((s) => s.length > 0));
+    const wantTotals = includeSet.size === 0 || includeSet.has("totals");
+    const wantDiscounts = includeSet.size === 0 || includeSet.has("discounts");
+    const wantMethods = includeSet.size === 0 || includeSet.has("methods");
+    const useCache = includeSet.size === 0;
+
     const ttlMs = 60_000;
     const nowMs = Date.now();
+    const db = admin.firestore();
+
+    const metricsSnap = await db.doc("metrics/summary").get();
+    const metricsData = metricsSnap.exists ? (metricsSnap.data() as any) : null;
+    const updatedAtIso = metricsData?.updatedAt as string | undefined;
+    const updatedAtMs = updatedAtIso ? new Date(updatedAtIso).getTime() : 0;
+    const metricsFresh = useCache && metricsData && nowMs - updatedAtMs < ttlMs;
+    if (metricsFresh) {
+      const payload = {
+        ...(wantTotals
+          ? {
+              total: Number(metricsData.total ?? 0),
+              anual: Number(metricsData.anual ?? 0),
+              mensual: Number(metricsData.mensual ?? 0),
+              semanal: Number(metricsData.semanal ?? 0),
+              diaria: Number(metricsData.diaria ?? 0),
+            }
+          : {}),
+        ...(wantDiscounts
+          ? {
+              anualConDescuento: Number(metricsData.anualConDescuento ?? 0),
+              anualSinDescuento: Number(metricsData.anualSinDescuento ?? 0),
+              mensualConDescuento: Number(metricsData.mensualConDescuento ?? 0),
+              mensualSinDescuento: Number(metricsData.mensualSinDescuento ?? 0),
+            }
+          : {}),
+        ...(wantMethods
+          ? {
+              anualPorMetodo: metricsData.anualPorMetodo ?? { cash: 0, terminal: 0, paypal: 0 },
+              mensualPorMetodo: metricsData.mensualPorMetodo ?? { cash: 0, terminal: 0, paypal: 0 },
+            }
+          : {}),
+      };
+      res.status(200).json(payload);
+      return;
+    }
     // @ts-ignore
-    if ((global as any).__txSummaryCache) {
+    if (useCache && (global as any).__txSummaryCache) {
       // @ts-ignore
       const cache = (global as any).__txSummaryCache as {
         ts: number;
@@ -1327,7 +1369,7 @@ export const getTransactionSummaryController = async (
     const endOfDay = now.endOf("day").toJSDate();
 
     // Helpers
-    const db = admin.firestore();
+    
     const sumQuery = async (
       col: "transactions" | "paypal_transactions",
       start?: Date,
@@ -1336,7 +1378,7 @@ export const getTransactionSummaryController = async (
       const isTx = col === "transactions";
       const statusNeeded = isTx ? "paid" : "COMPLETED";
       let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> =
-        db.collection(col);
+        db.collection(col).select("amount", "status", "createdAt");
       if (start) {
         q = q.where("createdAt", ">=", start.toISOString());
       }
@@ -1367,35 +1409,41 @@ export const getTransactionSummaryController = async (
     };
 
     // Sumas por rango (consultas acotadas por fecha → mucho menos costo)
-    const [yearTx, yearPaypal] = await Promise.all([
-      sumQuery("transactions", startOfYear, endOfYear),
-      sumQuery("paypal_transactions", startOfYear, endOfYear),
-    ]);
-    const anual = yearTx + yearPaypal;
+    let anual = 0;
+    let mensual = 0;
+    let semanal = 0;
+    let diaria = 0;
+    if (wantTotals) {
+      const [yearTx, yearPaypal] = await Promise.all([
+        sumQuery("transactions", startOfYear, endOfYear),
+        sumQuery("paypal_transactions", startOfYear, endOfYear),
+      ]);
+      anual = yearTx + yearPaypal;
 
-    const [monthTx, monthPaypal] = await Promise.all([
-      sumQuery("transactions", startOfMonth, endOfMonth),
-      sumQuery("paypal_transactions", startOfMonth, endOfMonth),
-    ]);
-    const mensual = monthTx + monthPaypal;
+      const [monthTx, monthPaypal] = await Promise.all([
+        sumQuery("transactions", startOfMonth, endOfMonth),
+        sumQuery("paypal_transactions", startOfMonth, endOfMonth),
+      ]);
+      mensual = monthTx + monthPaypal;
 
-    const [weekTx, weekPaypal] = await Promise.all([
-      sumQuery("transactions", startOfWeek, endOfWeek),
-      sumQuery("paypal_transactions", startOfWeek, endOfWeek),
-    ]);
-    const semanal = weekTx + weekPaypal;
+      const [weekTx, weekPaypal] = await Promise.all([
+        sumQuery("transactions", startOfWeek, endOfWeek),
+        sumQuery("paypal_transactions", startOfWeek, endOfWeek),
+      ]);
+      semanal = weekTx + weekPaypal;
 
-    const [dayTx, dayPaypal] = await Promise.all([
-      sumQuery("transactions", startOfDay, endOfDay),
-      sumQuery("paypal_transactions", startOfDay, endOfDay),
-    ]);
-    const diaria = dayTx + dayPaypal;
+      const [dayTx, dayPaypal] = await Promise.all([
+        sumQuery("transactions", startOfDay, endOfDay),
+        sumQuery("paypal_transactions", startOfDay, endOfDay),
+      ]);
+      diaria = dayTx + dayPaypal;
+    }
 
     const sumDiscounts = async (start: Date, end: Date) => {
       let withDisc = 0;
       let withoutDisc = 0;
       let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> =
-        db.collection("transactions");
+        db.collection("transactions").select("amount", "status", "createdAt", "couponUsed");
       q = q.where("createdAt", ">=", start.toISOString());
       q = q.where("createdAt", "<=", end.toISOString());
       const snap = await q.get();
@@ -1421,7 +1469,7 @@ export const getTransactionSummaryController = async (
         paypal: 0,
       };
       let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> =
-        db.collection("transactions");
+        db.collection("transactions").select("amount", "status", "createdAt", "paymentMethod");
       q = q.where("createdAt", ">=", start.toISOString());
       q = q.where("createdAt", "<=", end.toISOString());
       const snap = await q.get();
@@ -1454,15 +1502,23 @@ export const getTransactionSummaryController = async (
       return result;
     };
 
-    const [yearDisc, monthDisc] = await Promise.all([
-      sumDiscounts(startOfYear, endOfYear),
-      sumDiscounts(startOfMonth, endOfMonth),
-    ]);
+    let yearDisc: { withDisc: number; withoutDisc: number } = { withDisc: 0, withoutDisc: 0 };
+    let monthDisc: { withDisc: number; withoutDisc: number } = { withDisc: 0, withoutDisc: 0 };
+    if (wantDiscounts) {
+      [yearDisc, monthDisc] = await Promise.all([
+        sumDiscounts(startOfYear, endOfYear),
+        sumDiscounts(startOfMonth, endOfMonth),
+      ]);
+    }
 
-    const [yearByMethod, monthByMethod] = await Promise.all([
-      sumByMethod(startOfYear, endOfYear),
-      sumByMethod(startOfMonth, endOfMonth),
-    ]);
+    let yearByMethod: { cash: number; terminal: number; paypal: number } = { cash: 0, terminal: 0, paypal: 0 };
+    let monthByMethod: { cash: number; terminal: number; paypal: number } = { cash: 0, terminal: 0, paypal: 0 };
+    if (wantMethods) {
+      [yearByMethod, monthByMethod] = await Promise.all([
+        sumByMethod(startOfYear, endOfYear),
+        sumByMethod(startOfMonth, endOfMonth),
+      ]);
+    }
 
     let total = 0;
     const summaryDoc = await db.doc("metrics/summary").get();
@@ -1472,11 +1528,15 @@ export const getTransactionSummaryController = async (
     if (typeof existingTotal === "number" && Number.isFinite(existingTotal)) {
       total = existingTotal;
     } else {
-      const [allTx, allPaypal] = await Promise.all([
-        sumQuery("transactions", undefined, undefined),
-        sumQuery("paypal_transactions", undefined, undefined),
-      ]);
-      total = allTx + allPaypal;
+      if (wantTotals) {
+        const [allTx, allPaypal] = await Promise.all([
+          sumQuery("transactions", undefined, undefined),
+          sumQuery("paypal_transactions", undefined, undefined),
+        ]);
+        total = allTx + allPaypal;
+      } else {
+        total = 0;
+      }
       await db
         .doc("metrics/summary")
         .set(
@@ -1486,20 +1546,20 @@ export const getTransactionSummaryController = async (
     }
 
     const payload = {
-      total,
-      anual,
-      mensual,
-      semanal,
-      diaria,
-      anualConDescuento: yearDisc.withDisc,
-      anualSinDescuento: yearDisc.withoutDisc,
-      mensualConDescuento: monthDisc.withDisc,
-      mensualSinDescuento: monthDisc.withoutDisc,
-      anualPorMetodo: yearByMethod,
-      mensualPorMetodo: monthByMethod,
+      ...(wantTotals ? { total, anual, mensual, semanal, diaria } : {}),
+      ...(wantDiscounts
+        ? {
+            anualConDescuento: yearDisc.withDisc,
+            anualSinDescuento: yearDisc.withoutDisc,
+            mensualConDescuento: monthDisc.withDisc,
+            mensualSinDescuento: monthDisc.withoutDisc,
+          }
+        : {}),
+      ...(wantMethods
+        ? { anualPorMetodo: yearByMethod, mensualPorMetodo: monthByMethod }
+        : {}),
     };
     // @ts-ignore
-
     (global as any).__txSummaryCache = {
       ts: nowMs,
       data: payload,

@@ -86,11 +86,69 @@ app.use(
 app.use(express.json());
 app.use((req, res, next) => {
   const start = Date.now();
+  const m0 = process.memoryUsage();
   res.on("finish", () => {
     const ms = Date.now() - start;
+    const m1 = process.memoryUsage();
     const u = (req as unknown as { user?: { uid?: string } }).user?.uid || "-";
+    const heap0 = Math.round((m0.heapUsed / 1048576) * 100) / 100;
+    const heap1 = Math.round((m1.heapUsed / 1048576) * 100) / 100;
+    const rss1 = Math.round((m1.rss / 1048576) * 100) / 100;
+    const delta = Math.round((heap1 - heap0) * 100) / 100;
+    const entry = {
+      ts: new Date().toISOString(),
+      method: req.method,
+      url: req.originalUrl,
+      status: res.statusCode,
+      ms,
+      heapStartMB: heap0,
+      heapEndMB: heap1,
+      heapDeltaMB: delta,
+      rssMB: rss1,
+      uid: u,
+    };
+    // @ts-ignore
+    const buf = ((global as any).__perfLogs as any[]) || [];
+    buf.push(entry);
+    while (buf.length > 200) buf.shift();
+    // @ts-ignore
+    (global as any).__perfLogs = buf;
+    // Agregador global por endpoint
+    // @ts-ignore
+    const stats: Map<string, any> = (global as any).__perfStats || new Map();
+    const key = `${req.method} ${req.path}`;
+    const cur = stats.get(key) || {
+      count: 0,
+      sumMs: 0,
+      maxMs: 0,
+      sumHeapDelta: 0,
+      maxHeapDelta: 0,
+      msSamples: [] as number[],
+      heapSamples: [] as number[],
+      lastAt: "",
+    };
+    cur.count += 1;
+    cur.sumMs += ms;
+    cur.maxMs = Math.max(cur.maxMs, ms);
+    cur.sumHeapDelta += delta;
+    cur.maxHeapDelta = Math.max(cur.maxHeapDelta, delta);
+    cur.msSamples.push(ms);
+    cur.heapSamples.push(delta);
+    if (cur.msSamples.length > 200) cur.msSamples.shift();
+    if (cur.heapSamples.length > 200) cur.heapSamples.shift();
+    cur.lastAt = entry.ts;
+    stats.set(key, cur);
+    // @ts-ignore
+    (global as any).__perfStats = stats;
+    const ALERT_MS = Number(process.env.PERF_ALERT_MS ?? 3000);
+    const ALERT_HEAP = Number(process.env.PERF_ALERT_HEAP_MB ?? 50);
+    if (ms >= ALERT_MS || delta >= ALERT_HEAP) {
+      console.warn(
+        `PERF_ALERT ${key} status=${res.statusCode} ms=${ms} Δheap=${delta}MB rss=${rss1}MB`
+      );
+    }
     console.log(
-      `${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms uid=${u}`
+      `${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms heap=${heap1}MB Δheap=${delta}MB rss=${rss1}MB uid=${u}`
     );
   });
   next();
@@ -126,6 +184,41 @@ app.use("/coupons", verifyToken, adminSessionGuard, couponsRouter);
 app.use("/staff", verifyToken, adminSessionGuard, staffRouter);
 app.use("/attendance", verifyToken, adminSessionGuard, attendanceRouter);
 app.use("/waitlist", verifyToken, waitListRouter); // adminSessionGuard aplicado en router individual
+
+const PERF_ENABLE = String(process.env.PERF_LOG_ENABLED ?? "true").toLowerCase() !== "false";
+const PERF_INTERVAL_SEC = Number(process.env.PERF_SUMMARY_INTERVAL_SEC ?? 60);
+if (PERF_ENABLE && PERF_INTERVAL_SEC > 0) {
+  setInterval(() => {
+    // @ts-ignore
+    const stats: Map<string, any> = (global as any).__perfStats || new Map();
+    const rows = Array.from(stats.entries()).map(([key, v]) => {
+      const msSorted = [...v.msSamples].sort((a: number, b: number) => a - b);
+      const hdSorted = [...v.heapSamples].sort((a: number, b: number) => a - b);
+      const p95 = (arr: number[]) => (arr.length ? arr[Math.floor(0.95 * (arr.length - 1))] : 0);
+      return {
+        key,
+        count: v.count,
+        avgMs: Math.round((v.sumMs / Math.max(1, v.count)) * 100) / 100,
+        maxMs: v.maxMs,
+        p95Ms: p95(msSorted),
+        avgHeapDeltaMB: Math.round((v.sumHeapDelta / Math.max(1, v.count)) * 100) / 100,
+        maxHeapDeltaMB: v.maxHeapDelta,
+        p95HeapDeltaMB: p95(hdSorted),
+        lastAt: v.lastAt,
+      };
+    });
+    rows.sort((a, b) => b.avgMs - a.avgMs);
+    const topByTime = rows.slice(0, 5);
+    rows.sort((a, b) => b.avgHeapDeltaMB - a.avgHeapDeltaMB);
+    const topByHeap = rows.slice(0, 5);
+    const mem = process.memoryUsage();
+    const rssMB = Math.round((mem.rss / 1048576) * 100) / 100;
+    const heapMB = Math.round((mem.heapUsed / 1048576) * 100) / 100;
+    console.log(
+      `PERF_SUMMARY rss=${rssMB}MB heap=${heapMB}MB top_time=${JSON.stringify(topByTime)} top_heap=${JSON.stringify(topByHeap)}`
+    );
+  }, PERF_INTERVAL_SEC * 1000);
+}
 
 const startServer = async () => {
   try {
@@ -499,5 +592,159 @@ cron.schedule("0 * * * *", async () => {
     }
   } catch (err) {
     console.error("❌ Error en el CRON de expiración de waitlists:", err);
+  }
+});
+
+cron.schedule("*/2 * * * *", async () => {
+  try {
+    const now = DateTime.now().setZone("America/Mexico_City");
+    const startOfYear = now.startOf("year").toJSDate();
+    const endOfYear = now.endOf("year").toJSDate();
+    const startOfMonth = now.startOf("month").toJSDate();
+    const endOfMonth = now.endOf("month").toJSDate();
+    const startOfWeek = now.startOf("week").toJSDate();
+    const endOfWeek = now.endOf("week").toJSDate();
+    const startOfDay = now.startOf("day").toJSDate();
+    const endOfDay = now.endOf("day").toJSDate();
+
+    const db = admin.firestore();
+
+    const sumQuery = async (
+      col: "transactions" | "paypal_transactions",
+      start?: Date,
+      end?: Date
+    ): Promise<number> => {
+      const isTx = col === "transactions";
+      const statusNeeded = isTx ? "paid" : "COMPLETED";
+      let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
+        .collection(col)
+        .select("amount", "status", "createdAt");
+      if (start) q = q.where("createdAt", ">=", start.toISOString());
+      if (end) q = q.where("createdAt", "<=", end.toISOString());
+      if (!start && !end) q = q.where("status", "==", statusNeeded);
+      const snap = await q.get();
+      return snap.docs.reduce((sum, d) => {
+        const data = d.data() as any;
+        if ((start || end) && data.status !== statusNeeded) return sum;
+        const amt = typeof data.amount === "string" ? Number(data.amount) : data.amount;
+        return sum + (Number.isFinite(amt) ? amt : 0);
+      }, 0);
+    };
+
+    const sumDiscounts = async (start: Date, end: Date) => {
+      let withDisc = 0;
+      let withoutDisc = 0;
+      let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
+        .collection("transactions")
+        .select("amount", "status", "createdAt", "couponUsed");
+      q = q.where("createdAt", ">=", start.toISOString());
+      q = q.where("createdAt", "<=", end.toISOString());
+      const snap = await q.get();
+      snap.docs.forEach((d) => {
+        const data = d.data() as any;
+        if (data.status !== "paid") return;
+        const amt = typeof data.amount === "string" ? Number(data.amount) : data.amount;
+        const val = Number.isFinite(amt) ? amt : 0;
+        if (data.couponUsed) withDisc += val; else withoutDisc += val;
+      });
+      return { withDisc, withoutDisc };
+    };
+
+    const sumByMethod = async (start: Date, end: Date) => {
+      const result: { cash: number; terminal: number; paypal: number } = { cash: 0, terminal: 0, paypal: 0 };
+      let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
+        .collection("transactions")
+        .select("amount", "status", "createdAt", "paymentMethod");
+      q = q.where("createdAt", ">=", start.toISOString());
+      q = q.where("createdAt", "<=", end.toISOString());
+      const snap = await q.get();
+      snap.docs.forEach((d) => {
+        const data = d.data() as any;
+        if (data.status !== "paid") return;
+        const amt = typeof data.amount === "string" ? Number(data.amount) : data.amount;
+        const val = Number.isFinite(amt) ? amt : 0;
+        const raw = data.paymentMethod as string | undefined;
+        let method: "cash" | "terminal" | "paypal" | null = null;
+        if (raw === "cash") method = "cash";
+        else if (raw === "terminal") method = "terminal";
+        else if (raw === "paypal") method = "terminal";
+        else if (typeof raw === "string") {
+          if (raw.startsWith("payment.")) {
+            const sub = raw.slice("payment.".length);
+            if (sub === "card" || sub === "pos" || sub === "paypal") method = "terminal";
+            else if (sub === "cash") method = "cash";
+          }
+        }
+        if (method) result[method] += val;
+      });
+      return result;
+    };
+
+    const [yearTx, yearPaypal] = await Promise.all([
+      sumQuery("transactions", startOfYear, endOfYear),
+      sumQuery("paypal_transactions", startOfYear, endOfYear),
+    ]);
+    const anual = yearTx + yearPaypal;
+
+    const [monthTx, monthPaypal] = await Promise.all([
+      sumQuery("transactions", startOfMonth, endOfMonth),
+      sumQuery("paypal_transactions", startOfMonth, endOfMonth),
+    ]);
+    const mensual = monthTx + monthPaypal;
+
+    const [weekTx, weekPaypal] = await Promise.all([
+      sumQuery("transactions", startOfWeek, endOfWeek),
+      sumQuery("paypal_transactions", startOfWeek, endOfWeek),
+    ]);
+    const semanal = weekTx + weekPaypal;
+
+    const [dayTx, dayPaypal] = await Promise.all([
+      sumQuery("transactions", startOfDay, endOfDay),
+      sumQuery("paypal_transactions", startOfDay, endOfDay),
+    ]);
+    const diaria = dayTx + dayPaypal;
+
+    const [yearDisc, monthDisc] = await Promise.all([
+      sumDiscounts(startOfYear, endOfYear),
+      sumDiscounts(startOfMonth, endOfMonth),
+    ]);
+
+    const [yearByMethod, monthByMethod] = await Promise.all([
+      sumByMethod(startOfYear, endOfYear),
+      sumByMethod(startOfMonth, endOfMonth),
+    ]);
+
+    let total = 0;
+    const summaryDoc = await db.doc("metrics/summary").get();
+    const existingTotal = summaryDoc.exists ? (summaryDoc.data()?.total as number | undefined) : undefined;
+    if (typeof existingTotal === "number" && Number.isFinite(existingTotal)) {
+      total = existingTotal;
+    } else {
+      const [allTx, allPaypal] = await Promise.all([
+        sumQuery("transactions"),
+        sumQuery("paypal_transactions"),
+      ]);
+      total = allTx + allPaypal;
+    }
+
+    await db.doc("metrics/summary").set(
+      {
+        total,
+        anual,
+        mensual,
+        semanal,
+        diaria,
+        anualConDescuento: yearDisc.withDisc,
+        anualSinDescuento: yearDisc.withoutDisc,
+        mensualConDescuento: monthDisc.withDisc,
+        mensualSinDescuento: monthDisc.withoutDisc,
+        anualPorMetodo: yearByMethod,
+        mensualPorMetodo: monthByMethod,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    console.error("Error actualizando metrics/summary:", err);
   }
 });
