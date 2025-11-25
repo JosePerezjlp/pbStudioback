@@ -209,6 +209,8 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
 
     const roomIds = Array.from(new Set(pageItems.map((c: any) => String(c.room || "")).filter((v) => v)));
     const instructorIds = Array.from(new Set(pageItems.map((c: any) => String(c.instructor || "")).filter((v) => v)));
+    const branchIds = Array.from(new Set(pageItems.map((c: any) => String(c.branch || "")).filter((v) => v)));
+    const disciplineIds = Array.from(new Set(pageItems.map((c: any) => String(c.discipline || "")).filter((v) => v)));
 
     const roomSnaps = await Promise.all(roomIds.map((id) => db.collection("classrooms").doc(id).get()));
     const roomsMap = new Map<string, string>();
@@ -228,16 +230,40 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
       }
     });
 
+    const branchSnaps = await Promise.all(branchIds.map((id) => db.collection("branches").doc(id).get()));
+    const branchesMap = new Map<string, string>();
+    branchSnaps.forEach((s) => {
+      if (s.exists) {
+        const d = s.data() as any;
+        branchesMap.set(s.id, String(d?.name ?? ""));
+      }
+    });
+
+    const discSnaps = await Promise.all(disciplineIds.map((id) => db.collection("disciplines").doc(id).get()));
+    const disciplinesMap = new Map<string, string>();
+    discSnaps.forEach((s) => {
+      if (s.exists) {
+        const d = s.data() as any;
+        disciplinesMap.set(s.id, String(d?.name ?? ""));
+      }
+    });
+
     const enriched = pageItems.map((c: any) => {
       const roomIdLocal = String(c.room || "");
       const instructorIdLocal = String(c.instructor || "");
+      const branchIdLocal = String(c.branch || "");
+      const disciplineIdLocal = String(c.discipline || "");
       const roomName = roomsMap.get(roomIdLocal) ?? null;
       const instr = instrMap.get(instructorIdLocal) || null;
+      const branchName = branchesMap.get(branchIdLocal) ?? null;
+      const disciplineName = disciplinesMap.get(disciplineIdLocal) ?? null;
       return {
         ...c,
         roomName,
         instructorFirstName: instr?.firstName ?? null,
         instructorLastName: instr?.lastName ?? null,
+        branchName,
+        disciplineName,
       };
     });
 

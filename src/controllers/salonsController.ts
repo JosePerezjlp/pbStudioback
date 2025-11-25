@@ -176,16 +176,69 @@ export const getAllClassroomsController = async (
   res: Response
 ) => {
   try {
-    const snapshot = await admin
-      .firestore()
+    const db = admin.firestore();
+    const snapshot = await db
       .collection("classrooms")
       .orderBy("createdAt", "desc")
       .get();
 
-    const classrooms = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...(doc.data() as ClassroomData),
-    }));
+    const base = snapshot.docs.map((doc) => ({ id: doc.id, ...(doc.data() as ClassroomData) }));
+
+    const disciplineIds = Array.from(
+      new Set(
+        base
+          .map((c: any) => (typeof c.discipline === "string" ? c.discipline : String(c.discipline || "")))
+          .filter((id) => !!id)
+      )
+    );
+    const branchIds = Array.from(
+      new Set(
+        base
+          .map((c: any) => (typeof c.branch === "string" ? c.branch : String(c.branch || "")))
+          .filter((id) => !!id)
+      )
+    );
+
+    const disciplineNameMap: Record<string, string> = {};
+    const branchNameMap: Record<string, string> = {};
+
+    if (disciplineIds.length > 0) {
+      const BATCH = 10;
+      for (let i = 0; i < disciplineIds.length; i += BATCH) {
+        const chunk = disciplineIds.slice(i, i + BATCH);
+        const snap = await db
+          .collection("disciplines")
+          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+          .get();
+        snap.docs.forEach((d) => {
+          const data = d.data() as { name?: string };
+          disciplineNameMap[d.id] = String(data?.name || "");
+        });
+      }
+    }
+
+    if (branchIds.length > 0) {
+      const BATCH = 10;
+      for (let i = 0; i < branchIds.length; i += BATCH) {
+        const chunk = branchIds.slice(i, i + BATCH);
+        const snap = await db
+          .collection("branches")
+          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+          .get();
+        snap.docs.forEach((d) => {
+          const data = d.data() as { name?: string };
+          branchNameMap[d.id] = String(data?.name || "");
+        });
+      }
+    }
+
+    const classrooms = base.map((c: any) => {
+      const did = typeof c.discipline === "string" ? c.discipline : String(c.discipline || "");
+      const bid = typeof c.branch === "string" ? c.branch : String(c.branch || "");
+      const disciplineName = did ? disciplineNameMap[did] ?? null : null;
+      const branchName = bid ? branchNameMap[bid] ?? null : null;
+      return { ...c, disciplineName, branchName };
+    });
 
     res.status(200).json({ classrooms });
   } catch (err) {
@@ -202,18 +255,33 @@ export const getClassroomByIdController = async (
 ): Promise<void> => {
   const { classroomId } = req.params;
   try {
-    const doc = await admin
-      .firestore()
-      .collection("classrooms")
-      .doc(classroomId)
-      .get();
+    const db = admin.firestore();
+    const doc = await db.collection("classrooms").doc(classroomId).get();
 
     if (!doc.exists) {
       res.status(404).json({ error: "Salón no encontrado" });
       return;
     }
 
-    res.status(200).json({ id: doc.id, ...(doc.data() as ClassroomData) });
+    const data = doc.data() as ClassroomData;
+    const did = typeof data.discipline === "string" ? data.discipline : String(data.discipline || "");
+    const bid = typeof data.branch === "string" ? data.branch : String(data.branch || "");
+
+    let disciplineName: string | null = null;
+    let branchName: string | null = null;
+
+    if (did) {
+      const dsnap = await db.collection("disciplines").doc(did).get();
+      const ddata = dsnap.data() as { name?: string } | undefined;
+      disciplineName = String(ddata?.name || "") || null;
+    }
+    if (bid) {
+      const bsnap = await db.collection("branches").doc(bid).get();
+      const bdata = bsnap.data() as { name?: string } | undefined;
+      branchName = String(bdata?.name || "") || null;
+    }
+
+    res.status(200).json({ id: doc.id, ...data, disciplineName, branchName });
   } catch (err) {
     console.error("Error al obtener salón:", err);
     res
