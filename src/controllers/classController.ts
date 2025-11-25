@@ -599,6 +599,15 @@ export const getClassesStatsController = async (
     }
 
     const classesCol = admin.firestore().collection("classes");
+    const discCol = admin.firestore().collection("disciplines");
+    let disciplines: { id: string; name?: string }[] = [];
+    if (disciplineParam) {
+      disciplines = [{ id: disciplineParam }];
+    } else {
+      const dsnap = await discCol.get();
+      disciplines = dsnap.docs.map((d) => ({ id: d.id, name: (d.data() as any)?.name }));
+    }
+
     const results: Array<{
       branchId: string;
       branchName: string;
@@ -606,46 +615,39 @@ export const getClassesStatsController = async (
     }> = [];
 
     for (const branch of branches) {
-      let query = classesCol
-        .where("branch", "==", branch.id)
-        .where("day", ">=", monthStart)
-        .where("day", "<=", monthEnd);
-      if (disciplineParam) {
-        query = query.where("discipline", "==", disciplineParam);
+      const stats: Array<{ discipline: string; month: number; week: number; day: number }> = [];
+      for (const d of disciplines) {
+        try {
+          const monthAgg = await classesCol
+            .where("branch", "==", branch.id)
+            .where("discipline", "==", d.id)
+            .where("day", ">=", monthStart)
+            .where("day", "<=", monthEnd)
+            .count()
+            .get();
+          const weekAgg = await classesCol
+            .where("branch", "==", branch.id)
+            .where("discipline", "==", d.id)
+            .where("day", ">=", weekAgoStr)
+            .where("day", "<=", todayStr)
+            .count()
+            .get();
+          const dayAgg = await classesCol
+            .where("branch", "==", branch.id)
+            .where("discipline", "==", d.id)
+            .where("day", "==", todayStr)
+            .count()
+            .get();
+          stats.push({ discipline: d.id, month: monthAgg.data().count, week: weekAgg.data().count, day: dayAgg.data().count });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes("FAILED_PRECONDITION") && msg.includes("requires an index")) {
+            stats.push({ discipline: d.id, month: 0, week: 0, day: 0 });
+            continue;
+          }
+          throw e;
+        }
       }
-
-      let snap;
-      try {
-        snap = await query.get();
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (!msg.includes("FAILED_PRECONDITION")) throw e;
-        let fallback = classesCol.where("branch", "==", branch.id);
-        if (disciplineParam) fallback = fallback.where("discipline", "==", disciplineParam);
-        snap = await fallback.get();
-      }
-
-      const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      const byDisc: Record<string, any[]> = {};
-
-      for (const c of docs) {
-        const discKey = String((c as any).discipline || "");
-        if (disciplineParam && discKey !== disciplineParam) continue;
-        const day = String((c as any).day || "");
-        if (day < monthStart || day > monthEnd) continue;
-        (byDisc[discKey] ||= []).push(c);
-      }
-
-      const stats = Object.entries(byDisc).map(([disc, arr]) => {
-        const monthCount = arr.length;
-        const weekCount = arr.filter((c) => {
-          const d = String((c as any).day || "");
-          return d >= weekAgoStr && d <= todayStr;
-        }).length;
-        const dayCount = arr.filter((c) => String((c as any).day || "") === todayStr).length;
-        return { discipline: disc, month: monthCount, week: weekCount, day: dayCount };
-      });
-
       results.push({ branchId: branch.id, branchName: branch.name, stats });
     }
 

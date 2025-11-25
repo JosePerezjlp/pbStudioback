@@ -1586,10 +1586,7 @@ export const getRankingsController = async (
       return;
     }
     const db = admin.firestore();
-    const branchesSnap = await db
-      .collection("branches")
-      .where("isPublic", "==", true)
-      .get();
+    const branchesSnap = await db.collection("branches").where("isPublic", "==", true).select("name").get();
 
     const branches = branchesSnap.docs.map((d) => ({
       id: d.id,
@@ -1620,44 +1617,58 @@ export const getRankingsController = async (
 
     const results = await Promise.all(
       branches.map(async (branch) => {
-        let txSnap: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
+        let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
+          .collection("transactions")
+          .select("amount", "userId", "createdAt", "status", "package", "userEmail")
+          .where("branchId", "==", branch.id)
+          .where("status", "==", "paid")
+          .where("createdAt", ">=", startIso)
+          .orderBy("createdAt", "desc");
+
+        let byUser: Record<string, { sum: number; lastTx: any }> = {};
         try {
-          const q = db
-            .collection("transactions")
-            .where("branchId", "==", branch.id)
-            .where("status", "==", "paid")
-            .where("createdAt", ">=", startIso);
-          txSnap = await q.get();
-        } catch {
-          const q = db
-            .collection("transactions")
-            .where("branchId", "==", branch.id);
-          txSnap = await q.get();
-        }
-
-        const txs = txSnap.docs
-          .map((doc) => ({ id: doc.id, ...(doc.data() as any) }))
-          .filter((t) => t.status === "paid" && String(t.createdAt) >= startIso);
-
-        const byUser: Record<string, { sum: number; lastTx: any }> = {};
-        for (const tx of txs) {
-          const uid = tx.userId as string | undefined;
-          if (!uid) continue;
-          const amtRaw = tx.amount;
-          const amt = typeof amtRaw === "string" ? Number(amtRaw) : amtRaw;
-          const createdAt = toDate(tx.createdAt);
-          if (!byUser[uid]) {
-            byUser[uid] = {
-              sum: Number.isFinite(amt) ? amt : 0,
-              lastTx: { ...tx, createdAt },
-            };
-          } else {
-            byUser[uid].sum += Number.isFinite(amt) ? amt : 0;
-            const prevDate = byUser[uid].lastTx?.createdAt as Date | null;
-            if (createdAt && prevDate && createdAt > prevDate) {
-              byUser[uid].lastTx = { ...tx, createdAt };
+          let lastCursor: string | null = null;
+          const batchSize = 500;
+          let iterations = 0;
+          while (iterations < 40) {
+            let rq = q;
+            if (lastCursor) rq = rq.startAfter(lastCursor);
+            const snap = await rq.limit(batchSize).get();
+            if (snap.empty) break;
+            const docs = snap.docs;
+            for (let i = 0; i < docs.length; i += 1) {
+              const d = docs[i];
+              const data = d.data() as any;
+              lastCursor = String(data.createdAt ?? "");
+              const uid = data.userId as string | undefined;
+              if (!uid) continue;
+              const amtRaw = data.amount;
+              const amt = typeof amtRaw === "string" ? Number(amtRaw) : amtRaw;
+              const createdAt = typeof data.createdAt === "string" ? new Date(data.createdAt) : data.createdAt?.toDate?.() ?? data.createdAt;
+              if (!byUser[uid]) {
+                byUser[uid] = { sum: Number.isFinite(amt) ? amt : 0, lastTx: { ...data, createdAt } };
+              } else {
+                byUser[uid].sum += Number.isFinite(amt) ? amt : 0;
+                const prevDate = byUser[uid].lastTx?.createdAt as Date | null;
+                if (createdAt && prevDate && createdAt > prevDate) {
+                  byUser[uid].lastTx = { ...data, createdAt };
+                }
+              }
             }
+            if (docs.length < batchSize) break;
+            iterations += 1;
           }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes("FAILED_PRECONDITION") && msg.includes("requires an index")) {
+            return {
+              branchId: branch.id,
+              branchName: branch.name,
+              rankings: [],
+              indexRequired: true,
+            };
+          }
+          throw e;
         }
 
         const topEntries = Object.entries(byUser)
@@ -1670,6 +1681,7 @@ export const getRankingsController = async (
         if (topIds.length > 0) {
           const usersSnap = await db
             .collection("users")
+            .select("firstName", "lastName")
             .where(admin.firestore.FieldPath.documentId(), "in", topIds)
             .get();
           usersSnap.docs.forEach((doc) => usersMap.set(doc.id, doc.data()));

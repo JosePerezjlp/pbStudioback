@@ -263,57 +263,46 @@ export const getUsersStatsController = async (
     const startOfMonth = now.startOf("month").toJSDate().toISOString();
     const endOfMonth = now.endOf("month").toJSDate().toISOString();
 
-    // Total usuarios finales
-    const endUsersSnap = await db
-      .collection("users")
-      .where("role", "==", "user")
-      .select("role")
-      .get();
-    const totalUsers = endUsersSnap.size;
+    let totalUsers: number | null = null;
+    let activeUsers: number | null = null;
+    let newThisMonth: number | null = null;
 
-    // Activos (enabled === true)
-    let activeUsers = 0;
     try {
-      const activeSnap = await db
+      const totalAgg = await db.collection("users").where("role", "==", "user").count().get();
+      totalUsers = totalAgg.data().count;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("FAILED_PRECONDITION")) throw e;
+      totalUsers = null;
+    }
+
+    try {
+      const activeAgg = await db
         .collection("users")
         .where("role", "==", "user")
         .where("enabled", "==", true)
-        .select("enabled")
+        .count()
         .get();
-      activeUsers = activeSnap.size;
-    } catch {
-      const fallbackSnap = await db
-        .collection("users")
-        .where("role", "==", "user")
-        .select("enabled")
-        .get();
-      activeUsers = fallbackSnap.docs.filter((d) => (d.data() as any).enabled === true).length;
+      activeUsers = activeAgg.data().count;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("FAILED_PRECONDITION")) throw e;
+      activeUsers = null;
     }
 
-    // Nuevos del mes por registrationDate
-    let newThisMonth = 0;
     try {
-      const newSnap = await db
+      const newAgg = await db
         .collection("users")
         .where("role", "==", "user")
         .where("registrationDate", ">=", startOfMonth)
         .where("registrationDate", "<=", endOfMonth)
-        .select("registrationDate")
+        .count()
         .get();
-      newThisMonth = newSnap.size;
-    } catch {
-      const fallbackSnap = await db
-        .collection("users")
-        .where("role", "==", "user")
-        .select("registrationDate")
-        .get();
-      newThisMonth = fallbackSnap.docs.filter((d) => {
-        const v = (d.data() as any).registrationDate;
-        if (!v) return false;
-        const dd = typeof v === "string" ? new Date(v) : v?.toDate?.() ?? v;
-        if (!(dd instanceof Date)) return false;
-        return dd.toISOString() >= startOfMonth && dd.toISOString() <= endOfMonth;
-      }).length;
+      newThisMonth = newAgg.data().count;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("FAILED_PRECONDITION")) throw e;
+      newThisMonth = null;
     }
 
     const payload = { totalUsers, newThisMonth, activeUsers };
