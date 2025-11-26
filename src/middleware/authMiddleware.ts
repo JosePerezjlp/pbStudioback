@@ -47,20 +47,22 @@ export const verifyToken: RequestHandler = (req: AuthRequest, res: Response, nex
         if (userSnap.exists) {
           const userData = userSnap.data();
           role = (userData?.role as string) ?? "user";
-          // Para staff, obtener branches si existen
-          if (role === "employee" || role === "admin") {
+          if (
+            role === "admin" ||
+            role === "collaborator" ||
+            role === "instructor"
+          ) {
             branches = (userData?.branches as string[]) || [];
           }
         } else if (staffSnap.exists) {
           const staffData = staffSnap.data();
-          role = (staffData?.role as string) ?? "employee";
+          role = (staffData?.role as string) ?? "collaborator";
           branches = (staffData?.branches as string[]) || [];
         } else if (instrSnap.exists) {
           const instrData = instrSnap.data();
-          role = (instrData?.role as string) ?? "employee";
-          // Instructors pueden tener un branch o branches
-          const branch = instrData?.branch as string;
-          branches = branch ? [branch] : ((instrData?.branches as string[]) || []);
+          role = "instructor";
+          const bid = (instrData?.branchId as string) || "";
+          branches = bid ? [bid] : [];
         }
 
         if (!role) {

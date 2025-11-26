@@ -78,7 +78,7 @@ const canCancelByConfig = (cls: ClassDoc, cfg: CancellationTimes): boolean => {
   const t = normalizeClassType(cls.type) ?? ClassType.INDIVIDUAL;
   const windowMin = t === ClassType.GROUPS ? cfg.groups : cfg.individual;
   const minutesUntilClass = diffMinutesFromNow(cls.day, cls.hour);
-  
+
   // Puede cancelar si faltan MÁS minutos que el límite configurado
   return minutesUntilClass > windowMin;
 };
@@ -89,8 +89,9 @@ const statusFromMessage = (m: string): number => {
     m === ERROR_CODES.USER_NOT_FOUND ||
     m === ERROR_CODES.CLASS_NOT_FOUND ||
     m === "Reserva no encontrada" || // usado en delete
-    m === "RESERVATION_NOT_FOUND"    // por si llega crudo
-  ) return 404;
+    m === "RESERVATION_NOT_FOUND" // por si llega crudo
+  )
+    return 404;
 
   if (m === ERROR_CODES.UNLIMITED_DAILY_LIMIT) return 400;
 
@@ -100,14 +101,16 @@ const statusFromMessage = (m: string): number => {
     m === ERROR_CODES.NO_CLASSES_AVAILABLE ||
     m === ERROR_CODES.NO_PACKAGES ||
     m === ERROR_CODES.NO_COMPATIBLE_PACKAGE
-  ) return 409;
+  )
+    return 409;
 
   // Validación de clase pasada
   if (
     m === "No se puede reservar una clase que ya pasó" ||
     m === "La clase no tiene fecha u hora definida" ||
     m === "La fecha u hora de la clase no es válida"
-  ) return 400;
+  )
+    return 400;
 
   return 500;
 };
@@ -122,9 +125,12 @@ const codeFromMessage = (m: string): string => {
   if (m === ERROR_CODES.NO_PACKAGES) return "NO_PACKAGES";
   if (m === ERROR_CODES.NO_COMPATIBLE_PACKAGE) return "NO_COMPATIBLE_PACKAGE";
   if (m === ERROR_CODES.UNLIMITED_DAILY_LIMIT) return "UNLIMITED_DAILY_LIMIT";
-  if (m === "No se puede reservar una clase que ya pasó") return "CLASS_ALREADY_PAST";
-  if (m === "La clase no tiene fecha u hora definida") return "CLASS_MISSING_DATETIME";
-  if (m === "La fecha u hora de la clase no es válida") return "CLASS_INVALID_DATETIME";
+  if (m === "No se puede reservar una clase que ya pasó")
+    return "CLASS_ALREADY_PAST";
+  if (m === "La clase no tiene fecha u hora definida")
+    return "CLASS_MISSING_DATETIME";
+  if (m === "La fecha u hora de la clase no es válida")
+    return "CLASS_INVALID_DATETIME";
   return "INTERNAL_ERROR";
 };
 
@@ -159,17 +165,18 @@ export const createReservationController = async (
       const currentTime = new Date();
       const classDay = cls.day ?? "";
       const classHour = cls.hour ?? "";
-      
+
       if (!classDay || !classHour) {
         throw new Error("La clase no tiene fecha u hora definida");
       }
 
       // Normalizar formato de hora: si viene "HH:mm", agregar ":00" para segundos
-      const normalizedHour = classHour.length === 5 ? `${classHour}:00` : classHour;
-      
+      const normalizedHour =
+        classHour.length === 5 ? `${classHour}:00` : classHour;
+
       // Combinar día + hora para crear fecha/hora exacta de la clase
       const classDateTime = new Date(`${classDay}T${normalizedHour}`);
-      
+
       // Validar que la fecha/hora sea válida
       if (isNaN(classDateTime.getTime())) {
         throw new Error("La fecha u hora de la clase no es válida");
@@ -197,7 +204,64 @@ export const createReservationController = async (
       const classType = normalizeClassType(cls.type) ?? ClassType.INDIVIDUAL;
 
       // Paquetes del usuario (UNA sola vez)
-      const pkgs: UserPackage[] = (user.packages ?? []);
+      let pkgs: UserPackage[] = (user.packages ?? []) as any[] as UserPackage[];
+      const normalizePkg = async (p: any): Promise<UserPackage | null> => {
+        if (p && typeof p === "object" && typeof p.id === "string") {
+          const hasShape =
+            "active" in p &&
+            "totalClasses" in p &&
+            "isUnlimited" in p &&
+            "type" in p;
+          if (hasShape) {
+            const classesUsed =
+              typeof (p as any).classesUsed === "number"
+                ? (p as any).classesUsed
+                : 0;
+            return { ...p, classesUsed } as UserPackage;
+          }
+          const ref = db.collection("packages").doc(String(p.id));
+          const snap = await ref.get();
+          if (!snap.exists) return null;
+          const d = snap.data() as any;
+          return {
+            id: String(p.id),
+            active: true,
+            totalClasses: Number(d?.totalClasses ?? 0),
+            classesUsed: Number((p as any)?.classesUsed ?? 0),
+            isUnlimited: Boolean(d?.isUnlimited ?? false),
+            type: String(d?.type ?? "individual"),
+            expiresAt: (p as any)?.expiresAt ?? null,
+            assignedAt: (p as any)?.assignedAt ?? undefined,
+            modality: (p as any)?.modality ?? d?.modality,
+          };
+        }
+        if (typeof p === "string") {
+          const ref = db.collection("packages").doc(p);
+          const snap = await ref.get();
+          if (!snap.exists) return null;
+          const d = snap.data() as any;
+          return {
+            id: p,
+            active: true,
+            totalClasses: Number(d?.totalClasses ?? 0),
+            classesUsed: 0,
+            isUnlimited: Boolean(d?.isUnlimited ?? false),
+            type: String(d?.type ?? "individual"),
+            expiresAt: null,
+            assignedAt: undefined,
+            modality: d?.modality,
+          };
+        }
+        return null;
+      };
+      if (Array.isArray(pkgs)) {
+        const enriched: UserPackage[] = [];
+        for (let i = 0; i < pkgs.length; i += 1) {
+          const e = await normalizePkg(pkgs[i] as any);
+          if (e) enriched.push(e);
+        }
+        pkgs = enriched;
+      }
 
       const now = new Date();
       const isActivePkg = (p: UserPackage) =>
@@ -308,12 +372,20 @@ export const createReservationController = async (
         .get();
       const u = userSnapEmail.data() as UserDoc;
 
-      await sendReservationConfirmationEmail(u.email, u.firstName, info, cls.type as string, seat);
+      await sendReservationConfirmationEmail(
+        u.email,
+        u.firstName,
+        info,
+        cls.type as string,
+        seat
+      );
     } catch (e) {
       console.error("Email de confirmación falló:", e);
     }
 
-    res.status(201).json({ message: "Reserva creada correctamente", id: newId });
+    res
+      .status(201)
+      .json({ message: "Reserva creada correctamente", id: newId });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const status = statusFromMessage(msg);
@@ -332,6 +404,14 @@ export const getAllReservationsController = async (
   try {
     const authReq = req as AuthRequest;
     const user = authReq.user;
+    const qp = req.query as Record<string, unknown>;
+    const statusParamRaw =
+      typeof qp.status === "string" ? qp.status.toLowerCase() : undefined;
+    const validStatuses = new Set(["active", "cancelled", "changed"]);
+    const statusParam =
+      statusParamRaw && validStatuses.has(statusParamRaw)
+        ? statusParamRaw
+        : undefined;
 
     let query = admin
       .firestore()
@@ -339,7 +419,7 @@ export const getAllReservationsController = async (
       .orderBy("createdAt", "desc");
 
     // Si es la ruta /my, filtrar por usuario actual
-    if (req.path === '/my' || req.originalUrl.includes('/my')) {
+    if (req.path === "/my" || req.originalUrl.includes("/my")) {
       const authHeader = req.headers.authorization;
       if (!authHeader || !authHeader.startsWith("Bearer ")) {
         res.status(401).json({ error: "Token no proporcionado" });
@@ -349,7 +429,7 @@ export const getAllReservationsController = async (
       const idToken = authHeader.slice(7);
       const decoded = await admin.auth().verifyIdToken(idToken);
       const userId = decoded.uid;
-      
+
       query = admin
         .firestore()
         .collection("reservations")
@@ -357,27 +437,75 @@ export const getAllReservationsController = async (
         .orderBy("createdAt", "desc");
     }
 
-    const snapshot = await query.get();
-    let reservations: Array<{ id: string } & Record<string, unknown>> =
-      snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    if (statusParam) {
+      query = query.where("status", "==", statusParam);
+    }
+    let reservations: Array<{ id: string } & Record<string, unknown>> = [];
+    try {
+      const snapshot = await query.get();
+      reservations = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (
+        msg.includes("FAILED_PRECONDITION") &&
+        msg.includes("requires an index")
+      ) {
+        let baseQ: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> =
+          admin.firestore().collection("reservations");
+        if (req.path === "/my" || req.originalUrl.includes("/my")) {
+          const authHeader = req.headers.authorization as string;
+          const idToken = (authHeader || "").startsWith("Bearer ")
+            ? authHeader.slice(7)
+            : "";
+          const decoded = idToken
+            ? await admin.auth().verifyIdToken(idToken)
+            : undefined;
+          const userId = decoded?.uid;
+          if (userId) baseQ = baseQ.where("userId", "==", userId);
+        }
+        if (statusParam) baseQ = baseQ.where("status", "==", statusParam);
+        const snap2 = await baseQ.get();
+        reservations = snap2.docs
+          .map((doc) => ({ id: doc.id, ...doc.data() }))
+          .sort((a, b) =>
+            String((b as any).createdAt || "").localeCompare(
+              String((a as any).createdAt || "")
+            )
+          );
+      } else {
+        throw e;
+      }
+    }
 
     // Si el usuario es employee (no admin) y tiene branches limitadas, filtrar por branch de las clases
-    if (user && user.role === "employee" && user.branches && user.branches.length > 0) {
+    if (
+      user &&
+      user.role === "employee" &&
+      user.branches &&
+      user.branches.length > 0
+    ) {
       // Obtener todas las clases únicas de las reservaciones
-      const classIds = Array.from(new Set(
-        reservations.map((res: any) => res.classId).filter(Boolean)
-      ));
-      
+      const classIds = Array.from(
+        new Set(reservations.map((res: any) => res.classId).filter(Boolean))
+      );
+
       // Obtener las clases
       const classesSnap = await admin
         .firestore()
         .collection("classes")
-        .where(admin.firestore.FieldPath.documentId(), "in", classIds.slice(0, 10)) // Firestore limita "in" a 10 items
+        .where(
+          admin.firestore.FieldPath.documentId(),
+          "in",
+          classIds.slice(0, 10)
+        ) // Firestore limita "in" a 10 items
         .get();
-      
+
       // Para más de 10 clases, hacer múltiples queries
       const allClasses: Map<string, any> = new Map();
-      classesSnap.docs.forEach(doc => {
+      classesSnap.docs.forEach((doc) => {
         allClasses.set(doc.id, doc.data());
       });
 
@@ -389,7 +517,7 @@ export const getAllReservationsController = async (
           .collection("classes")
           .where(admin.firestore.FieldPath.documentId(), "in", chunk)
           .get();
-        chunkSnap.docs.forEach(doc => {
+        chunkSnap.docs.forEach((doc) => {
           allClasses.set(doc.id, doc.data());
         });
       }
@@ -397,7 +525,11 @@ export const getAllReservationsController = async (
       // Filtrar reservaciones por branch de las clases
       reservations = reservations.filter((res: any) => {
         const classData = allClasses.get(res.classId);
-        return classData && classData.branch && user.branches!.includes(classData.branch);
+        return (
+          classData &&
+          classData.branch &&
+          user.branches!.includes(classData.branch)
+        );
       });
     }
 
@@ -440,13 +572,13 @@ export const getReservationsByClassController = async (
     }));
 
     // Obtener información de los usuarios para cada reservación
-    const userIds = Array.from(new Set(
-      reservations.map((res: any) => res.userId).filter(Boolean)
-    ));
+    const userIds = Array.from(
+      new Set(reservations.map((res: any) => res.userId).filter(Boolean))
+    );
 
     // Obtener usuarios en chunks (Firestore limita "in" a 10 items)
     const usersMap: Map<string, any> = new Map();
-    
+
     for (let i = 0; i < userIds.length; i += 10) {
       const chunk = userIds.slice(i, i + 10);
       const usersSnap = await admin
@@ -454,8 +586,8 @@ export const getReservationsByClassController = async (
         .collection("users")
         .where(admin.firestore.FieldPath.documentId(), "in", chunk)
         .get();
-      
-      usersSnap.docs.forEach(doc => {
+
+      usersSnap.docs.forEach((doc) => {
         usersMap.set(doc.id, doc.data());
       });
     }
@@ -465,25 +597,30 @@ export const getReservationsByClassController = async (
       const userData = usersMap.get(res.userId);
       return {
         ...res,
-        user: userData ? {
-          id: res.userId,
-          firstName: userData.firstName || '',
-          lastName: userData.lastName || '',
-          email: userData.email || '',
-          phone: userData.phone || '',
-        } : null,
+        user: userData
+          ? {
+              id: res.userId,
+              firstName: userData.firstName || "",
+              lastName: userData.lastName || "",
+              email: userData.email || "",
+              phone: userData.phone || "",
+            }
+          : null,
       };
     });
 
-    res.status(200).json({ 
+    res.status(200).json({
       reservations: reservationsWithUsers,
-      total: reservationsWithUsers.length 
+      total: reservationsWithUsers.length,
     });
   } catch (error) {
     console.error("Error en getReservationsByClassController:", error);
     res
       .status(500)
-      .json({ error: "Error al obtener reservas de la clase", details: String(error) });
+      .json({
+        error: "Error al obtener reservas de la clase",
+        details: String(error),
+      });
   }
 };
 
@@ -550,7 +687,11 @@ export const deleteReservationController = async (
   const { reservationId } = req.params;
 
   // Para notificar por email después
-  let promotedFromWaitlist: { userId: string; classId: string; seat?: number | null } | null = null;
+  let promotedFromWaitlist: {
+    userId: string;
+    classId: string;
+    seat?: number | null;
+  } | null = null;
 
   try {
     const db = admin.firestore();
@@ -588,11 +729,13 @@ export const deleteReservationController = async (
 
       const user = userSnapTx.data() as UserDoc;
       const cls = classSnapTx.data() as ClassDoc;
-      
+
       // Configuración por defecto si no existe
       let cfg: CancellationTimes;
       if (!cfgSnapTx.exists) {
-        console.log("⚠️ No hay configuración de cancelación, usando valores por defecto");
+        console.log(
+          "⚠️ No hay configuración de cancelación, usando valores por defecto"
+        );
         cfg = { individual: 60, groups: 120 }; // 1 hora individual, 2 horas grupal
       } else {
         cfg = cfgSnapTx.data() as CancellationTimes;
@@ -696,7 +839,7 @@ export const deleteReservationController = async (
       // 2.3 Si hay candidato, crear su reserva y aceptar waitlist
       let finalOccupied = occupiedAfter;
       let assignedSeatForPromotion: number | null = null;
-      
+
       if (candidate) {
         // Determinar tipo de clase y asignar asiento si es grupal
         const classType: ClassType =
@@ -705,7 +848,7 @@ export const deleteReservationController = async (
             : normalizeClassType(
                 typeof cls.type === "string" ? cls.type : undefined
               )) ?? ClassType.INDIVIDUAL;
-        
+
         // Si es clase grupal, encontrar el primer asiento disponible
         if (classType === ClassType.GROUPS) {
           // Obtener todos los asientos ocupados para esta clase (excluyendo la reserva que se está cancelando)
@@ -714,17 +857,20 @@ export const deleteReservationController = async (
             .where("status", "==", "active")
             .where("seat", "!=", null)
             .get();
-          
+
           const occupiedSeats = occupiedSeatsSnap.docs
-            .map(doc => {
+            .map((doc) => {
               const data = doc.data() as ReservationDoc;
               // Excluir el asiento de la reserva que se está cancelando
               if (doc.id === reservationId) return null;
               return data.seat;
             })
-            .filter((seat): seat is number => seat !== null && typeof seat === 'number')
+            .filter(
+              (seat): seat is number =>
+                seat !== null && typeof seat === "number"
+            )
             .sort((a, b) => a - b);
-          
+
           // Encontrar el primer asiento disponible (del 1 al capacity)
           const capacity = cls.capacity ?? 0;
           for (let seatNum = 1; seatNum <= capacity; seatNum++) {
@@ -733,13 +879,13 @@ export const deleteReservationController = async (
               break;
             }
           }
-          
+
           // Si no se encontró asiento disponible, usar null (no debería pasar si hay cupo)
           if (assignedSeatForPromotion === null && capacity > 0) {
             assignedSeatForPromotion = capacity; // Fallback: usar el último asiento
           }
         }
-        
+
         const newResRef = reservationsRef.doc();
         const payload: ReservationDoc = {
           id: newResRef.id,
@@ -810,8 +956,11 @@ export const deleteReservationController = async (
 
     // 2) Email al usuario promovido desde waitlist (si hubo)
     if (promotedFromWaitlist) {
-      const { userId: promotedUserId, classId: promotedClassId, seat: promotedSeat } =
-        promotedFromWaitlist;
+      const {
+        userId: promotedUserId,
+        classId: promotedClassId,
+        seat: promotedSeat,
+      } = promotedFromWaitlist;
       try {
         const promotedUserSnapEmail = await admin
           .firestore()
@@ -828,9 +977,11 @@ export const deleteReservationController = async (
             .collection("classes")
             .doc(promotedClassId)
             .get();
-          const promotedClassData = promotedClassSnap.data() as ClassDoc | undefined;
+          const promotedClassData = promotedClassSnap.data() as
+            | ClassDoc
+            | undefined;
           const promotedClassType = promotedClassData?.type || "individual";
-          
+
           // Obtener el asiento asignado (si viene en promotedFromWaitlist, usarlo; sino buscar)
           let assignedSeat: number | null = promotedSeat ?? null;
           if (assignedSeat === null || assignedSeat === undefined) {
@@ -844,13 +995,14 @@ export const deleteReservationController = async (
               .orderBy("createdAt", "desc")
               .limit(1)
               .get();
-            
+
             if (!reservationSnap.empty) {
-              const reservationData = reservationSnap.docs[0].data() as ReservationDoc;
+              const reservationData =
+                reservationSnap.docs[0].data() as ReservationDoc;
               assignedSeat = reservationData.seat ?? null;
             }
           }
-          
+
           await sendWaitlistAcceptedEmail(
             promotedUserEmail.email,
             promotedUserEmail.firstName,
@@ -939,7 +1091,7 @@ export const changeReservationController = async (
       // 3. Obtener clase actual y nueva
       const currentClassRef = db.collection("classes").doc(currentRes.classId);
       const newClassRef = db.collection("classes").doc(newClassId);
-      
+
       const [currentClassSnap, newClassSnap] = await t.getAll(
         currentClassRef,
         newClassRef
@@ -953,9 +1105,16 @@ export const changeReservationController = async (
       const newClass = newClassSnap.data() as ClassDoc;
 
       // 4. Validar tiempo límite para cambiar
-      const classType = normalizeClassType(currentClass.type) ?? ClassType.INDIVIDUAL;
-      const windowMin = classType === ClassType.GROUPS ? cfg.changeGroups! : cfg.changeIndividual!;
-      const minutesUntilClass = diffMinutesFromNow(currentClass.day, currentClass.hour);
+      const classType =
+        normalizeClassType(currentClass.type) ?? ClassType.INDIVIDUAL;
+      const windowMin =
+        classType === ClassType.GROUPS
+          ? cfg.changeGroups!
+          : cfg.changeIndividual!;
+      const minutesUntilClass = diffMinutesFromNow(
+        currentClass.day,
+        currentClass.hour
+      );
 
       if (minutesUntilClass < windowMin) {
         throw new Error(
@@ -1006,7 +1165,10 @@ export const changeReservationController = async (
       });
 
       // 9. Disminuir ocupación de clase actual
-      const currentOccupiedAfter = Math.max(0, (currentClass.occupied ?? 0) - 1);
+      const currentOccupiedAfter = Math.max(
+        0,
+        (currentClass.occupied ?? 0) - 1
+      );
       t.update(currentClassRef, { occupied: currentOccupiedAfter });
 
       // 10. Aumentar ocupación de nueva clase

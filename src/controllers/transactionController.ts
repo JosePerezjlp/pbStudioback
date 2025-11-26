@@ -1661,14 +1661,53 @@ export const getRankingsController = async (
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           if (msg.includes("FAILED_PRECONDITION") && msg.includes("requires an index")) {
-            return {
-              branchId: branch.id,
-              branchName: branch.name,
-              rankings: [],
-              indexRequired: true,
-            };
+            // Fallback seguro: escanear por branch en lotes sin filtros compuestos
+            try {
+              let fbq: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
+                .collection("transactions")
+                .select("amount", "userId", "createdAt", "status", "package", "userEmail")
+                .where("branchId", "==", branch.id);
+              const batchSize = 500;
+              let offset = 0;
+              let iterations = 0;
+              const MAX_DOCS = 5000;
+              while (iterations < 20 && offset < MAX_DOCS) {
+                const snap = await fbq.limit(batchSize).offset(offset).get();
+                if (snap.empty) break;
+                const docs = snap.docs;
+                for (let i = 0; i < docs.length; i += 1) {
+                  const d = docs[i];
+                  const data = d.data() as any;
+                  const uid = data.userId as string | undefined;
+                  if (!uid) continue;
+                  const statusOk = String(data.status || "") === "paid";
+                  const createdAtVal = typeof data.createdAt === "string"
+                    ? new Date(data.createdAt)
+                    : data.createdAt?.toDate?.() ?? data.createdAt;
+                  const inWindow = createdAtVal instanceof Date && createdAtVal.toISOString() >= startIso;
+                  if (!statusOk || !inWindow) continue;
+                  const amtRaw = data.amount;
+                  const amt = typeof amtRaw === "string" ? Number(amtRaw) : amtRaw;
+                  if (!byUser[uid]) {
+                    byUser[uid] = { sum: Number.isFinite(amt) ? amt : 0, lastTx: { ...data, createdAt: createdAtVal } };
+                  } else {
+                    byUser[uid].sum += Number.isFinite(amt) ? amt : 0;
+                    const prevDate = byUser[uid].lastTx?.createdAt as Date | null;
+                    if (createdAtVal && prevDate && createdAtVal > prevDate) {
+                      byUser[uid].lastTx = { ...data, createdAt: createdAtVal };
+                    }
+                  }
+                }
+                offset += docs.length;
+                iterations += 1;
+                if (offset >= MAX_DOCS || docs.length < batchSize) break;
+              }
+            } catch (fbErr) {
+              // Si el fallback también falla, devolvemos sin rankings para esta sucursal
+            }
+          } else {
+            throw e;
           }
-          throw e;
         }
 
         const topEntries = Object.entries(byUser)

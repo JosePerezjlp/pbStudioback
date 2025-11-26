@@ -85,6 +85,8 @@ app.use(
 
 app.use(express.json());
 app.use((req, res, next) => {
+  // @ts-ignore
+  (global as any).__activeRequests = Number((global as any).__activeRequests || 0) + 1;
   const start = Date.now();
   const m0 = process.memoryUsage();
   res.on("finish", () => {
@@ -116,7 +118,7 @@ app.use((req, res, next) => {
     // Agregador global por endpoint
     // @ts-ignore
     const stats: Map<string, any> = (global as any).__perfStats || new Map();
-    const key = `${req.method} ${req.path}`;
+    const key = `${req.method} ${req.originalUrl}`;
     const cur = stats.get(key) || {
       count: 0,
       sumMs: 0,
@@ -142,14 +144,18 @@ app.use((req, res, next) => {
     (global as any).__perfStats = stats;
     const ALERT_MS = Number(process.env.PERF_ALERT_MS ?? 3000);
     const ALERT_HEAP = Number(process.env.PERF_ALERT_HEAP_MB ?? 50);
+    // @ts-ignore
+    const active = Number((global as any).__activeRequests || 0);
     if (ms >= ALERT_MS || delta >= ALERT_HEAP) {
       console.warn(
-        `PERF_ALERT ${key} status=${res.statusCode} ms=${ms} Δheap=${delta}MB rss=${rss1}MB`
+        `PERF_ALERT ${key} status=${res.statusCode} ms=${ms} Δheap=${delta}MB rss=${rss1}MB active=${active}`
       );
     }
     console.log(
       `${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms heap=${heap1}MB Δheap=${delta}MB rss=${rss1}MB uid=${u}`
     );
+    // @ts-ignore
+    (global as any).__activeRequests = Math.max(0, Number((global as any).__activeRequests || 1) - 1);
   });
   next();
 });
@@ -214,8 +220,10 @@ if (PERF_ENABLE && PERF_INTERVAL_SEC > 0) {
     const mem = process.memoryUsage();
     const rssMB = Math.round((mem.rss / 1048576) * 100) / 100;
     const heapMB = Math.round((mem.heapUsed / 1048576) * 100) / 100;
+    // @ts-ignore
+    const active = Number((global as any).__activeRequests || 0);
     console.log(
-      `PERF_SUMMARY rss=${rssMB}MB heap=${heapMB}MB top_time=${JSON.stringify(topByTime)} top_heap=${JSON.stringify(topByHeap)}`
+      `PERF_SUMMARY rss=${rssMB}MB heap=${heapMB}MB active=${active} top_time=${JSON.stringify(topByTime)} top_heap=${JSON.stringify(topByHeap)}`
     );
   }, PERF_INTERVAL_SEC * 1000);
 }

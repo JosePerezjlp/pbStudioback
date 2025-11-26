@@ -251,7 +251,9 @@ export const getUsersStatsController = async (
     const ttlMs = 60_000;
     const nowMs = Date.now();
     // @ts-ignore
-    const cached = (global as any).__usersStatsCache as { ts: number; data: any } | undefined;
+    const cached = (global as any).__usersStatsCache as
+      | { ts: number; data: any }
+      | undefined;
     if (cached && nowMs - cached.ts < ttlMs) {
       res.status(200).json(cached.data);
       return;
@@ -268,7 +270,11 @@ export const getUsersStatsController = async (
     let newThisMonth: number | null = null;
 
     try {
-      const totalAgg = await db.collection("users").where("role", "==", "user").count().get();
+      const totalAgg = await db
+        .collection("users")
+        .where("role", "==", "user")
+        .count()
+        .get();
       totalUsers = totalAgg.data().count;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -310,7 +316,10 @@ export const getUsersStatsController = async (
     (global as any).__usersStatsCache = { ts: nowMs, data: payload };
     res.status(200).json(payload);
   } catch (err) {
-    res.status(500).json({ error: "Error al obtener estadísticas de usuarios", details: String(err) });
+    res.status(500).json({
+      error: "Error al obtener estadísticas de usuarios",
+      details: String(err),
+    });
   }
 };
 
@@ -389,9 +398,8 @@ export const updateUserController = async (
     }
 
     const db = admin.firestore();
-    let userRef: FirebaseFirestore.DocumentReference<FirebaseFirestore.DocumentData> = db
-      .collection("users")
-      .doc(userId);
+    let userRef: FirebaseFirestore.DocumentReference<FirebaseFirestore.DocumentData> =
+      db.collection("users").doc(userId);
     let userDoc = await userRef.get();
 
     if (!userDoc.exists) {
@@ -407,7 +415,8 @@ export const updateUserController = async (
       candidates.push({ field: "legacyID", value: legacyRaw });
       candidates.push({ field: "legacy_id", value: legacyRaw });
 
-      let found: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData> | null = null;
+      let found: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData> | null =
+        null;
       for (const c of candidates) {
         const snap = await db
           .collection("users")
@@ -493,14 +502,32 @@ export const getAllUsersController = async (
     const qp = req.query as Record<string, unknown>;
     const pageNum = Number(qp.page ?? 1);
     const limitNum = Number(qp.limit ?? 20);
+    const cursorId = typeof qp.cursor === "string" ? qp.cursor : undefined;
     const idFilter = typeof qp.id === "string" ? qp.id.trim() : undefined;
-    const firstNameFilter = typeof qp.firstName === "string" ? qp.firstName.trim() : (typeof qp.name === "string" ? (qp.name as string).trim() : undefined);
-    const lastNameFilter = typeof qp.lastName === "string" ? qp.lastName.trim() : undefined;
-    const emailFilter = typeof qp.email === "string" ? qp.email.trim() : undefined;
-    const statusFilter = typeof qp.status === "string" ? qp.status.toLowerCase() : undefined; // "active" | "inactive"
-    const hasActivePackageFilterRaw = typeof qp.hasActivePackage === "string" ? qp.hasActivePackage.toLowerCase() : undefined; // "true" | "false"
-    const hasActivePackageFilter = hasActivePackageFilterRaw === "true" ? true : hasActivePackageFilterRaw === "false" ? false : undefined;
-    const startDateRaw = typeof qp.startDate === "string" ? qp.startDate : undefined;
+    const firstNameFilter =
+      typeof qp.firstName === "string"
+        ? qp.firstName.trim()
+        : typeof qp.name === "string"
+          ? (qp.name as string).trim()
+          : undefined;
+    const lastNameFilter =
+      typeof qp.lastName === "string" ? qp.lastName.trim() : undefined;
+    const emailFilter =
+      typeof qp.email === "string" ? qp.email.trim() : undefined;
+    const statusFilter =
+      typeof qp.status === "string" ? qp.status.toLowerCase() : undefined;
+    const hasActivePackageFilterRaw =
+      typeof qp.hasActivePackage === "string"
+        ? qp.hasActivePackage.toLowerCase()
+        : undefined;
+    const hasActivePackageFilter =
+      hasActivePackageFilterRaw === "true"
+        ? true
+        : hasActivePackageFilterRaw === "false"
+          ? false
+          : undefined;
+    const startDateRaw =
+      typeof qp.startDate === "string" ? qp.startDate : undefined;
     const endDateRaw = typeof qp.endDate === "string" ? qp.endDate : undefined;
 
     const page = Number.isFinite(pageNum) && pageNum > 0 ? pageNum : 1;
@@ -522,119 +549,138 @@ export const getAllUsersController = async (
     const startISO = toStartISO(startDateRaw);
     const endISO = toEndISO(endDateRaw);
 
-    const normalize = (v: unknown): string => String(v ?? "").toLowerCase();
-    const contains = (src: unknown, q: string | undefined): boolean => {
-      if (!q) return true;
-      return normalize(src).includes(q.toLowerCase());
-    };
-    const hasActivePkg = (u: any): boolean => {
-      const pkgs: any[] = Array.isArray(u.packages) ? u.packages : [];
-      const now = new Date();
-      return pkgs.some((p) => {
-        const active = p?.active === true;
-        const exp = p?.expiresAt ? new Date(p.expiresAt) : null;
-        const notExpired = !exp || exp > now;
-        return active && notExpired;
-      });
+    const mkBase = () => {
+      let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> =
+        col.select(
+          "firstName",
+          "lastName",
+          "email",
+          "enabled",
+          "branch",
+          "registrationDate",
+          "createdAt",
+          "legacyId",
+          "role"
+        );
+      q = q.where("role", "==", "user");
+      if (statusFilter === "active") q = q.where("enabled", "==", true);
+      if (statusFilter === "inactive") q = q.where("enabled", "==", false);
+      if (firstNameFilter) q = q.where("firstName", "==", firstNameFilter);
+      if (lastNameFilter) q = q.where("lastName", "==", lastNameFilter);
+      if (emailFilter) q = q.where("email", "==", emailFilter);
+      if (startISO) q = q.where("registrationDate", ">=", startISO);
+      if (endISO) q = q.where("registrationDate", "<=", endISO);
+      if (startISO || endISO) q = q.orderBy("registrationDate", "desc");
+      else q = q.orderBy("createdAt", "desc");
+      return q;
     };
 
-    let docs: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>[] = [];
-    let indexFallback = false;
-
+    let q = mkBase();
     if (idFilter) {
       const snap = await col.doc(idFilter).get();
-      if (snap.exists) {
-        docs = [snap as FirebaseFirestore.QueryDocumentSnapshot];
-      } else {
-        docs = [];
-      }
-    } else {
-      try {
-        let q: FirebaseFirestore.Query = col.where("role", "==", "user");
-        if (statusFilter === "active") q = q.where("enabled", "==", true);
-        if (statusFilter === "inactive") q = q.where("enabled", "==", false);
-
-        if (startISO || endISO) {
-          if (startISO) q = q.where("registrationDate", ">=", startISO);
-          if (endISO) q = q.where("registrationDate", "<=", endISO);
-          q = q.orderBy("registrationDate", "desc");
-        } else {
-          q = q.orderBy("createdAt", "desc");
-        }
-
-        const snap = await q.get();
-        docs = snap.docs;
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (msg.includes("FAILED_PRECONDITION")) {
-          indexFallback = true;
-          const snap2 = await col.orderBy("createdAt", "desc").get();
-          docs = snap2.docs;
-        } else {
-          throw e;
-        }
-      }
+      const d = snap.exists ? [{ id: snap.id, ...(snap.data() as any) }] : [];
+      const usersWithBranchName = d.length > 0 ? d : [];
+      res.status(200).json({
+        users: usersWithBranchName,
+        total: d.length,
+        totalPages: 1,
+        page: 1,
+      });
+      return;
     }
 
-    const allUsers = docs.map((d) => ({ id: d.id, ...d.data() }));
-    const filtered = allUsers.filter((u: any) => {
-      if (firstNameFilter && !contains(u.firstName, firstNameFilter)) return false;
-      if (lastNameFilter && !contains(u.lastName, lastNameFilter)) return false;
-      if (emailFilter && !contains(u.email, emailFilter)) return false;
-      if (typeof hasActivePackageFilter === "boolean" && hasActivePkg(u) !== hasActivePackageFilter) return false;
-      if (!idFilter && statusFilter === "active" && u.enabled !== true) return false;
-      if (!idFilter && statusFilter === "inactive" && u.enabled !== false) return false;
-      if (indexFallback && (startISO || endISO)) {
-        const reg = u.registrationDate;
-        if (startISO && (!reg || String(reg) < startISO)) return false;
-        if (endISO && (!reg || String(reg) > endISO)) return false;
-      }
-      return true;
-    });
+    if (cursorId) {
+      const curSnap = await col.doc(cursorId).get();
+      if (curSnap.exists) q = q.startAfter(curSnap);
+    } else if (page > 1) {
+      q = q.offset((page - 1) * limit);
+    }
+    q = q.limit(limit + 1);
 
-    const toLegacyNum = (u: any): number => {
-      const raw = (u?.legacyId ?? u?.legacyID ?? u?.legacy_id);
-      const n = Number(raw);
-      return Number.isFinite(n) ? n : Number.MAX_SAFE_INTEGER;
-    };
-    const sorted = [...filtered].sort((a, b) => toLegacyNum(a) - toLegacyNum(b));
-    const total = sorted.length;
-    const totalPages = Math.max(1, Math.ceil(total / limit));
-    const currentPage = Math.min(page, totalPages);
-    const startIdx = (currentPage - 1) * limit;
-    const usersPage = sorted.slice(startIdx, startIdx + limit);
+    let total: number | null = null;
+    let totalPages: number | null = null;
+    try {
+      let tq = col.where("role", "==", "user");
+      if (statusFilter === "active") tq = tq.where("enabled", "==", true);
+      if (statusFilter === "inactive") tq = tq.where("enabled", "==", false);
+      if (firstNameFilter) tq = tq.where("firstName", "==", firstNameFilter);
+      if (lastNameFilter) tq = tq.where("lastName", "==", lastNameFilter);
+      if (emailFilter) tq = tq.where("email", "==", emailFilter);
+      if (startISO) tq = tq.where("registrationDate", ">=", startISO);
+      if (endISO) tq = tq.where("registrationDate", "<=", endISO);
+      const agg = await tq.count().get();
+      total = agg.data().count;
+      totalPages = Math.max(1, Math.ceil((total ?? 0) / limit));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("FAILED_PRECONDITION")) throw e;
+      total = null;
+      totalPages = null;
+    }
+
+    let snap: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
+    try {
+      snap = await q.get();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("FAILED_PRECONDITION")) {
+        res
+          .status(422)
+          .json({ error: "index_required", indexRequired: true, details: msg });
+        return;
+      }
+      throw e;
+    }
+
+    const docs = snap.docs;
+    const hasMore = docs.length > limit;
+    const pageDocs = hasMore ? docs.slice(0, limit) : docs;
+    const pageUsers = pageDocs.map((d) => ({ id: d.id, ...(d.data() as any) }));
 
     const branchIds = Array.from(
       new Set(
-        usersPage
-          .map((u: any) => (typeof u.branch === "string" ? u.branch : String(u.branch || "")))
+        pageUsers
+          .map((u: any) =>
+            typeof u.branch === "string" ? u.branch : String(u.branch || "")
+          )
           .filter((id) => !!id)
       )
     );
-
     let branchNameMap: Record<string, string> = {};
     if (branchIds.length > 0) {
       const BATCH = 10;
       for (let i = 0; i < branchIds.length; i += BATCH) {
         const chunk = branchIds.slice(i, i + BATCH);
-        const snap = await db
+        const bsnap = await db
           .collection("branches")
           .where(admin.firestore.FieldPath.documentId(), "in", chunk)
           .get();
-        snap.docs.forEach((d) => {
-          const data = d.data() as { name?: string };
-          branchNameMap[d.id] = String(data?.name || "");
+        bsnap.docs.forEach((bd) => {
+          const data = bd.data() as { name?: string };
+          branchNameMap[bd.id] = String(data?.name || "");
         });
       }
     }
 
-    const usersWithBranchName = usersPage.map((u: any) => {
-      const bid = typeof u.branch === "string" ? u.branch : String(u.branch || "");
-      const branchName = bid ? branchNameMap[bid] ?? null : null;
+    const usersWithBranchName = pageUsers.map((u: any) => {
+      const bid =
+        typeof u.branch === "string" ? u.branch : String(u.branch || "");
+      const branchName = bid ? (branchNameMap[bid] ?? null) : null;
       return { ...u, branchName };
     });
 
-    res.status(200).json({ users: usersWithBranchName, total, totalPages, page: currentPage, indexFallback });
+    const nextCursor = hasMore
+      ? String(pageDocs[pageDocs.length - 1].id)
+      : null;
+    res.status(200).json({
+      users: usersWithBranchName,
+      total,
+      totalPages,
+      page,
+      hasMore,
+      nextCursor,
+      limit,
+    });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
     console.error("Error fetching users:", msg);
@@ -661,9 +707,14 @@ export const getRecentUsersController = async (
       const msg = e instanceof Error ? e.message : String(e);
       if (!msg.includes("FAILED_PRECONDITION")) throw e;
       // Fallback sin índice compuesto: ordenar y filtrar en memoria sobre un rango pequeño
-      const snap2 = await col.orderBy("registrationDate", "desc").limit(40).get();
+      const snap2 = await col
+        .orderBy("registrationDate", "desc")
+        .limit(40)
+        .get();
       const candidates = snap2.docs.map((d) => ({ id: d.id, ...d.data() }));
-      const users = candidates.filter((u: any) => (u.role || "").toLowerCase() === "user").slice(0, 8);
+      const users = candidates
+        .filter((u: any) => (u.role || "").toLowerCase() === "user")
+        .slice(0, 8);
       res.status(200).json({ users, total: users.length, indexFallback: true });
       return;
     }
@@ -682,7 +733,7 @@ export const getUserByIdController = async (
     let userId: string;
 
     // Si es la ruta /me, obtener el UID del token
-    if (req.path === '/me' || req.originalUrl.includes('/me')) {
+    if (req.path === "/me" || req.originalUrl.includes("/me")) {
       const authHeader = req.headers.authorization;
       if (!authHeader || !authHeader.startsWith("Bearer ")) {
         res.status(401).json({ error: "Token no proporcionado" });
@@ -705,7 +756,8 @@ export const getUserByIdController = async (
       db.collection("instructors").doc(userId).get(),
     ]);
 
-    let doc: FirebaseFirestore.DocumentSnapshot<FirebaseFirestore.DocumentData> | null = null;
+    let doc: FirebaseFirestore.DocumentSnapshot<FirebaseFirestore.DocumentData> | null =
+      null;
     let collection: "users" | "staff" | "instructors" | null = null;
 
     if (userDoc.exists) {
@@ -750,6 +802,49 @@ export const getUserByIdController = async (
         doc = found.docs[0];
         collection = "users";
       }
+      if (!doc) {
+        const raw = String(userId || "").trim();
+        if (raw) {
+          const direct = await db
+            .collection("users")
+            .where("email", "==", raw)
+            .limit(1)
+            .get();
+          if (!direct.empty) {
+            doc = direct.docs[0];
+            collection = "users";
+          } else {
+            try {
+              const likeSnap = await db
+                .collection("users")
+                .orderBy("email")
+                .startAt(raw)
+                .endAt(`${raw}\uf8ff`)
+                .limit(1)
+                .get();
+              if (!likeSnap.empty) {
+                doc = likeSnap.docs[0];
+                collection = "users";
+              }
+            } catch (_) {
+              const scan = await db
+                .collection("users")
+                .orderBy("createdAt", "desc")
+                .limit(40)
+                .get();
+              const cand = scan.docs.find((d) =>
+                String((d.data() as any).email || "")
+                  .toLowerCase()
+                  .startsWith(raw.toLowerCase())
+              );
+              if (cand) {
+                doc = cand;
+                collection = "users";
+              }
+            }
+          }
+        }
+      }
     }
 
     if (!doc || !doc.exists) {
@@ -767,17 +862,25 @@ export const getUserByIdController = async (
     if (role === "employee" || role === "admin") {
       // Normalizar branches
       if (Array.isArray(data.branches)) {
-        normalizedBranches = data.branches.filter((b: unknown) => typeof b === "string");
+        normalizedBranches = data.branches.filter(
+          (b: unknown) => typeof b === "string"
+        );
       } else if (typeof data.branch === "string") {
         normalizedBranches = [data.branch];
       }
 
       // Normalizar permissions
-      if (data.permissions && typeof data.permissions === "object" && !Array.isArray(data.permissions)) {
+      if (
+        data.permissions &&
+        typeof data.permissions === "object" &&
+        !Array.isArray(data.permissions)
+      ) {
         normalizedPermissions = Object.fromEntries(
           Object.entries(data.permissions).map(([k, v]) => [
             k,
-            Array.isArray(v) ? v.filter((x: unknown) => typeof x === "string") : [],
+            Array.isArray(v)
+              ? v.filter((x: unknown) => typeof x === "string")
+              : [],
           ])
         );
       }
@@ -799,21 +902,23 @@ export const getUserByIdController = async (
     } else {
       // Para usuarios regulares (no employees ni admins), devolver datos tal cual
       const { password: _omit, ...safeData } = data;
-      let txDocs: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>[] = [];
-      let resDocs: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>[] = [];
+      let txDocs: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>[] =
+        [];
+      let resDocs: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>[] =
+        [];
       try {
         const [txSnap, rSnap] = await Promise.all([
           db
             .collection("transactions")
             .where("userId", "==", doc.id)
             .orderBy("createdAt", "desc")
-            .limit(50)
+            .limit(5)
             .get(),
           db
             .collection("reservations")
             .where("userId", "==", doc.id)
             .orderBy("createdAt", "desc")
-            .limit(50)
+            .limit(5)
             .get(),
         ]);
         txDocs = txSnap.docs;
@@ -822,19 +927,25 @@ export const getUserByIdController = async (
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.includes("FAILED_PRECONDITION")) {
           const [txSnap2, rSnap2] = await Promise.all([
-            db
-              .collection("transactions")
-              .where("userId", "==", doc.id)
-              .limit(50)
-              .get(),
-            db
-              .collection("reservations")
-              .where("userId", "==", doc.id)
-              .limit(50)
-              .get(),
+            db.collection("transactions").where("userId", "==", doc.id).get(),
+            db.collection("reservations").where("userId", "==", doc.id).get(),
           ]);
-          txDocs = txSnap2.docs;
-          resDocs = rSnap2.docs;
+          txDocs = txSnap2.docs
+            .slice()
+            .sort((a, b) =>
+              String((b.data() as any).createdAt || "").localeCompare(
+                String((a.data() as any).createdAt || "")
+              )
+            )
+            .slice(0, 5);
+          resDocs = rSnap2.docs
+            .slice()
+            .sort((a, b) =>
+              String((b.data() as any).createdAt || "").localeCompare(
+                String((a.data() as any).createdAt || "")
+              )
+            )
+            .slice(0, 5);
         } else {
           throw e;
         }
@@ -843,7 +954,91 @@ export const getUserByIdController = async (
       const transactions = txDocs.map((d) => ({ id: d.id, ...d.data() }));
       const reservations = resDocs.map((d) => ({ id: d.id, ...d.data() }));
 
-      res.status(200).json({ id: doc.id, ...safeData, transactions, reservations });
+      let waitlistAgg: { inList: boolean; position: number | null } = {
+        inList: false,
+        position: null,
+      };
+      try {
+        const wlUserSnap = await db
+          .collection("waitlists")
+          .where("userId", "==", doc.id)
+          .where("status", "==", "pending")
+          .orderBy("createdAt", "asc")
+          .get();
+        const wlDocs = wlUserSnap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as any),
+        }));
+        if (wlDocs.length > 0) {
+          waitlistAgg.inList = true;
+          const firstWl = wlDocs[0];
+          const wlClassSnap = await db
+            .collection("waitlists")
+            .where("classId", "==", String(firstWl.classId || ""))
+            .where("status", "==", "pending")
+            .orderBy("createdAt", "asc")
+            .get();
+          const classQueue = wlClassSnap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as any),
+          }));
+          const idx = classQueue.findIndex(
+            (w) => String(w.id) === String(firstWl.id)
+          );
+          waitlistAgg.position = idx >= 0 ? idx + 1 : 1;
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes("FAILED_PRECONDITION")) {
+          const wlUserSnap2 = await db
+            .collection("waitlists")
+            .where("userId", "==", doc.id)
+            .get();
+          const wlDocs2 = wlUserSnap2.docs
+            .map((d) => ({ id: d.id, ...(d.data() as any) }))
+            .filter((w) => String(w.status || "") === "pending")
+            .sort((a, b) =>
+              String(a.createdAt || "").localeCompare(String(b.createdAt || ""))
+            );
+          if (wlDocs2.length > 0) {
+            waitlistAgg.inList = true;
+            const firstWl = wlDocs2[0];
+            const wlClassSnap2 = await db
+              .collection("waitlists")
+              .where("classId", "==", String(firstWl.classId || ""))
+              .get();
+            const classQueue2 = wlClassSnap2.docs
+              .map((d) => ({ id: d.id, ...(d.data() as any) }))
+              .filter((w) => String(w.status || "") === "pending")
+              .sort((a, b) =>
+                String(a.createdAt || "").localeCompare(
+                  String(b.createdAt || "")
+                )
+              );
+            const idx = classQueue2.findIndex(
+              (w) => String(w.id) === String(firstWl.id)
+            );
+            waitlistAgg.position = idx >= 0 ? idx + 1 : 1;
+          }
+        }
+      }
+
+      const currentWaitlist = (safeData as any)?.waitlist;
+      const mergedWaitlist = {
+        inList: Boolean(waitlistAgg.inList || currentWaitlist?.inList),
+        position:
+          waitlistAgg.position !== null
+            ? waitlistAgg.position
+            : (currentWaitlist?.position ?? null),
+      };
+
+      res.status(200).json({
+        id: doc.id,
+        ...safeData,
+        waitlist: mergedWaitlist,
+        transactions,
+        reservations,
+      });
     }
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
@@ -918,7 +1113,8 @@ export const adminResetPasswordController = async (
       candidates.push({ field: "legacyID", value: legacyRaw });
       candidates.push({ field: "legacy_id", value: legacyRaw });
 
-      let found: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData> | null = null;
+      let found: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData> | null =
+        null;
       for (const c of candidates) {
         // eslint-disable-next-line no-await-in-loop
         const snap = await db
@@ -932,7 +1128,9 @@ export const adminResetPasswordController = async (
         }
       }
       if (!found) {
-        res.status(404).json({ error: "USER_NOT_FOUND", message: "Usuario no encontrado" });
+        res
+          .status(404)
+          .json({ error: "USER_NOT_FOUND", message: "Usuario no encontrado" });
         return;
       }
       targetUid = found.id;
@@ -941,7 +1139,10 @@ export const adminResetPasswordController = async (
 
     await admin.auth().updateUser(targetUid, { password: newPassword.trim() });
     await admin.auth().revokeRefreshTokens(targetUid);
-    await db.collection("users").doc(targetUid).update({ updatedAt: new Date().toISOString() });
+    await db
+      .collection("users")
+      .doc(targetUid)
+      .update({ updatedAt: new Date().toISOString() });
 
     res
       .status(200)

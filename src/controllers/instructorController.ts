@@ -34,6 +34,7 @@ interface InstructorDoc {
   image?: string;
   registrationDate: string; // ISO
   createdAt: string; // ISO
+  staffId?: string;
 
   // fijos
   role: "employee";
@@ -122,7 +123,11 @@ export const createInstructorController = [
       // 2) Subir imagen (opcional)
       let imageUrl = "";
       if (req.file) {
-        imageUrl = await uploadToFirebase(req.file, `instructor/${uid}`);
+        try {
+          imageUrl = await uploadToFirebase(req.file, `instructor/${uid}`);
+        } catch (_) {
+          imageUrl = "";
+        }
       }
 
       // 3) Disciplinas
@@ -148,6 +153,7 @@ export const createInstructorController = [
         image: imageUrl || undefined,
         registrationDate: nowIso,
         createdAt: nowIso,
+        staffId: uid,
         role: "employee",
         permissions: {
           clases: [...CLASES_PERMISOS],
@@ -288,10 +294,13 @@ export const updateInstructorController = [
       // Imagen (si NO viene archivo, se conserva la actual; no tocamos storage)
       if (req.file) {
         const oldUrl = current?.image;
-        const newUrl = await uploadToFirebase(req.file, `instructor/${instructorId}`);
-        updateData.image = newUrl;
-        if (oldUrl && oldUrl !== newUrl) {
-          await deleteFromFirebase(oldUrl);
+        try {
+          const newUrl = await uploadToFirebase(req.file, `instructor/${instructorId}`);
+          updateData.image = newUrl;
+          if (oldUrl && oldUrl !== newUrl) {
+            await deleteFromFirebase(oldUrl);
+          }
+        } catch (_) {
         }
       }
 

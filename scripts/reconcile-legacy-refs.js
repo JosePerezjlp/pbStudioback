@@ -484,6 +484,56 @@ async function updateTransactionsBranchRefs(db, maps, dryRun) {
   if (!dryRun && ops % BATCH !== 0) await batch.commit();
   console.log(`[SUMMARY transactions branch] planned=${planned} updated=${ops}`);
 }
+async function updateTransactionsUserRefs(db, maps, dryRun) {
+  const userMap = maps.users;
+  if (!userMap) return;
+  const BATCH = 500;
+  let ops = 0;
+  let planned = 0;
+  let batch = db.batch();
+  await paginateCollection(db, "transactions", 1000, async (snap) => {
+    for (const doc of snap.docs) {
+      const data = doc.data() || {};
+      const upd = {};
+      let targetUserId = null;
+      if (data.userIdLegacy != null) {
+        const mapped = mapId(userMap, data.userIdLegacy);
+        if (mapped) targetUserId = mapped;
+      }
+      if (!targetUserId && data.userId) {
+        const mapped = mapId(userMap, data.userId);
+        if (mapped) targetUserId = mapped;
+      }
+      if (!targetUserId && data.user_id != null) {
+        const mapped = mapId(userMap, data.user_id);
+        if (mapped) targetUserId = mapped;
+      }
+      if (!targetUserId && data.userEmail) {
+        const q = await db
+          .collection("users")
+          .where("email", "==", String(data.userEmail))
+          .limit(1)
+          .get();
+        if (!q.empty) targetUserId = q.docs[0].id;
+      }
+      if (targetUserId && toStringId(data.userId) !== targetUserId) {
+        upd.userId = targetUserId;
+      }
+      if (Object.keys(upd).length) {
+        planned++;
+        if (dryRun) {
+          console.log(`[DRY-RUN transactions user] ${doc.id} ->`, upd);
+        } else {
+          batch.update(doc.ref, upd);
+          ops++;
+          if (ops % BATCH === 0) { await batch.commit(); batch = db.batch(); }
+        }
+      }
+    }
+  });
+  if (!dryRun && ops % BATCH !== 0) await batch.commit();
+  console.log(`[SUMMARY transactions user] planned=${planned} updated=${ops}`);
+}
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
   const db = initFirebase();
@@ -522,6 +572,7 @@ async function main() {
   console.log(`[START] transactions reconciliation`);
   await updateTransactionsCouponRefs(db, maps, dryRun);
   await updateTransactionsBranchRefs(db, maps, dryRun);
+  await updateTransactionsUserRefs(db, maps, dryRun);
 }
 
 main()

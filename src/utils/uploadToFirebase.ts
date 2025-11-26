@@ -11,6 +11,10 @@ export const uploadToFirebase = async (
   file: Express.Multer.File,
   pathPrefix = "home"
 ) => {
+  const [exists] = await bucket.exists();
+  if (!exists) {
+    throw new Error("STORAGE_BUCKET_NOT_FOUND");
+  }
   const fileName = `${pathPrefix}/${uuidv4()}-${file.originalname}`;
   const fileRef = bucket.file(fileName);
 

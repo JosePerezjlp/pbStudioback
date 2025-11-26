@@ -88,9 +88,8 @@ export const createClassController = async (
       (await getRoomTypeById(String(room))) ?? ClassType.INDIVIDUAL;
 
     // Normalizar info como opcional (si viene undefined, null o string vacío, no se guarda o se guarda como "")
-    const infoNormalized = info && typeof info === 'string' && info.trim() !== '' 
-      ? info.trim() 
-      : '';
+    const infoNormalized =
+      info && typeof info === "string" && info.trim() !== "" ? info.trim() : "";
 
     const classData: Record<string, unknown> = {
       day,
@@ -126,7 +125,10 @@ export const createClassController = async (
 /* ============================================================
    LIST – todas las clases
    ============================================================ */
-export const getAllClassesController = async (req: Request | AuthRequest, res: Response) => {
+export const getAllClassesController = async (
+  req: Request | AuthRequest,
+  res: Response
+) => {
   try {
     const authReq = req as AuthRequest;
     const user = authReq.user;
@@ -134,10 +136,12 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
     const pageParam = Number(req.query.page ?? 1);
     const limitParam = Number(req.query.limit ?? 20);
     const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
-    const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 20;
+    const limit =
+      Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 20;
     const cursorId = (req.query.cursor as string | undefined) || undefined;
 
-    const instructorId = (req.query.instructor as string | undefined) || undefined;
+    const instructorId =
+      (req.query.instructor as string | undefined) || undefined;
     const statusParam = (req.query.status as string | undefined) || undefined;
     const branchId = (req.query.branchId as string | undefined) || undefined;
     const roomId = (req.query.roomId as string | undefined) || undefined;
@@ -164,7 +168,8 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
 
     if (branchId) q = q.where("branch", "==", branchId);
     if (instructorId) q = q.where("instructor", "==", instructorId);
-    if (statusParam === "abierta" || statusParam === "cerrada") q = q.where("status", "==", statusParam);
+    if (statusParam === "abierta" || statusParam === "cerrada")
+      q = q.where("status", "==", statusParam);
     if (roomId) q = q.where("room", "==", roomId);
     if (hourParam) q = q.where("hour", "==", hourParam);
 
@@ -182,7 +187,12 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
       q = q.orderBy("createdAt", "desc");
     }
 
-    if (user && user.role === "employee" && Array.isArray(user.branches) && user.branches.length > 0) {
+    if (
+      user &&
+      user.role === "employee" &&
+      Array.isArray(user.branches) &&
+      user.branches.length > 0
+    ) {
       if (user.branches.length <= 10) {
         q = q.where("branch", "in", user.branches);
       }
@@ -205,10 +215,12 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
     let totalPages: number | null = null;
     try {
       const makeBase = () => {
-        let qb: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db.collection("classes");
+        let qb: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> =
+          db.collection("classes");
         if (branchId) qb = qb.where("branch", "==", branchId);
         if (instructorId) qb = qb.where("instructor", "==", instructorId);
-        if (statusParam === "abierta" || statusParam === "cerrada") qb = qb.where("status", "==", statusParam);
+        if (statusParam === "abierta" || statusParam === "cerrada")
+          qb = qb.where("status", "==", statusParam);
         if (roomId) qb = qb.where("room", "==", roomId);
         if (hourParam) qb = qb.where("hour", "==", hourParam);
         if (startDate || endDate) {
@@ -219,7 +231,12 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
         return qb;
       };
 
-      if (user && user.role === "employee" && Array.isArray(user.branches) && user.branches.length > 10) {
+      if (
+        user &&
+        user.role === "employee" &&
+        Array.isArray(user.branches) &&
+        user.branches.length > 10
+      ) {
         const branches = user.branches.filter((b) => typeof b === "string");
         if (branches.length > 0) {
           let sum = 0;
@@ -235,7 +252,12 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
         }
       } else {
         let qb = makeBase();
-        if (user && user.role === "employee" && Array.isArray(user.branches) && user.branches.length > 0) {
+        if (
+          user &&
+          user.role === "employee" &&
+          Array.isArray(user.branches) &&
+          user.branches.length > 0
+        ) {
           qb = qb.where("branch", "in", user.branches);
         }
         const agg = await qb.count().get();
@@ -244,7 +266,10 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
       totalPages = Math.max(1, Math.ceil((total ?? 0) / limit));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("FAILED_PRECONDITION") && msg.includes("requires an index")) {
+      if (
+        msg.includes("FAILED_PRECONDITION") &&
+        msg.includes("requires an index")
+      ) {
         // seguimos sin total si el índice falta; la página de datos se devolverá abajo
         total = null;
         totalPages = null;
@@ -259,7 +284,9 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("FAILED_PRECONDITION")) {
-        res.status(422).json({ error: "index_required", indexRequired: true, details: msg });
+        res
+          .status(422)
+          .json({ error: "index_required", indexRequired: true, details: msg });
         return;
       }
       throw e;
@@ -269,16 +296,40 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
     const hasMore = docs.length > limit;
     const pageDocs = hasMore ? docs.slice(0, limit) : docs;
     let pageItems = pageDocs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    if (user && user.role === "employee" && Array.isArray(user.branches) && user.branches.length > 10) {
-      pageItems = pageItems.filter((c: any) => String(c.branch || "") && user.branches!.includes(String(c.branch)));
+    if (
+      user &&
+      user.role === "employee" &&
+      Array.isArray(user.branches) &&
+      user.branches.length > 10
+    ) {
+      pageItems = pageItems.filter(
+        (c: any) =>
+          String(c.branch || "") && user.branches!.includes(String(c.branch))
+      );
     }
 
-    const roomIds = Array.from(new Set(pageItems.map((c: any) => String(c.room || "")).filter((v) => v)));
-    const instructorIds = Array.from(new Set(pageItems.map((c: any) => String(c.instructor || "")).filter((v) => v)));
-    const branchIds = Array.from(new Set(pageItems.map((c: any) => String(c.branch || "")).filter((v) => v)));
-    const disciplineIds = Array.from(new Set(pageItems.map((c: any) => String(c.discipline || "")).filter((v) => v)));
+    const roomIds = Array.from(
+      new Set(pageItems.map((c: any) => String(c.room || "")).filter((v) => v))
+    );
+    const instructorIds = Array.from(
+      new Set(
+        pageItems.map((c: any) => String(c.instructor || "")).filter((v) => v)
+      )
+    );
+    const branchIds = Array.from(
+      new Set(
+        pageItems.map((c: any) => String(c.branch || "")).filter((v) => v)
+      )
+    );
+    const disciplineIds = Array.from(
+      new Set(
+        pageItems.map((c: any) => String(c.discipline || "")).filter((v) => v)
+      )
+    );
 
-    const roomSnaps = await Promise.all(roomIds.map((id) => db.collection("classrooms").doc(id).get()));
+    const roomSnaps = await Promise.all(
+      roomIds.map((id) => db.collection("classrooms").doc(id).get())
+    );
     const roomsMap = new Map<string, string>();
     roomSnaps.forEach((s) => {
       if (s.exists) {
@@ -287,16 +338,23 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
       }
     });
 
-    const instrSnaps = await Promise.all(instructorIds.map((id) => db.collection("instructors").doc(id).get()));
+    const instrSnaps = await Promise.all(
+      instructorIds.map((id) => db.collection("instructors").doc(id).get())
+    );
     const instrMap = new Map<string, { firstName: string; lastName: string }>();
     instrSnaps.forEach((s) => {
       if (s.exists) {
         const d = s.data() as any;
-        instrMap.set(s.id, { firstName: String(d?.firstName ?? ""), lastName: String(d?.lastName ?? "") });
+        instrMap.set(s.id, {
+          firstName: String(d?.firstName ?? ""),
+          lastName: String(d?.lastName ?? ""),
+        });
       }
     });
 
-    const branchSnaps = await Promise.all(branchIds.map((id) => db.collection("branches").doc(id).get()));
+    const branchSnaps = await Promise.all(
+      branchIds.map((id) => db.collection("branches").doc(id).get())
+    );
     const branchesMap = new Map<string, string>();
     branchSnaps.forEach((s) => {
       if (s.exists) {
@@ -305,7 +363,9 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
       }
     });
 
-    const discSnaps = await Promise.all(disciplineIds.map((id) => db.collection("disciplines").doc(id).get()));
+    const discSnaps = await Promise.all(
+      disciplineIds.map((id) => db.collection("disciplines").doc(id).get())
+    );
     const disciplinesMap = new Map<string, string>();
     discSnaps.forEach((s) => {
       if (s.exists) {
@@ -333,10 +393,24 @@ export const getAllClassesController = async (req: Request | AuthRequest, res: R
       };
     });
 
-    const nextCursor = hasMore ? String(pageDocs[pageDocs.length - 1].id) : null;
-    res.status(200).json({ classes: enriched, nextCursor, hasMore, limit, page, total, totalPages });
+    const nextCursor = hasMore
+      ? String(pageDocs[pageDocs.length - 1].id)
+      : null;
+    res
+      .status(200)
+      .json({
+        classes: enriched,
+        nextCursor,
+        hasMore,
+        limit,
+        page,
+        total,
+        totalPages,
+      });
   } catch (error) {
-    res.status(500).json({ error: "Error al obtener clases", details: String(error) });
+    res
+      .status(500)
+      .json({ error: "Error al obtener clases", details: String(error) });
   }
 };
 
@@ -364,6 +438,8 @@ export const getClassByIdController = async (
     const db = admin.firestore();
     const roomId = String(data?.room || "");
     const instructorId = String(data?.instructor || "");
+    const disciplineId = String(data?.discipline || "");
+    const branchId = String(data?.branch || "");
 
     let roomName: string | null = null;
     if (roomId) {
@@ -385,12 +461,32 @@ export const getClassByIdController = async (
       }
     }
 
+    let disciplineName: string | null = null;
+    if (disciplineId) {
+      const d = await db.collection("disciplines").doc(disciplineId).get();
+      if (d.exists) {
+        const dd = d.data() as any;
+        disciplineName = String(dd?.name ?? "");
+      }
+    }
+
+    let branchName: string | null = null;
+    if (branchId) {
+      const b = await db.collection("branches").doc(branchId).get();
+      if (b.exists) {
+        const bd = b.data() as any;
+        branchName = String(bd?.name ?? "");
+      }
+    }
+
     res.status(200).json({
       id: doc.id,
       ...data,
       roomName,
       instructorFirstName,
       instructorLastName,
+      disciplineName,
+      branchName,
     });
   } catch (error) {
     res
@@ -560,8 +656,10 @@ export const getClassesStatsController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const branchIdParam = (req.query.branchId as string | undefined) || undefined;
-    const disciplineParam = (req.query.discipline as string | undefined) || undefined;
+    const branchIdParam =
+      (req.query.branchId as string | undefined) || undefined;
+    const disciplineParam =
+      (req.query.discipline as string | undefined) || undefined;
     const nowParam = (req.query.now as string | undefined) || undefined;
 
     const zone = "America/Mexico_City";
@@ -594,7 +692,7 @@ export const getClassesStatsController = async (
       const bsnap = await branchesCol.where("isPublic", "==", true).get();
       branches = bsnap.docs.map((d) => ({
         id: d.id,
-        name: String(((d.data() as any).name) || ""),
+        name: String((d.data() as any).name || ""),
       }));
     }
 
@@ -605,17 +703,30 @@ export const getClassesStatsController = async (
       disciplines = [{ id: disciplineParam }];
     } else {
       const dsnap = await discCol.get();
-      disciplines = dsnap.docs.map((d) => ({ id: d.id, name: (d.data() as any)?.name }));
+      disciplines = dsnap.docs.map((d) => ({
+        id: d.id,
+        name: (d.data() as any)?.name,
+      }));
     }
 
     const results: Array<{
       branchId: string;
       branchName: string;
-      stats: Array<{ discipline: string; month: number; week: number; day: number }>;
+      stats: Array<{
+        discipline: string;
+        month: number;
+        week: number;
+        day: number;
+      }>;
     }> = [];
 
     for (const branch of branches) {
-      const stats: Array<{ discipline: string; month: number; week: number; day: number }> = [];
+      const stats: Array<{
+        discipline: string;
+        month: number;
+        week: number;
+        day: number;
+      }> = [];
       for (const d of disciplines) {
         try {
           const monthAgg = await classesCol
@@ -638,10 +749,18 @@ export const getClassesStatsController = async (
             .where("day", "==", todayStr)
             .count()
             .get();
-          stats.push({ discipline: d.id, month: monthAgg.data().count, week: weekAgg.data().count, day: dayAgg.data().count });
+          stats.push({
+            discipline: d.id,
+            month: monthAgg.data().count,
+            week: weekAgg.data().count,
+            day: dayAgg.data().count,
+          });
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          if (msg.includes("FAILED_PRECONDITION") && msg.includes("requires an index")) {
+          if (
+            msg.includes("FAILED_PRECONDITION") &&
+            msg.includes("requires an index")
+          ) {
             stats.push({ discipline: d.id, month: 0, week: 0, day: 0 });
             continue;
           }

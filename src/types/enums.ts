@@ -23,8 +23,9 @@ export enum StatusTypeEnum {
 }
 
 export enum RolTypeEnum {
-  EMPLOYEE = "employee",
   ADMIN = "admin",
+  COLLABORATOR = "collaborator",
+  INSTRUCTOR = "instructor",
 }
 
 export enum ClassType {

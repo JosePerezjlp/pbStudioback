@@ -17,7 +17,7 @@ interface StaffUser {
   updatedAt?: string;
 }
 
-const staffCollection = admin.firestore().collection("users");
+const staffCollection = admin.firestore().collection("staff");
 
 export const checkStaffEmailExists = async (
   req: Request,
@@ -75,6 +75,8 @@ export const createStaffUser = async (
       branches: string[];
       permissions: Record<string, string[]>;
       status: StatusTypeEnum;
+      firstName?: string;
+      lastName?: string;
     } = req.body;
 
     // Validar email
@@ -94,9 +96,14 @@ export const createStaffUser = async (
     }
 
     // Validar role
-    if (!role || (role !== RolTypeEnum.ADMIN && role !== RolTypeEnum.EMPLOYEE)) {
+    if (
+      !role ||
+      (role !== RolTypeEnum.ADMIN &&
+        role !== RolTypeEnum.COLLABORATOR &&
+        role !== RolTypeEnum.INSTRUCTOR)
+    ) {
       res.status(400).json({
-        error: "Role inválido. Debe ser 'admin' o 'employee'",
+        error: "Role inválido. Debe ser 'admin', 'collaborator' o 'instructor'",
       });
       return;
     }
@@ -177,31 +184,71 @@ export const createStaffUser = async (
       return;
     }
 
-    // 🔐 Intentamos crear usuario en Firebase Auth
-    const userRecord = await admin.auth().createUser({
-      email,
-      password,
-      emailVerified: true,
-    });
+    // 🔐 Crear o reutilizar usuario en Firebase Auth por email
+    let uid: string;
+    try {
+      const existingAuth = await admin.auth().getUserByEmail(email);
+      uid = existingAuth.uid;
+      await admin.auth().updateUser(uid, { password, emailVerified: true });
+    } catch (err: unknown) {
+      const code = typeof err === "object" && err !== null && "errorInfo" in err
+        ? (err as { errorInfo?: { code?: string } }).errorInfo?.code
+        : undefined;
+      if (code === "auth/user-not-found") {
+        const created = await admin.auth().createUser({
+          email,
+          password,
+          emailVerified: true,
+        });
+        uid = created.uid;
+      } else {
+        throw err;
+      }
+    }
+
+    // 🧹 Asegurar que no exista documento en "users" para este UID
+    try {
+      const usersRef = admin.firestore().collection("users").doc(uid);
+      const usersSnap = await usersRef.get();
+      if (usersSnap.exists) await usersRef.delete();
+    } catch (_) {
+      // ignore
+    }
 
     // 📝 Guardamos en Firestore
-    await staffCollection.doc(userRecord.uid).set({
+    await staffCollection.doc(uid).set({
       email,
       role,
-      branches, // Array de sucursales
-      permissions, // Objeto con módulos y acciones
+      branches,
+      permissions,
       status,
-      firstName: "Staff",
-      lastName: "Fake",
+      firstName: "",
+      lastName:  "",
       phone: "0000000000",
-      branch: branches[0] ?? "", // Fallback para compatibilidad
+      branch: branches[0] ?? "",
       createdAt: new Date().toISOString(),
-      isAdmin: role === RolTypeEnum.ADMIN, // Solo true si es admin
+      isAdmin: role === RolTypeEnum.ADMIN,
     });
+
+    if (role === RolTypeEnum.INSTRUCTOR) {
+      await admin
+        .firestore()
+        .collection("instructors")
+        .doc(uid)
+        .set({
+          firstName: "",
+          email,
+          lastName: "",
+          branchId: "",
+          disciplines: [],
+          createdAt: new Date().toISOString(),
+          staffId: uid,
+        });
+    }
 
     res.status(201).json({
       message: "Staff creado correctamente",
-      uid: userRecord.uid,
+      uid,
     });
   } catch (error: unknown) {
     console.error("Error al crear staff:", error);
@@ -235,10 +282,7 @@ export const getAllStaffUsers = async (
   res: Response
 ): Promise<void> => {
   try {
-    const snapshot = await admin
-      .firestore()
-      .collection("users")
-      .get();
+    const snapshot = await staffCollection.get();
 
     // Correos de superusuarios que nunca deben mostrarse
     const superUsers = [
@@ -258,7 +302,12 @@ export const getAllStaffUsers = async (
         const email = (user.email ?? "").toLowerCase();
         const role = String(user.role ?? "").toLowerCase();
         if (superUsers.includes(email)) return false;
-        return role === RolTypeEnum.ADMIN || role === RolTypeEnum.EMPLOYEE;
+        return (
+          role === RolTypeEnum.ADMIN ||
+          role === RolTypeEnum.COLLABORATOR ||
+          role === RolTypeEnum.INSTRUCTOR ||
+          role === "employee"
+        );
       });
 
     res.status(200).json({ staff: staffList });
@@ -289,8 +338,8 @@ export const getStaffUserById = async (
 
     if (
       !data ||
-      ![RolTypeEnum.ADMIN, RolTypeEnum.EMPLOYEE].includes(
-        data.role?.toLowerCase()
+      ![RolTypeEnum.ADMIN, RolTypeEnum.COLLABORATOR, RolTypeEnum.INSTRUCTOR, "employee"].includes(
+        String(data.role ?? "").toLowerCase() as RolTypeEnum | "employee"
       )
     ) {
       res.status(404).json({ error: "Usuario no encontrado como staff" });
@@ -366,14 +415,17 @@ export const updateStaffUser = async (
     }
 
     if ("role" in updateData) {
-      const role = updateData.role;
-      if (role !== RolTypeEnum.ADMIN && role !== RolTypeEnum.EMPLOYEE) {
+      const role = updateData.role as RolTypeEnum;
+      if (
+        role !== RolTypeEnum.ADMIN &&
+        role !== RolTypeEnum.COLLABORATOR &&
+        role !== RolTypeEnum.INSTRUCTOR
+      ) {
         res.status(400).json({
-          error: "Role inválido. Debe ser 'admin' o 'employee'",
+          error: "Role inválido. Debe ser 'admin', 'collaborator' o 'instructor'",
         });
         return;
       }
-      // Actualizar isAdmin según el role
       changes.isAdmin = role === RolTypeEnum.ADMIN;
     }
 
@@ -538,11 +590,7 @@ export const changeStaffPassword = async (
     await admin.auth().updateUser(id, { password: newPassword });
     await admin.auth().revokeRefreshTokens(id);
 
-    await admin
-      .firestore()
-      .collection("users")
-      .doc(id)
-      .set({ updatedAt: new Date().toISOString() }, { merge: true });
+    await staffCollection.doc(id).set({ updatedAt: new Date().toISOString() }, { merge: true });
 
     res
       .status(200)
