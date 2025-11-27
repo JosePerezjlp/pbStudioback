@@ -30,7 +30,8 @@ function initFirebase() {
   }
   if (!admin.apps.length) {
     const projectId = serviceAccount.project_id || serviceAccount.projectId;
-    const bucketName = process.env.FIREBASE_STORAGE_BUCKET || `${projectId}.appspot.com`;
+    const bucketName =
+      process.env.FIREBASE_STORAGE_BUCKET || `${projectId}.appspot.com`;
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
       projectId,
@@ -39,7 +40,9 @@ function initFirebase() {
     });
   }
   const db = admin.firestore();
-  try { db.settings({ ignoreUndefinedProperties: true }); } catch (_) {}
+  try {
+    db.settings({ ignoreUndefinedProperties: true });
+  } catch (_) {}
   return db;
 }
 
@@ -86,16 +89,23 @@ async function updateInstructorsDisciplines(db, maps, dryRun) {
     const arr = Array.isArray(data.disciplines) ? data.disciplines : [];
     const legacyArr = arr.map((x) => toStringId(x));
     const mapped = legacyArr.map((x) => mapId(discMap, x)).filter((x) => !!x);
-    const shouldUpdate = mapped.length && JSON.stringify(mapped) !== JSON.stringify(arr);
+    const shouldUpdate =
+      mapped.length && JSON.stringify(mapped) !== JSON.stringify(arr);
     if (shouldUpdate) {
       planned++;
-      const updateData = { disciplines: mapped, legacyDisciplineIds: legacyArr };
+      const updateData = {
+        disciplines: mapped,
+        legacyDisciplineIds: legacyArr,
+      };
       if (dryRun) {
         console.log(`[DRY-RUN instructors] ${doc.id} ->`, updateData);
       } else {
         batch.update(doc.ref, updateData);
         ops++;
-        if (ops % BATCH === 0) { batch.commit(); batch = db.batch(); }
+        if (ops % BATCH === 0) {
+          batch.commit();
+          batch = db.batch();
+        }
       }
     }
   });
@@ -115,14 +125,32 @@ async function updateClassroomsRefs(db, maps, dryRun) {
   snap.forEach((doc) => {
     const data = doc.data() || {};
     const upd = {};
-    const branchCandidates = [data.branch, data.branch_id, data.branch_office_id];
+    const branchCandidates = [
+      data.branch,
+      data.branch_id,
+      data.branch_office_id,
+    ];
     const discCandidates = [data.discipline, data.discipline_id];
     let newBranch = null;
     let newDisc = null;
-    for (const v of branchCandidates) { const id = mapId(branchMap, v); if (id) { newBranch = id; break; } }
-    for (const v of discCandidates) { const id = mapId(discMap, v); if (id) { newDisc = id; break; } }
-    if (newBranch && toStringId(data.branch) !== newBranch) upd.branch = newBranch;
-    if (newDisc && toStringId(data.discipline) !== newDisc) upd.discipline = newDisc;
+    for (const v of branchCandidates) {
+      const id = mapId(branchMap, v);
+      if (id) {
+        newBranch = id;
+        break;
+      }
+    }
+    for (const v of discCandidates) {
+      const id = mapId(discMap, v);
+      if (id) {
+        newDisc = id;
+        break;
+      }
+    }
+    if (newBranch && toStringId(data.branch) !== newBranch)
+      upd.branch = newBranch;
+    if (newDisc && toStringId(data.discipline) !== newDisc)
+      upd.discipline = newDisc;
     if (Object.keys(upd).length) {
       planned++;
       if (dryRun) {
@@ -130,7 +158,10 @@ async function updateClassroomsRefs(db, maps, dryRun) {
       } else {
         batch.update(doc.ref, upd);
         ops++;
-        if (ops % BATCH === 0) { batch.commit(); batch = db.batch(); }
+        if (ops % BATCH === 0) {
+          batch.commit();
+          batch = db.batch();
+        }
       }
     }
   });
@@ -150,12 +181,29 @@ async function updateStaffRefs(db, maps, dryRun) {
     const data = doc.data() || {};
     const upd = {};
     const branches = Array.isArray(data.branches) ? data.branches : [];
-    const mappedBranches = branches.map((b) => mapId(branchMap, b)).filter((x) => !!x);
-    if (mappedBranches.length && JSON.stringify(mappedBranches) !== JSON.stringify(branches)) upd.branches = mappedBranches;
-    const branchCandidates = [data.branch, data.branch_id, data.branch_office_id];
+    const mappedBranches = branches
+      .map((b) => mapId(branchMap, b))
+      .filter((x) => !!x);
+    if (
+      mappedBranches.length &&
+      JSON.stringify(mappedBranches) !== JSON.stringify(branches)
+    )
+      upd.branches = mappedBranches;
+    const branchCandidates = [
+      data.branch,
+      data.branch_id,
+      data.branch_office_id,
+    ];
     let newBranch = null;
-    for (const v of branchCandidates) { const id = mapId(branchMap, v); if (id) { newBranch = id; break; } }
-    if (newBranch && toStringId(data.branch) !== newBranch) upd.branch = newBranch;
+    for (const v of branchCandidates) {
+      const id = mapId(branchMap, v);
+      if (id) {
+        newBranch = id;
+        break;
+      }
+    }
+    if (newBranch && toStringId(data.branch) !== newBranch)
+      upd.branch = newBranch;
     if (Object.keys(upd).length) {
       planned++;
       if (dryRun) {
@@ -163,12 +211,93 @@ async function updateStaffRefs(db, maps, dryRun) {
       } else {
         batch.update(doc.ref, upd);
         ops++;
-        if (ops % BATCH === 0) { batch.commit(); batch = db.batch(); }
+        if (ops % BATCH === 0) {
+          batch.commit();
+          batch = db.batch();
+        }
       }
     }
   });
   if (!dryRun && ops % BATCH !== 0) await batch.commit();
   console.log(`[SUMMARY staff] planned=${planned} updated=${ops}`);
+}
+
+async function updateInstructorsStaffViaEmail(db, dryRun) {
+  const staffSnap = await db.collection("staff").get();
+  let staffEmails = 0;
+  const emailToStaff = new Map();
+  staffSnap.forEach((d) => {
+    const email = String(d.data()?.email ?? "")
+      .toLowerCase()
+      .trim();
+    if (email) {
+      emailToStaff.set(email, d);
+      staffEmails += 1;
+    }
+  });
+
+  const instrSnap = await db.collection("instructors").get();
+  let instructorEmails = 0;
+  const BATCH = 500;
+  let batch = db.batch();
+  let ops = 0;
+  let matched = 0;
+  let updatedInstructors = 0;
+  let updatedStaff = 0;
+
+  instrSnap.forEach((d) => {
+    const data = d.data() || {};
+    const email = String(data.email ?? "")
+      .toLowerCase()
+      .trim();
+    if (!email) return;
+    instructorEmails += 1;
+    const s = emailToStaff.get(email);
+    if (!s) return;
+    matched += 1;
+    const staffId = s.id;
+
+    if (String(data.staffId ?? "") !== staffId) {
+      const upd = { staffId };
+      if (dryRun) {
+        console.log(`[DRY-RUN instructors-staff] ${d.id} ->`, upd);
+      } else {
+        batch.update(d.ref, upd);
+        ops++;
+        updatedInstructors++;
+        if (ops % BATCH === 0) {
+          batch.commit();
+          batch = db.batch();
+        }
+      }
+    }
+
+    const sData = s.data() || {};
+    const role = String(sData.role ?? "");
+    if (role !== "instructor") {
+      const supd = {
+        role: "instructor",
+        isAdmin: false,
+        updatedAt: new Date().toISOString(),
+      };
+      if (dryRun) {
+        console.log(`[DRY-RUN staff-role] ${s.id} ->`, supd);
+      } else {
+        batch.update(s.ref, supd);
+        ops++;
+        updatedStaff++;
+        if (ops % BATCH === 0) {
+          batch.commit();
+          batch = db.batch();
+        }
+      }
+    }
+  });
+
+  if (!dryRun && ops % BATCH !== 0) await batch.commit();
+  console.log(
+    `[SUMMARY instructors-staff] staffEmails=${staffEmails} instructorEmails=${instructorEmails} matched=${matched} updatedInstructors=${updatedInstructors} updatedStaff=${updatedStaff}`
+  );
 }
 
 async function updateUsersRefs(db, maps, dryRun) {
@@ -189,8 +318,15 @@ async function updateUsersRefs(db, maps, dryRun) {
       data.branchLegacy,
     ];
     let newBranch = null;
-    for (const v of branchCandidates) { const id = mapId(branchMap, v); if (id) { newBranch = id; break; } }
-    if (newBranch && toStringId(data.branch) !== newBranch) upd.branch = newBranch;
+    for (const v of branchCandidates) {
+      const id = mapId(branchMap, v);
+      if (id) {
+        newBranch = id;
+        break;
+      }
+    }
+    if (newBranch && toStringId(data.branch) !== newBranch)
+      upd.branch = newBranch;
     if (Object.keys(upd).length) {
       planned++;
       if (dryRun) {
@@ -198,7 +334,10 @@ async function updateUsersRefs(db, maps, dryRun) {
       } else {
         batch.update(doc.ref, upd);
         ops++;
-        if (ops % BATCH === 0) { batch.commit(); batch = db.batch(); }
+        if (ops % BATCH === 0) {
+          batch.commit();
+          batch = db.batch();
+        }
       }
     }
   });
@@ -217,10 +356,21 @@ async function updatePackagesRefs(db, maps, dryRun) {
   snap.forEach((doc) => {
     const data = doc.data() || {};
     const upd = {};
-    const branchCandidates = [data.branch, data.branch_id, data.branch_office_id];
+    const branchCandidates = [
+      data.branch,
+      data.branch_id,
+      data.branch_office_id,
+    ];
     let newBranch = null;
-    for (const v of branchCandidates) { const id = mapId(branchMap, v); if (id) { newBranch = id; break; } }
-    if (newBranch && toStringId(data.branch) !== newBranch) upd.branch = newBranch;
+    for (const v of branchCandidates) {
+      const id = mapId(branchMap, v);
+      if (id) {
+        newBranch = id;
+        break;
+      }
+    }
+    if (newBranch && toStringId(data.branch) !== newBranch)
+      upd.branch = newBranch;
     if (Object.keys(upd).length) {
       planned++;
       if (dryRun) {
@@ -228,7 +378,10 @@ async function updatePackagesRefs(db, maps, dryRun) {
       } else {
         batch.update(doc.ref, upd);
         ops++;
-        if (ops % BATCH === 0) { batch.commit(); batch = db.batch(); }
+        if (ops % BATCH === 0) {
+          batch.commit();
+          batch = db.batch();
+        }
       }
     }
   });
@@ -249,7 +402,8 @@ async function updateCouponsPackageIds(db, maps, dryRun) {
     const arr = Array.isArray(data.packageIds) ? data.packageIds : [];
     const legacyArr = arr.map((x) => toStringId(x));
     const mapped = legacyArr.map((x) => mapId(pkgMap, x)).filter((x) => !!x);
-    const shouldUpdate = mapped.length && JSON.stringify(mapped) !== JSON.stringify(arr);
+    const shouldUpdate =
+      mapped.length && JSON.stringify(mapped) !== JSON.stringify(arr);
     if (shouldUpdate) {
       planned++;
       const updateData = { packageIds: mapped };
@@ -258,7 +412,10 @@ async function updateCouponsPackageIds(db, maps, dryRun) {
       } else {
         batch.update(doc.ref, updateData);
         ops++;
-        if (ops % BATCH === 0) { batch.commit(); batch = db.batch(); }
+        if (ops % BATCH === 0) {
+          batch.commit();
+          batch = db.batch();
+        }
       }
     }
   });
@@ -294,25 +451,64 @@ async function updateClassesRefs(db, maps, dryRun) {
       const data = doc.data() || {};
       const upd = {};
       // Branch mapping
-      const branchCandidates = [data.branch, data.branch_id, data.branch_office_id];
+      const branchCandidates = [
+        data.branch,
+        data.branch_id,
+        data.branch_office_id,
+      ];
       let newBranch = null;
-      for (const v of branchCandidates) { const id = mapId(branchMap, v); if (id) { newBranch = id; break; } }
-      if (newBranch && toStringId(data.branch) !== newBranch) upd.branch = newBranch;
+      for (const v of branchCandidates) {
+        const id = mapId(branchMap, v);
+        if (id) {
+          newBranch = id;
+          break;
+        }
+      }
+      if (newBranch && toStringId(data.branch) !== newBranch)
+        upd.branch = newBranch;
       // Room mapping
-      const roomCandidates = [data.room, data.exercise_room_id, data.classroom_id];
+      const roomCandidates = [
+        data.room,
+        data.exercise_room_id,
+        data.classroom_id,
+      ];
       let newRoom = null;
-      for (const v of roomCandidates) { const id = mapId(roomMap, v); if (id) { newRoom = id; break; } }
+      for (const v of roomCandidates) {
+        const id = mapId(roomMap, v);
+        if (id) {
+          newRoom = id;
+          break;
+        }
+      }
       if (newRoom && toStringId(data.room) !== newRoom) upd.room = newRoom;
       // Discipline mapping
       const discCandidates = [data.discipline, data.discipline_id];
       let newDisc = null;
-      for (const v of discCandidates) { const id = mapId(discMap, v); if (id) { newDisc = id; break; } }
-      if (newDisc && toStringId(data.discipline) !== newDisc) upd.discipline = newDisc;
+      for (const v of discCandidates) {
+        const id = mapId(discMap, v);
+        if (id) {
+          newDisc = id;
+          break;
+        }
+      }
+      if (newDisc && toStringId(data.discipline) !== newDisc)
+        upd.discipline = newDisc;
       // Instructor mapping
-      const instrCandidates = [data.instructor, data.instructor_id, data.staff_id];
+      const instrCandidates = [
+        data.instructor,
+        data.instructor_id,
+        data.staff_id,
+      ];
       let newInstr = null;
-      for (const v of instrCandidates) { const id = mapId(instrMap, v); if (id) { newInstr = id; break; } }
-      if (newInstr && toStringId(data.instructor) !== newInstr) upd.instructor = newInstr;
+      for (const v of instrCandidates) {
+        const id = mapId(instrMap, v);
+        if (id) {
+          newInstr = id;
+          break;
+        }
+      }
+      if (newInstr && toStringId(data.instructor) !== newInstr)
+        upd.instructor = newInstr;
       if (Object.keys(upd).length) {
         planned++;
         if (dryRun) {
@@ -320,7 +516,10 @@ async function updateClassesRefs(db, maps, dryRun) {
         } else {
           batch.update(doc.ref, upd);
           ops++;
-          if (ops % BATCH === 0) { await batch.commit(); batch = db.batch(); }
+          if (ops % BATCH === 0) {
+            await batch.commit();
+            batch = db.batch();
+          }
         }
       }
     }
@@ -343,16 +542,38 @@ async function updateReservationsRefs(db, maps, dryRun) {
       const upd = {};
       const userCandidates = [data.userId, data.user_id];
       let newUserId = null;
-      for (const v of userCandidates) { const id = mapId(userMap, v); if (id) { newUserId = id; break; } }
-      if (newUserId && toStringId(data.userId) !== newUserId) upd.userId = newUserId;
-      if (data.user_id != null && upd.userId && toStringId(data.user_id) !== upd.userId) {
+      for (const v of userCandidates) {
+        const id = mapId(userMap, v);
+        if (id) {
+          newUserId = id;
+          break;
+        }
+      }
+      if (newUserId && toStringId(data.userId) !== newUserId)
+        upd.userId = newUserId;
+      if (
+        data.user_id != null &&
+        upd.userId &&
+        toStringId(data.user_id) !== upd.userId
+      ) {
         upd.legacyUserId = toStringId(data.user_id);
       }
       const classCandidates = [data.classId, data.session_id];
       let newClassId = null;
-      for (const v of classCandidates) { const id = mapId(classMap, v); if (id) { newClassId = id; break; } }
-      if (newClassId && toStringId(data.classId) !== newClassId) upd.classId = newClassId;
-      if (data.session_id != null && upd.classId && toStringId(data.session_id) !== upd.classId) {
+      for (const v of classCandidates) {
+        const id = mapId(classMap, v);
+        if (id) {
+          newClassId = id;
+          break;
+        }
+      }
+      if (newClassId && toStringId(data.classId) !== newClassId)
+        upd.classId = newClassId;
+      if (
+        data.session_id != null &&
+        upd.classId &&
+        toStringId(data.session_id) !== upd.classId
+      ) {
         upd.legacySessionId = toStringId(data.session_id);
       }
       const seatCandidates = [data.seat, data.place_number];
@@ -360,14 +581,18 @@ async function updateReservationsRefs(db, maps, dryRun) {
       for (const v of seatCandidates) {
         if (v === null || v === undefined) continue;
         const n = typeof v === "number" ? v : parseInt(String(v), 10);
-        if (!Number.isNaN(n) && n > 0) { normalizedSeat = n; break; }
+        if (!Number.isNaN(n) && n > 0) {
+          normalizedSeat = n;
+          break;
+        }
       }
       if (normalizedSeat !== null && data.seat !== normalizedSeat) {
         upd.seat = normalizedSeat;
       }
       if (data.packageId) {
         const newPkgId = mapId(pkgMap, data.packageId);
-        if (newPkgId && toStringId(data.packageId) !== newPkgId) upd.packageId = newPkgId;
+        if (newPkgId && toStringId(data.packageId) !== newPkgId)
+          upd.packageId = newPkgId;
       }
       if (Object.keys(upd).length) {
         planned++;
@@ -376,7 +601,10 @@ async function updateReservationsRefs(db, maps, dryRun) {
         } else {
           batch.update(doc.ref, upd);
           ops++;
-          if (ops % BATCH === 0) { await batch.commit(); batch = db.batch(); }
+          if (ops % BATCH === 0) {
+            await batch.commit();
+            batch = db.batch();
+          }
         }
       }
     }
@@ -415,7 +643,8 @@ async function updateTransactionsCouponRefs(db, maps, dryRun) {
       }
       if (targetCouponId && toStringId(data.couponId) !== targetCouponId) {
         upd.couponId = targetCouponId;
-        if (data.couponId != null) upd.legacyCouponId = toStringId(data.couponId);
+        if (data.couponId != null)
+          upd.legacyCouponId = toStringId(data.couponId);
       }
       if (Object.keys(upd).length) {
         planned++;
@@ -424,7 +653,10 @@ async function updateTransactionsCouponRefs(db, maps, dryRun) {
         } else {
           batch.update(doc.ref, upd);
           ops++;
-          if (ops % BATCH === 0) { await batch.commit(); batch = db.batch(); }
+          if (ops % BATCH === 0) {
+            await batch.commit();
+            batch = db.batch();
+          }
         }
       }
     }
@@ -467,7 +699,8 @@ async function updateTransactionsBranchRefs(db, maps, dryRun) {
       }
       if (targetBranchId && toStringId(data.branchId) !== targetBranchId) {
         upd.branchId = targetBranchId;
-        if (data.branchId != null) upd.legacyBranchId = toStringId(data.branchId);
+        if (data.branchId != null)
+          upd.legacyBranchId = toStringId(data.branchId);
       }
       if (Object.keys(upd).length) {
         planned++;
@@ -476,13 +709,18 @@ async function updateTransactionsBranchRefs(db, maps, dryRun) {
         } else {
           batch.update(doc.ref, upd);
           ops++;
-          if (ops % BATCH === 0) { await batch.commit(); batch = db.batch(); }
+          if (ops % BATCH === 0) {
+            await batch.commit();
+            batch = db.batch();
+          }
         }
       }
     }
   });
   if (!dryRun && ops % BATCH !== 0) await batch.commit();
-  console.log(`[SUMMARY transactions branch] planned=${planned} updated=${ops}`);
+  console.log(
+    `[SUMMARY transactions branch] planned=${planned} updated=${ops}`
+  );
 }
 async function updateTransactionsUserRefs(db, maps, dryRun) {
   const userMap = maps.users;
@@ -526,7 +764,10 @@ async function updateTransactionsUserRefs(db, maps, dryRun) {
         } else {
           batch.update(doc.ref, upd);
           ops++;
-          if (ops % BATCH === 0) { await batch.commit(); batch = db.batch(); }
+          if (ops % BATCH === 0) {
+            await batch.commit();
+            batch = db.batch();
+          }
         }
       }
     }
@@ -536,7 +777,12 @@ async function updateTransactionsUserRefs(db, maps, dryRun) {
 }
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
+  const onlyInstrStaff = process.argv.includes("--only-instructors-staff");
   const db = initFirebase();
+  if (onlyInstrStaff) {
+    await updateInstructorsStaffViaEmail(db, dryRun);
+    return;
+  }
   const exclude = new Set();
   const maps = {};
   const baseCollections = [
@@ -554,7 +800,9 @@ async function main() {
     if (exclude.has(c)) continue;
     try {
       maps[c] = await buildLegacyMap(db, c);
-      console.log(`[MAP ${c}] legacy entries=${maps[c].byLegacy.size} totalDocs=${maps[c].byDocId.size}`);
+      console.log(
+        `[MAP ${c}] legacy entries=${maps[c].byLegacy.size} totalDocs=${maps[c].byDocId.size}`
+      );
     } catch (e) {
       console.warn(`No se pudo construir mapa para ${c}:`, String(e));
     }
@@ -562,6 +810,7 @@ async function main() {
   await updateInstructorsDisciplines(db, maps, dryRun);
   await updateClassroomsRefs(db, maps, dryRun);
   await updateStaffRefs(db, maps, dryRun);
+  await updateInstructorsStaffViaEmail(db, dryRun);
   await updateUsersRefs(db, maps, dryRun);
   await updatePackagesRefs(db, maps, dryRun);
   await updateCouponsPackageIds(db, maps, dryRun);
@@ -577,4 +826,7 @@ async function main() {
 
 main()
   .then(() => process.exit(0))
-  .catch((e) => { console.error(e); process.exit(1); });
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });

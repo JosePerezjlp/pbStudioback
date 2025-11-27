@@ -121,8 +121,10 @@ export const createStaffUser = async (
     const branchesSnapshots = await Promise.all(
       branches.map((branchId) => branchesCollection.doc(branchId).get())
     );
-    
-    const invalidBranches = branches.filter((_, index) => !branchesSnapshots[index].exists);
+
+    const invalidBranches = branches.filter(
+      (_, index) => !branchesSnapshots[index].exists
+    );
     if (invalidBranches.length > 0) {
       res.status(400).json({
         error: `Las siguientes sucursales no existen: ${invalidBranches.join(", ")}`,
@@ -131,7 +133,11 @@ export const createStaffUser = async (
     }
 
     // Validar permissions
-    if (!permissions || typeof permissions !== "object" || Array.isArray(permissions)) {
+    if (
+      !permissions ||
+      typeof permissions !== "object" ||
+      Array.isArray(permissions)
+    ) {
       res.status(400).json({
         error: "Permissions debe ser un objeto",
       });
@@ -163,7 +169,10 @@ export const createStaffUser = async (
     }
 
     // Validar status
-    if (!status || (status !== StatusTypeEnum.ACTIVE && status !== StatusTypeEnum.INACTIVE)) {
+    if (
+      !status ||
+      (status !== StatusTypeEnum.ACTIVE && status !== StatusTypeEnum.INACTIVE)
+    ) {
       res.status(400).json({
         error: "Status inválido. Debe ser 'Activo' o 'Inactivo'",
       });
@@ -191,9 +200,10 @@ export const createStaffUser = async (
       uid = existingAuth.uid;
       await admin.auth().updateUser(uid, { password, emailVerified: true });
     } catch (err: unknown) {
-      const code = typeof err === "object" && err !== null && "errorInfo" in err
-        ? (err as { errorInfo?: { code?: string } }).errorInfo?.code
-        : undefined;
+      const code =
+        typeof err === "object" && err !== null && "errorInfo" in err
+          ? (err as { errorInfo?: { code?: string } }).errorInfo?.code
+          : undefined;
       if (code === "auth/user-not-found") {
         const created = await admin.auth().createUser({
           email,
@@ -223,7 +233,7 @@ export const createStaffUser = async (
       permissions,
       status,
       firstName: "",
-      lastName:  "",
+      lastName: "",
       phone: "0000000000",
       branch: branches[0] ?? "",
       createdAt: new Date().toISOString(),
@@ -231,19 +241,15 @@ export const createStaffUser = async (
     });
 
     if (role === RolTypeEnum.INSTRUCTOR) {
-      await admin
-        .firestore()
-        .collection("instructors")
-        .doc(uid)
-        .set({
-          firstName: "",
-          email,
-          lastName: "",
-          branchId: "",
-          disciplines: [],
-          createdAt: new Date().toISOString(),
-          staffId: uid,
-        });
+      await admin.firestore().collection("instructors").doc(uid).set({
+        firstName: "",
+        email,
+        lastName: "",
+        branchId: "",
+        disciplines: [],
+        createdAt: new Date().toISOString(),
+        staffId: uid,
+      });
     }
 
     res.status(201).json({
@@ -338,7 +344,12 @@ export const getStaffUserById = async (
 
     if (
       !data ||
-      ![RolTypeEnum.ADMIN, RolTypeEnum.COLLABORATOR, RolTypeEnum.INSTRUCTOR, "employee"].includes(
+      ![
+        RolTypeEnum.ADMIN,
+        RolTypeEnum.COLLABORATOR,
+        RolTypeEnum.INSTRUCTOR,
+        "employee",
+      ].includes(
         String(data.role ?? "").toLowerCase() as RolTypeEnum | "employee"
       )
     ) {
@@ -348,9 +359,12 @@ export const getStaffUserById = async (
 
     // Asegurar que branches y permissions estén en la respuesta
     const branches = Array.isArray(data.branches) ? data.branches : [];
-    const permissions = (data.permissions && typeof data.permissions === "object" && !Array.isArray(data.permissions))
-      ? data.permissions
-      : {};
+    const permissions =
+      data.permissions &&
+      typeof data.permissions === "object" &&
+      !Array.isArray(data.permissions)
+        ? data.permissions
+        : {};
 
     res.status(200).json({
       id: doc.id,
@@ -422,7 +436,8 @@ export const updateStaffUser = async (
         role !== RolTypeEnum.INSTRUCTOR
       ) {
         res.status(400).json({
-          error: "Role inválido. Debe ser 'admin', 'collaborator' o 'instructor'",
+          error:
+            "Role inválido. Debe ser 'admin', 'collaborator' o 'instructor'",
         });
         return;
       }
@@ -445,12 +460,14 @@ export const updateStaffUser = async (
           return branchesCollection.doc(branchId).get();
         })
       );
-      
-      const invalidBranches = branches.filter((branchId: unknown, index: number) => {
-        if (typeof branchId !== "string") return true;
-        return !branchesSnapshots[index]?.exists;
-      });
-      
+
+      const invalidBranches = branches.filter(
+        (branchId: unknown, index: number) => {
+          if (typeof branchId !== "string") return true;
+          return !branchesSnapshots[index]?.exists;
+        }
+      );
+
       if (invalidBranches.length > 0) {
         res.status(400).json({
           error: `Las siguientes sucursales no existen: ${invalidBranches.join(", ")}`,
@@ -463,7 +480,11 @@ export const updateStaffUser = async (
 
     if ("permissions" in updateData) {
       const permissions = updateData.permissions;
-      if (!permissions || typeof permissions !== "object" || Array.isArray(permissions)) {
+      if (
+        !permissions ||
+        typeof permissions !== "object" ||
+        Array.isArray(permissions)
+      ) {
         res.status(400).json({
           error: "Permissions debe ser un objeto",
         });
@@ -494,7 +515,10 @@ export const updateStaffUser = async (
 
     if ("status" in updateData) {
       const status = updateData.status;
-      if (status !== StatusTypeEnum.ACTIVE && status !== StatusTypeEnum.INACTIVE) {
+      if (
+        status !== StatusTypeEnum.ACTIVE &&
+        status !== StatusTypeEnum.INACTIVE
+      ) {
         res.status(400).json({
           error: "Status inválido. Debe ser 'Activo' o 'Inactivo'",
         });
@@ -587,11 +611,68 @@ export const changeStaffPassword = async (
       return;
     }
 
-    await admin.auth().updateUser(id, { password: newPassword });
-    await admin.auth().revokeRefreshTokens(id);
+    const staffDoc = await staffCollection.doc(id).get();
+    if (!staffDoc.exists) {
+      res.status(404).json({ error: "Usuario no encontrado" });
+      return;
+    }
+    const staffData = staffDoc.data() as { email?: string };
+    const email = String(staffData?.email || "").trim();
+    if (!email || !email.includes("@")) {
+      res.status(400).json({ error: "Email inválido en staff" });
+      return;
+    }
 
-    await staffCollection.doc(id).set({ updatedAt: new Date().toISOString() }, { merge: true });
+    try {
+      await admin.auth().updateUser(id, { password: newPassword });
+      await admin.auth().revokeRefreshTokens(id);
+    } catch (e: unknown) {
+      const code =
+        typeof e === "object" && e !== null && "errorInfo" in e
+          ? (e as { errorInfo?: { code?: string } }).errorInfo?.code
+          : undefined;
+      if (code === "auth/user-not-found") {
+        try {
+          await admin
+            .auth()
+            .createUser({
+              uid: id,
+              email,
+              password: newPassword,
+              emailVerified: true,
+            });
+          await admin.auth().revokeRefreshTokens(id);
+        } catch (ce: unknown) {
+          const ccode =
+            typeof ce === "object" && ce !== null && "errorInfo" in ce
+              ? (ce as { errorInfo?: { code?: string } }).errorInfo?.code
+              : undefined;
+          if (ccode === "auth/email-already-exists") {
+            const existing = await admin.auth().getUserByEmail(email);
+            const targetUid = existing.uid;
+            await admin.auth().updateUser(targetUid, { password: newPassword });
+            await admin.auth().revokeRefreshTokens(targetUid);
+            await staffCollection
+              .doc(id)
+              .set({ updatedAt: new Date().toISOString() }, { merge: true });
+            res
+              .status(200)
+              .json({
+                message: "Contraseña actualizada para usuario existente",
+                uid: targetUid,
+              });
+            return;
+          }
+          throw ce;
+        }
+      } else {
+        throw e;
+      }
+    }
 
+    await staffCollection
+      .doc(id)
+      .set({ updatedAt: new Date().toISOString() }, { merge: true });
     res
       .status(200)
       .json({ message: "Contraseña actualizada y sesiones revocadas" });
