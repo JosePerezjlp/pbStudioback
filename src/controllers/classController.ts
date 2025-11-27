@@ -91,28 +91,51 @@ export const createClassController = async (
     const infoNormalized =
       info && typeof info === "string" && info.trim() !== "" ? info.trim() : "";
 
-    const classData: Record<string, unknown> = {
-      day,
-      hour,
-      branch,
-      room,
-      discipline,
-      instructor,
-      capacity: parsedCapacity,
-      occupied: parsedOccupied,
-      status,
-      type: roomType, // enum
-      createdAt: new Date().toISOString(),
-    };
+    const db = admin.firestore();
+    const nowIso = new Date().toISOString();
 
-    // Solo agregar info si tiene valor
-    if (infoNormalized) {
-      classData.info = infoNormalized;
-    }
+    const newId = await db.runTransaction(async (t) => {
+      const countersRef = db.collection("__meta").doc("legacyCounters");
+      const countersSnap = await t.get(countersRef);
+      const data = countersSnap.exists ? (countersSnap.data() as any) : {};
+      let next = Number(data?.classNext ?? 0);
+      if (!Number.isFinite(next) || next <= 0) {
+        next = 0;
+        const recent = await db
+          .collection("classes")
+          .orderBy("createdAt", "desc")
+          .limit(50)
+          .get();
+        for (const d of recent.docs) {
+          const v = (d.data() as any)?.legacyId;
+          const n = Number(v);
+          if (Number.isFinite(n)) next = Math.max(next, n);
+        }
+        next = next + 1;
+      }
 
-    const ref = await admin.firestore().collection("classes").add(classData);
+      const classRef = db.collection("classes").doc();
+      const payload: Record<string, unknown> = {
+        day,
+        hour,
+        branch,
+        room,
+        discipline,
+        instructor,
+        capacity: parsedCapacity,
+        occupied: parsedOccupied,
+        status,
+        type: roomType,
+        createdAt: nowIso,
+        legacyId: next,
+      };
+      if (infoNormalized) payload.info = infoNormalized;
+      t.set(classRef, payload);
+      t.set(countersRef, { classNext: next + 1 }, { merge: true });
+      return classRef.id;
+    });
 
-    res.status(201).json({ message: "Clase creada correctamente", id: ref.id });
+    res.status(201).json({ message: "Clase creada correctamente", id: newId });
   } catch (error) {
     console.error("Error al crear clase:", error);
     res.status(500).json({

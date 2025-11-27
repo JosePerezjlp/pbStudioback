@@ -112,6 +112,10 @@ export const createInstructorController = [
         enabled = true,
         branch,
       } = req.body as Record<string, unknown>;
+      const enabledFinal =
+        (req.body as any).isActive !== undefined
+          ? (req.body as any).isActive
+          : enabled;
 
       // 1) Crear en Auth (destructuring para linter)
       const { uid } = await admin.auth().createUser({
@@ -148,7 +152,7 @@ export const createInstructorController = [
         description: description ? String(description) : "",
         joinDate: joinDate ? String(joinDate) : undefined,
         disciplines,
-        enabled,
+        enabled: enabledFinal,
         branch: String(branch),
         image: imageUrl || undefined,
         registrationDate: nowIso,
@@ -196,16 +200,71 @@ export const createInstructorController = [
    LIST
 ────────────────────────────── */
 export const getAllInstructorsController = async (
-  _req: Request,
+  req: Request,
   res: Response
 ): Promise<void> => {
   try {
-    const snapshot = await instructorsCol.orderBy("createdAt", "desc").get();
-    const instructors = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-    res.status(200).json({ instructors });
+    const qp = req.query as Record<string, unknown>;
+    const enabledRaw =
+      typeof qp.enabled === "string" ? qp.enabled.toLowerCase() : undefined;
+    const enabledFilter =
+      enabledRaw === "true" ? true : enabledRaw === "false" ? false : undefined;
+
+    if (enabledFilter === undefined) {
+      const snapshot = await instructorsCol.orderBy("createdAt", "desc").get();
+      const instructors = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      res.status(200).json({ instructors });
+      return;
+    }
+
+    try {
+      const byBool = await instructorsCol
+        .where("enabled", "==", enabledFilter)
+        .orderBy("createdAt", "desc")
+        .get();
+      const byStr = await instructorsCol
+        .where("enabled", "==", String(enabledFilter))
+        .orderBy("createdAt", "desc")
+        .get();
+
+      const map = new Map<string, any>();
+      byBool.docs.forEach((d) => map.set(d.id, { id: d.id, ...d.data() }));
+      byStr.docs.forEach((d) => map.set(d.id, { id: d.id, ...d.data() }));
+      const instructors = Array.from(map.values());
+      res.status(200).json({ instructors });
+      return;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("FAILED_PRECONDITION")) throw e;
+      const snap = await instructorsCol.orderBy("createdAt", "desc").get();
+      const normalize = (v: unknown): boolean => {
+        const s = typeof v === "string" ? v.toLowerCase().trim() : v;
+        if (
+          s === true ||
+          s === "true" ||
+          s === "activo" ||
+          s === "active" ||
+          s === "enabled"
+        )
+          return true;
+        if (
+          s === false ||
+          s === "false" ||
+          s === "inactivo" ||
+          s === "inactive" ||
+          s === "disabled"
+        )
+          return false;
+        return Boolean(s);
+      };
+      const instructors = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((x: any) => normalize(x.enabled) === enabledFilter);
+      res.status(200).json({ instructors });
+    }
   } catch (error) {
     res.status(500).json({
       error: "Error al obtener instructores",
@@ -262,14 +321,22 @@ export const updateInstructorController = [
       // Construimos el update SOLO con campos permitidos
       const updateData: Record<string, unknown> = {};
 
-      if (typeof body.firstName === "string") updateData.firstName = body.firstName;
-      if (typeof body.lastName === "string") updateData.lastName = body.lastName;
+      if (typeof body.firstName === "string")
+        updateData.firstName = body.firstName;
+      if (typeof body.lastName === "string")
+        updateData.lastName = body.lastName;
       if (typeof body.phone === "string") updateData.phone = body.phone;
       if (typeof body.address === "string") updateData.address = body.address;
-      if (typeof body.description === "string") updateData.description = body.description;
-      if (typeof body.joinDate === "string") updateData.joinDate = body.joinDate;
+      if (typeof body.description === "string")
+        updateData.description = body.description;
+      if (typeof body.joinDate === "string")
+        updateData.joinDate = body.joinDate;
       if (typeof body.branch === "string") updateData.branch = body.branch;
-      if (body.enabled !== undefined) updateData.enabled = body.enabled;
+      if (Object.prototype.hasOwnProperty.call(body, "isActive")) {
+        updateData.enabled = (body as any).isActive;
+      } else if (body.enabled !== undefined) {
+        updateData.enabled = body.enabled;
+      }
 
       if (Array.isArray(disciplinesParsed)) {
         // permitir vaciar si pasan []
@@ -295,13 +362,15 @@ export const updateInstructorController = [
       if (req.file) {
         const oldUrl = current?.image;
         try {
-          const newUrl = await uploadToFirebase(req.file, `instructor/${instructorId}`);
+          const newUrl = await uploadToFirebase(
+            req.file,
+            `instructor/${instructorId}`
+          );
           updateData.image = newUrl;
           if (oldUrl && oldUrl !== newUrl) {
             await deleteFromFirebase(oldUrl);
           }
-        } catch (_) {
-        }
+        } catch (_) {}
       }
 
       // ── Normalización SOLO si faltan o son inválidos ──────────────────
@@ -374,7 +443,10 @@ export const deleteInstructorController = async (
     const data = snap.data() as InstructorDoc;
     if (data?.image) await deleteFromFirebase(data.image);
 
-    await Promise.allSettled([ref.delete(), admin.auth().deleteUser(instructorId)]);
+    await Promise.allSettled([
+      ref.delete(),
+      admin.auth().deleteUser(instructorId),
+    ]);
 
     res.status(200).json({ message: "Instructor eliminado correctamente" });
   } catch (error) {

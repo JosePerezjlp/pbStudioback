@@ -94,24 +94,44 @@ export const completeProfileFromAuthController = async (
     };
 
     if (!snap.exists) {
-      // Crear doc inicial con estructuras por defecto
-      await userRef.set({
-        ...baseDoc,
-        isNew: true,
-        enabled: true,
-        freeSession: false,
-        registrationDate: nowIso,
-        createdAt: nowIso,
-        packages: [],
-        transactions: [],
-        waitlist: { inList: false, position: null },
-        classes: { total: 0, available: 0, taken: 0 },
+      await db.runTransaction(async (t) => {
+        const countersRef = db.collection("__meta").doc("legacyCounters");
+        const countersSnap = await t.get(countersRef);
+        const data = countersSnap.exists ? (countersSnap.data() as any) : {};
+        let next = Number(data?.userNext ?? 0);
+        if (!Number.isFinite(next) || next <= 0) {
+          next = 0;
+          const recent = await db
+            .collection("users")
+            .orderBy("createdAt", "desc")
+            .limit(50)
+            .get();
+          for (const d of recent.docs) {
+            const v = (d.data() as any)?.legacyId;
+            const n = Number(v);
+            if (Number.isFinite(n)) next = Math.max(next, n);
+          }
+          next = next + 1;
+        }
+
+        t.set(userRef, {
+          ...baseDoc,
+          isNew: true,
+          enabled: true,
+          freeSession: false,
+          registrationDate: nowIso,
+          createdAt: nowIso,
+          packages: [],
+          transactions: [],
+          waitlist: { inList: false, position: null },
+          classes: { total: 0, available: 0, taken: 0 },
+          legacyId: next,
+        });
+        t.set(countersRef, { userNext: next + 1 }, { merge: true });
       });
-      // (Opcional) correo de bienvenida
       try {
         await sendWelcomeEmail(emailFromToken, firstName);
       } catch (emailErr) {
-        // eslint-disable-next-line no-console
         console.error("No se pudo enviar el correo de bienvenida:", emailErr);
       }
     } else {
@@ -182,33 +202,56 @@ export const userController = async (
   try {
     const userRecord = await admin.auth().createUser({ email, password });
 
-    await admin
-      .firestore()
-      .collection("users")
-      .doc(userRecord.uid)
-      .set({
-        firstName,
-        lastName,
-        email,
-        phone,
-        branch,
-        role: "user",
-        isAdmin: false,
-        isNew: true,
-        enabled,
-        freeSession,
-        birthDate: birthDate ?? null,
-        registrationDate: new Date().toISOString(),
-        emergencyContact: {
-          name: emergencyContact?.name ?? null,
-          phone: emergencyContact?.phone ?? null,
-        },
-        packages: [],
-        transactions: [],
-        waitlist: { inList: false, position: null },
-        classes: { total: 0, available: 0, taken: 0 },
-        createdAt: new Date().toISOString(),
+    {
+      const db = admin.firestore();
+      const nowIso = new Date().toISOString();
+      const userRef = db.collection("users").doc(userRecord.uid);
+      await db.runTransaction(async (t) => {
+        const countersRef = db.collection("__meta").doc("legacyCounters");
+        const countersSnap = await t.get(countersRef);
+        const data = countersSnap.exists ? (countersSnap.data() as any) : {};
+        let next = Number(data?.userNext ?? 0);
+        if (!Number.isFinite(next) || next <= 0) {
+          next = 0;
+          const recent = await db
+            .collection("users")
+            .orderBy("createdAt", "desc")
+            .limit(50)
+            .get();
+          for (const d of recent.docs) {
+            const v = (d.data() as any)?.legacyId;
+            const n = Number(v);
+            if (Number.isFinite(n)) next = Math.max(next, n);
+          }
+          next = next + 1;
+        }
+        t.set(userRef, {
+          firstName,
+          lastName,
+          email,
+          phone,
+          branch,
+          role: "user",
+          isAdmin: false,
+          isNew: true,
+          enabled,
+          freeSession,
+          birthDate: birthDate ?? null,
+          registrationDate: nowIso,
+          emergencyContact: {
+            name: emergencyContact?.name ?? null,
+            phone: emergencyContact?.phone ?? null,
+          },
+          packages: [],
+          transactions: [],
+          waitlist: { inList: false, position: null },
+          classes: { total: 0, available: 0, taken: 0 },
+          createdAt: nowIso,
+          legacyId: next,
+        });
+        t.set(countersRef, { userNext: next + 1 }, { merge: true });
       });
+    }
 
     try {
       await sendWelcomeEmail(email, firstName);

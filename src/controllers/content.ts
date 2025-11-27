@@ -89,8 +89,32 @@ export const getTermsController = (_req: Request, res: Response) =>
 export const updatePrivacyController = (req: Request, res: Response) =>
   updateContent("privacyNotice", req.body.html, res);
 
-export const getPrivacyController = (_req: Request, res: Response) =>
-  getContent("privacyNotice", res);
+export const getPrivacyController = async (_req: Request, res: Response) => {
+  try {
+    const db = admin.firestore();
+    const preferredIds = ["privacyNotice", "privacy", "avisoPrivacidad", "aviso_de_privacidad"];
+
+    for (const id of preferredIds) {
+      const snap = await db.collection("content").doc(id).get();
+      if (snap.exists) {
+        res.status(200).json(snap.data());
+        return;
+      }
+    }
+
+    const coll = await db.collection("content").limit(1).get();
+    if (!coll.empty) {
+      const d = coll.docs[0];
+      res.status(200).json(d.data());
+      return;
+    }
+
+    res.status(404).json({ error: "Contenido 'privacyNotice' no encontrado" });
+  } catch (error) {
+    console.error("Error al obtener aviso de privacidad:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+};
 
 // ✅ Subida de imágenes y contenido de inicio
 export const updateHomeContent = [
