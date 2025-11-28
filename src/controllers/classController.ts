@@ -33,6 +33,20 @@ const parseNumberOrFail = (value: unknown): number => {
 const asStringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" ? value : undefined;
 
+const asBoolOrUndefined = (value: unknown): boolean | undefined => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    if (v === "true") return true;
+    if (v === "false") return false;
+  }
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+  return undefined;
+};
+
 /* ============================================================
    CREATE – crea clase usando type del salón (enum)
    ============================================================ */
@@ -52,6 +66,7 @@ export const createClassController = async (
       capacity,
       occupied,
       status = "abierta",
+      enabled,
     } = req.body as Record<string, unknown>;
 
     // Números válidos
@@ -115,6 +130,16 @@ export const createClassController = async (
       }
 
       const classRef = db.collection("classes").doc();
+      const statusFromEnabled = asBoolOrUndefined(enabled);
+      const normalizedStatus =
+        statusFromEnabled === undefined
+          ? status === "cerrada"
+            ? "cerrada"
+            : "abierta"
+          : statusFromEnabled
+            ? "abierta"
+            : "cerrada";
+
       const payload: Record<string, unknown> = {
         day,
         hour,
@@ -124,7 +149,7 @@ export const createClassController = async (
         instructor,
         capacity: parsedCapacity,
         occupied: parsedOccupied,
-        status,
+        status: normalizedStatus,
         type: roomType,
         createdAt: nowIso,
         legacyId: next,
@@ -419,17 +444,15 @@ export const getAllClassesController = async (
     const nextCursor = hasMore
       ? String(pageDocs[pageDocs.length - 1].id)
       : null;
-    res
-      .status(200)
-      .json({
-        classes: enriched,
-        nextCursor,
-        hasMore,
-        limit,
-        page,
-        total,
-        totalPages,
-      });
+    res.status(200).json({
+      classes: enriched,
+      nextCursor,
+      hasMore,
+      limit,
+      page,
+      total,
+      totalPages,
+    });
   } catch (error) {
     res
       .status(500)
@@ -505,6 +528,7 @@ export const getClassByIdController = async (
     res.status(200).json({
       id: doc.id,
       ...data,
+      enabled: String(data?.status || "") === "abierta",
       roomName,
       instructorFirstName,
       instructorLastName,
@@ -562,8 +586,10 @@ export const updateClassController = async (
     if (instructorBody !== undefined) updateData.instructor = instructorBody;
     if (infoBody !== undefined) updateData.info = infoBody;
 
-    // Status
-    if (body.status === "abierta" || body.status === "cerrada") {
+    const enabledFlag = asBoolOrUndefined((body as any).enabled);
+    if (enabledFlag !== undefined) {
+      updateData.status = enabledFlag ? "abierta" : "cerrada";
+    } else if (body.status === "abierta" || body.status === "cerrada") {
       updateData.status = body.status;
     }
 
@@ -723,7 +749,9 @@ export const getClassesStatsController = async (
     const discCol = admin.firestore().collection("disciplines");
     let disciplines: { id: string; name?: string }[] = [];
     if (disciplineParam) {
-      disciplines = [{ id: disciplineParam }];
+      const ddoc = await discCol.doc(disciplineParam).get();
+      const ddata = ddoc.exists ? (ddoc.data() as any) : undefined;
+      disciplines = [{ id: disciplineParam, name: String(ddata?.name || "") }];
     } else {
       const dsnap = await discCol.get();
       disciplines = dsnap.docs.map((d) => ({
@@ -737,6 +765,7 @@ export const getClassesStatsController = async (
       branchName: string;
       stats: Array<{
         discipline: string;
+        disciplineName: string;
         month: number;
         week: number;
         day: number;
@@ -746,6 +775,7 @@ export const getClassesStatsController = async (
     for (const branch of branches) {
       const stats: Array<{
         discipline: string;
+        disciplineName: string;
         month: number;
         week: number;
         day: number;
@@ -774,6 +804,7 @@ export const getClassesStatsController = async (
             .get();
           stats.push({
             discipline: d.id,
+            disciplineName: String(d.name || ""),
             month: monthAgg.data().count,
             week: weekAgg.data().count,
             day: dayAgg.data().count,
@@ -784,7 +815,13 @@ export const getClassesStatsController = async (
             msg.includes("FAILED_PRECONDITION") &&
             msg.includes("requires an index")
           ) {
-            stats.push({ discipline: d.id, month: 0, week: 0, day: 0 });
+            stats.push({
+              discipline: d.id,
+              disciplineName: String(d.name || ""),
+              month: 0,
+              week: 0,
+              day: 0,
+            });
             continue;
           }
           throw e;

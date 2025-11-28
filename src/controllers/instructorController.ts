@@ -4,12 +4,14 @@ import bcrypt from "bcrypt";
 import multer from "multer";
 import admin from "../config/firebase";
 import { uploadToFirebase } from "../utils/uploadToFirebase";
+import { RolTypeEnum, StatusTypeEnum } from "../types/enums";
 
 /* ─────────────────────────────
    Colecciones y constantes
 ────────────────────────────── */
 const db = admin.firestore();
 const instructorsCol = db.collection("instructors");
+const staffCol = db.collection("staff");
 
 // Permisos fijos SOLO de clases, dentro de permissions.clases
 const CLASES_PERMISOS: ReadonlyArray<
@@ -111,20 +113,89 @@ export const createInstructorController = [
         joinDate,
         enabled = true,
         branch,
+        branchId,
+        status,
       } = req.body as Record<string, unknown>;
       const enabledFinal =
         (req.body as any).isActive !== undefined
           ? (req.body as any).isActive
           : enabled;
 
-      // 1) Crear en Auth (destructuring para linter)
-      const { uid } = await admin.auth().createUser({
+      const branchFinal = String(branchId ?? branch ?? "");
+
+      const statusRaw = typeof status === "string" ? status : undefined;
+      const staffStatus: StatusTypeEnum =
+        statusRaw === StatusTypeEnum.INACTIVE
+          ? StatusTypeEnum.INACTIVE
+          : statusRaw === StatusTypeEnum.ACTIVE
+            ? StatusTypeEnum.ACTIVE
+            : enabledFinal === true ||
+                String(enabledFinal).toLowerCase() === "true"
+              ? StatusTypeEnum.ACTIVE
+              : StatusTypeEnum.INACTIVE;
+
+      // 0) Verificar duplicado en staff por email
+      const dupSnap = await staffCol
+        .where("email", "==", String(email))
+        .limit(1)
+        .get();
+      if (!dupSnap.empty) {
+        res.status(400).json({
+          error: "Este correo ya está registrado en la base de datos",
+          code: "firestore/email-already-exists",
+        });
+        return;
+      }
+
+      // 1) Crear o reutilizar usuario en Firebase Auth
+      let uid: string;
+      try {
+        const existingAuth = await admin.auth().getUserByEmail(String(email));
+        uid = existingAuth.uid;
+        await admin.auth().updateUser(uid, {
+          password: String(password),
+          emailVerified: true,
+        });
+      } catch (err: unknown) {
+        const code =
+          typeof err === "object" && err !== null && "errorInfo" in err
+            ? (err as { errorInfo?: { code?: string } }).errorInfo?.code
+            : undefined;
+        if (code === "auth/user-not-found") {
+          const created = await admin.auth().createUser({
+            email: String(email),
+            password: String(password),
+            emailVerified: true,
+          });
+          uid = created.uid;
+        } else {
+          throw err;
+        }
+      }
+
+      // 2) Asegurar que no exista documento en users para este UID
+      try {
+        const usersRef = db.collection("users").doc(uid);
+        const usersSnap = await usersRef.get();
+        if (usersSnap.exists) await usersRef.delete();
+      } catch (_) {}
+
+      // 3) Crear documento en staff con role instructor y permisos vacíos
+      await staffCol.doc(uid).set({
         email: String(email),
-        password: String(password),
-        emailVerified: true,
+        role: RolTypeEnum.INSTRUCTOR,
+        branches: branchFinal ? [branchFinal] : [],
+        permissions: {},
+        status: staffStatus,
+        firstName: String(firstName ?? ""),
+        lastName: String(lastName ?? ""),
+        phone: String(phone ?? "0000000000"),
+        branch: branchFinal,
+        createdAt: new Date().toISOString(),
+        isAdmin: false,
       });
 
-      // 2) Subir imagen (opcional)
+      // 4) Subir imagen (opcional)
       let imageUrl = "";
       if (req.file) {
         try {
@@ -134,14 +205,14 @@ export const createInstructorController = [
         }
       }
 
-      // 3) Disciplinas
+      // 5) Disciplinas
       const disciplines = parseDisciplines(req.body.disciplines);
 
-      // 4) Hash local (si decides conservar hash en colec. instructors)
+      // 6) Hash local (si decides conservar hash en colec. instructors)
       const hashedPassword = await bcrypt.hash(String(password), 10);
       const nowIso = new Date().toISOString();
 
-      // 5) Guardar doc en instructors/{uid} con role/permissions/isAdmin fijos
+      // 7) Guardar doc en instructors/{uid} con role/permissions/isAdmin fijos y staffId
       const instructorDoc: InstructorDoc = {
         email: String(email),
         password: hashedPassword,
@@ -153,7 +224,7 @@ export const createInstructorController = [
         joinDate: joinDate ? String(joinDate) : undefined,
         disciplines,
         enabled: enabledFinal,
-        branch: String(branch),
+        branch: branchFinal,
         image: imageUrl || undefined,
         registrationDate: nowIso,
         createdAt: nowIso,

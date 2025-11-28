@@ -559,7 +559,10 @@ export const getAllTransactionsController = async (
       ? Math.max(10, Math.min(parsedLimit, 100))
       : 50;
     const parsedPage = Number(pageStr);
-    const page = Number.isFinite(parsedPage) && parsedPage > 0 ? Math.floor(parsedPage) : 1;
+    const page =
+      Number.isFinite(parsedPage) && parsedPage > 0
+        ? Math.floor(parsedPage)
+        : 1;
 
     const toStr = (v?: string) =>
       typeof v === "string" ? v.trim() : undefined;
@@ -610,11 +613,18 @@ export const getAllTransactionsController = async (
     if (userIdFilter) {
       baseQ = baseQ.where("userId", "==", userIdFilter);
     }
-    if (!userIdFilter && userEmailFilter && (userEmailFilter.includes("@") || userEmailFilter.includes("."))) {
+    if (
+      !userIdFilter &&
+      userEmailFilter &&
+      (userEmailFilter.includes("@") || userEmailFilter.includes("."))
+    ) {
       const usersCol = db.collection("users");
       let ids: string[] = [];
       try {
-        const exactSnap = await usersCol.where("email", "==", userEmailFilter).limit(5).get();
+        const exactSnap = await usersCol
+          .where("email", "==", userEmailFilter)
+          .limit(5)
+          .get();
         ids = exactSnap.docs.map((d) => d.id);
       } catch {
         // ignore
@@ -623,11 +633,16 @@ export const getAllTransactionsController = async (
         const s2 = await usersCol.limit(50).get();
         const target = userEmailFilter.toLowerCase();
         ids = s2.docs
-          .filter((d) => String((d.data() as any).email || "").toLowerCase() === target)
+          .filter(
+            (d) =>
+              String((d.data() as any).email || "").toLowerCase() === target
+          )
           .map((d) => d.id);
       }
       if (ids.length === 0) {
-        res.status(200).json({ transactions: [], nextCursor: null, hasMore: false, limit });
+        res
+          .status(200)
+          .json({ transactions: [], nextCursor: null, hasMore: false, limit });
         return;
       }
       if (ids.length > 10) {
@@ -635,7 +650,10 @@ export const getAllTransactionsController = async (
         limitedByUserEmail = true;
       }
       candidateUserIdsEmail = ids;
-      baseQ = ids.length === 1 ? baseQ.where("userId", "==", ids[0]) : baseQ.where("userId", "in", ids);
+      baseQ =
+        ids.length === 1
+          ? baseQ.where("userId", "==", ids[0])
+          : baseQ.where("userId", "in", ids);
     }
     if (startIso) {
       baseQ = baseQ.where("createdAt", ">=", new Date(startIso).toISOString());
@@ -674,13 +692,17 @@ export const getAllTransactionsController = async (
             const fn = String(data.firstName || "").toLowerCase();
             const ln = String(data.lastName || "").toLowerCase();
             const full = `${fn} ${ln}`.trim();
-            return fn.includes(name) || ln.includes(name) || full.includes(name);
+            return (
+              fn.includes(name) || ln.includes(name) || full.includes(name)
+            );
           })
           .map((d) => d.id);
       }
 
       if (candidateIds.length === 0) {
-        res.status(200).json({ transactions: [], nextCursor: null, hasMore: false, limit });
+        res
+          .status(200)
+          .json({ transactions: [], nextCursor: null, hasMore: false, limit });
         return;
       }
       if (candidateIds.length > 10) {
@@ -691,17 +713,27 @@ export const getAllTransactionsController = async (
       baseQ = baseQ.where("userId", "in", candidateIds);
     }
 
-    if (!userIdFilter && userEmailFilter && !(userEmailFilter.includes("@") || userEmailFilter.includes("."))) {
+    if (
+      !userIdFilter &&
+      userEmailFilter &&
+      !(userEmailFilter.includes("@") || userEmailFilter.includes("."))
+    ) {
       const emailTerm = userEmailFilter.toLowerCase();
       const usersCol = db.collection("users");
       let candidateIds: string[] = [];
       const snap = await usersCol.limit(120).get();
       candidateIds = snap.docs
-        .filter((d) => String((d.data() as any).email || "").toLowerCase().includes(emailTerm))
+        .filter((d) =>
+          String((d.data() as any).email || "")
+            .toLowerCase()
+            .includes(emailTerm)
+        )
         .map((d) => d.id);
 
       if (candidateIds.length === 0) {
-        res.status(200).json({ transactions: [], nextCursor: null, hasMore: false, limit });
+        res
+          .status(200)
+          .json({ transactions: [], nextCursor: null, hasMore: false, limit });
         return;
       }
       if (candidateIds.length > 10) {
@@ -725,36 +757,70 @@ export const getAllTransactionsController = async (
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const details = (err as any)?.details ?? undefined;
-      const indexRequired = msg.includes("FAILED_PRECONDITION") && msg.includes("requires an index");
+      const indexRequired =
+        msg.includes("FAILED_PRECONDITION") &&
+        msg.includes("requires an index");
       if (!indexRequired) throw err;
 
       const match = (data: any): boolean => {
-        if (statusFilter && String(data.status) !== String(statusFilter)) return false;
-        if (normalizedMethod && String(data.paymentMethod) !== String(normalizedMethod)) return false;
-        if (branchFilter && String(data.branchId) !== String(branchFilter)) return false;
-        if (packageFilter && String(data.package?.id ?? "") !== String(packageFilter)) return false;
-        if (userIdFilter && String(data.userId) !== String(userIdFilter)) return false;
+        if (statusFilter && String(data.status) !== String(statusFilter))
+          return false;
+        if (
+          normalizedMethod &&
+          String(data.paymentMethod) !== String(normalizedMethod)
+        )
+          return false;
+        if (branchFilter && String(data.branchId) !== String(branchFilter))
+          return false;
+        if (
+          packageFilter &&
+          String(data.package?.id ?? "") !== String(packageFilter)
+        )
+          return false;
+        if (userIdFilter && String(data.userId) !== String(userIdFilter))
+          return false;
         // Email exacto ya se tradujo a IDs de usuario; no comparar por data.userEmail
-        if (!userIdFilter && userEmailFilter && !(userEmailFilter.includes("@") || userEmailFilter.includes("."))) {
-          if (Array.isArray(candidateUserIdsEmail) && candidateUserIdsEmail.length > 0) {
-            if (!candidateUserIdsEmail.includes(String(data.userId))) return false;
+        if (
+          !userIdFilter &&
+          userEmailFilter &&
+          !(userEmailFilter.includes("@") || userEmailFilter.includes("."))
+        ) {
+          if (
+            Array.isArray(candidateUserIdsEmail) &&
+            candidateUserIdsEmail.length > 0
+          ) {
+            if (!candidateUserIdsEmail.includes(String(data.userId)))
+              return false;
           }
         }
         if (userNameFilter && !userIdFilter && !userEmailFilter) {
-          if (Array.isArray(candidateUserIdsName) && candidateUserIdsName.length > 0) {
-            if (!candidateUserIdsName.includes(String(data.userId))) return false;
+          if (
+            Array.isArray(candidateUserIdsName) &&
+            candidateUserIdsName.length > 0
+          ) {
+            if (!candidateUserIdsName.includes(String(data.userId)))
+              return false;
           }
         }
         return true;
       };
 
       let scanQ = db.collection("transactions").orderBy("createdAt", "desc");
-      if (startIso) scanQ = scanQ.where("createdAt", ">=", new Date(startIso).toISOString());
-      if (endIso) scanQ = scanQ.where("createdAt", "<=", new Date(endIso).toISOString());
+      if (startIso)
+        scanQ = scanQ.where(
+          "createdAt",
+          ">=",
+          new Date(startIso).toISOString()
+        );
+      if (endIso)
+        scanQ = scanQ.where("createdAt", "<=", new Date(endIso).toISOString());
 
-      let skipCount = (page > 1 && !cursor) ? (page - 1) * limit : 0;
+      let skipCount = page > 1 && !cursor ? (page - 1) * limit : 0;
       let collected: any[] = [];
-      let lastCursor: string | null = cursor && typeof cursor === "string" && cursor.length > 0 ? cursor : null;
+      let lastCursor: string | null =
+        cursor && typeof cursor === "string" && cursor.length > 0
+          ? cursor
+          : null;
       const batchSize = Math.max(100, limit * 10);
       let iterations = 0;
       while (iterations < 20) {
@@ -785,8 +851,12 @@ export const getAllTransactionsController = async (
 
       const usersMap: Map<string, any> = new Map();
       const packagesMap: Map<string, any> = new Map();
-      const userIds = Array.from(new Set(base.map((t: any) => t.userId).filter((v: any) => !!v)));
-      const packageIds = Array.from(new Set(base.map((t: any) => t.package?.id).filter((v: any) => !!v)));
+      const userIds = Array.from(
+        new Set(base.map((t: any) => t.userId).filter((v: any) => !!v))
+      );
+      const packageIds = Array.from(
+        new Set(base.map((t: any) => t.package?.id).filter((v: any) => !!v))
+      );
 
       for (let i = 0; i < userIds.length; i += 10) {
         const chunk = userIds.slice(i, i + 10);
@@ -831,7 +901,10 @@ export const getAllTransactionsController = async (
       });
 
       const hasMore = collected.length > skipCount + limit;
-      const nextCursor = transactions.length > 0 ? String(transactions[transactions.length - 1].createdAt ?? "") : null;
+      const nextCursor =
+        transactions.length > 0
+          ? String(transactions[transactions.length - 1].createdAt ?? "")
+          : null;
 
       res.status(200).json({
         transactions,
@@ -861,8 +934,12 @@ export const getAllTransactionsController = async (
 
     const usersMap: Map<string, any> = new Map();
     const packagesMap: Map<string, any> = new Map();
-    const userIds = Array.from(new Set(base.map((t: any) => t.userId).filter((v: any) => !!v)));
-    const packageIds = Array.from(new Set(base.map((t: any) => t.package?.id).filter((v: any) => !!v)));
+    const userIds = Array.from(
+      new Set(base.map((t: any) => t.userId).filter((v: any) => !!v))
+    );
+    const packageIds = Array.from(
+      new Set(base.map((t: any) => t.package?.id).filter((v: any) => !!v))
+    );
 
     for (let i = 0; i < userIds.length; i += 10) {
       const chunk = userIds.slice(i, i + 10);
@@ -923,7 +1000,9 @@ export const getAllTransactionsController = async (
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const details = (err as any)?.details ?? undefined;
-      const indexRequired = msg.includes("FAILED_PRECONDITION") && msg.includes("requires an index");
+      const indexRequired =
+        msg.includes("FAILED_PRECONDITION") &&
+        msg.includes("requires an index");
       if (indexRequired) {
         res.status(200).json({
           transactions,
@@ -989,7 +1068,6 @@ export const getUserTransactionsController = async (
 
     const transactions = snap.docs.map((d) => {
       const data = d.data();
-      // Formatear tipo de paquete en las respuestas
       if (data.package && data.package.type) {
         data.package.type = formatPackageType(data.package.type);
       }
@@ -1286,8 +1364,16 @@ export const getTransactionSummaryController = async (
     res.set("Expires", "0");
     res.set("ETag", "0");
     console.log("GET /transactions/summary llamado");
-    const includeRaw = (typeof _req.query?.include === "string" ? (_req.query.include as string) : undefined) ?? undefined;
-    const includeSet = new Set((includeRaw ?? "").split(",").map((s) => s.trim()).filter((s) => s.length > 0));
+    const includeRaw =
+      (typeof _req.query?.include === "string"
+        ? (_req.query.include as string)
+        : undefined) ?? undefined;
+    const includeSet = new Set(
+      (includeRaw ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+    );
     const wantTotals = includeSet.size === 0 || includeSet.has("totals");
     const wantDiscounts = includeSet.size === 0 || includeSet.has("discounts");
     const wantMethods = includeSet.size === 0 || includeSet.has("methods");
@@ -1323,8 +1409,16 @@ export const getTransactionSummaryController = async (
           : {}),
         ...(wantMethods
           ? {
-              anualPorMetodo: metricsData.anualPorMetodo ?? { cash: 0, terminal: 0, paypal: 0 },
-              mensualPorMetodo: metricsData.mensualPorMetodo ?? { cash: 0, terminal: 0, paypal: 0 },
+              anualPorMetodo: metricsData.anualPorMetodo ?? {
+                cash: 0,
+                terminal: 0,
+                paypal: 0,
+              },
+              mensualPorMetodo: metricsData.mensualPorMetodo ?? {
+                cash: 0,
+                terminal: 0,
+                paypal: 0,
+              },
             }
           : {}),
       };
@@ -1369,7 +1463,7 @@ export const getTransactionSummaryController = async (
     const endOfDay = now.endOf("day").toJSDate();
 
     // Helpers
-    
+
     const sumQuery = async (
       col: "transactions" | "paypal_transactions",
       start?: Date,
@@ -1377,8 +1471,9 @@ export const getTransactionSummaryController = async (
     ): Promise<number> => {
       const isTx = col === "transactions";
       const statusNeeded = isTx ? "paid" : "COMPLETED";
-      let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> =
-        db.collection(col).select("amount", "status", "createdAt");
+      let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
+        .collection(col)
+        .select("amount", "status", "createdAt");
       if (start) {
         q = q.where("createdAt", ">=", start.toISOString());
       }
@@ -1442,8 +1537,9 @@ export const getTransactionSummaryController = async (
     const sumDiscounts = async (start: Date, end: Date) => {
       let withDisc = 0;
       let withoutDisc = 0;
-      let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> =
-        db.collection("transactions").select("amount", "status", "createdAt", "couponUsed");
+      let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
+        .collection("transactions")
+        .select("amount", "status", "createdAt", "couponUsed");
       q = q.where("createdAt", ">=", start.toISOString());
       q = q.where("createdAt", "<=", end.toISOString());
       const snap = await q.get();
@@ -1468,8 +1564,9 @@ export const getTransactionSummaryController = async (
         terminal: 0,
         paypal: 0,
       };
-      let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> =
-        db.collection("transactions").select("amount", "status", "createdAt", "paymentMethod");
+      let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
+        .collection("transactions")
+        .select("amount", "status", "createdAt", "paymentMethod");
       q = q.where("createdAt", ">=", start.toISOString());
       q = q.where("createdAt", "<=", end.toISOString());
       const snap = await q.get();
@@ -1502,8 +1599,14 @@ export const getTransactionSummaryController = async (
       return result;
     };
 
-    let yearDisc: { withDisc: number; withoutDisc: number } = { withDisc: 0, withoutDisc: 0 };
-    let monthDisc: { withDisc: number; withoutDisc: number } = { withDisc: 0, withoutDisc: 0 };
+    let yearDisc: { withDisc: number; withoutDisc: number } = {
+      withDisc: 0,
+      withoutDisc: 0,
+    };
+    let monthDisc: { withDisc: number; withoutDisc: number } = {
+      withDisc: 0,
+      withoutDisc: 0,
+    };
     if (wantDiscounts) {
       [yearDisc, monthDisc] = await Promise.all([
         sumDiscounts(startOfYear, endOfYear),
@@ -1511,8 +1614,16 @@ export const getTransactionSummaryController = async (
       ]);
     }
 
-    let yearByMethod: { cash: number; terminal: number; paypal: number } = { cash: 0, terminal: 0, paypal: 0 };
-    let monthByMethod: { cash: number; terminal: number; paypal: number } = { cash: 0, terminal: 0, paypal: 0 };
+    let yearByMethod: { cash: number; terminal: number; paypal: number } = {
+      cash: 0,
+      terminal: 0,
+      paypal: 0,
+    };
+    let monthByMethod: { cash: number; terminal: number; paypal: number } = {
+      cash: 0,
+      terminal: 0,
+      paypal: 0,
+    };
     if (wantMethods) {
       [yearByMethod, monthByMethod] = await Promise.all([
         sumByMethod(startOfYear, endOfYear),
@@ -1580,13 +1691,19 @@ export const getRankingsController = async (
     const ttlMs = 60_000;
     const nowMs = Date.now();
     // @ts-ignore
-    const cached = (global as any).__rankingsCache as { ts: number; data: any } | undefined;
+    const cached = (global as any).__rankingsCache as
+      | { ts: number; data: any }
+      | undefined;
     if (cached && nowMs - cached.ts < ttlMs) {
       res.status(200).json(cached.data);
       return;
     }
     const db = admin.firestore();
-    const branchesSnap = await db.collection("branches").where("isPublic", "==", true).select("name").get();
+    const branchesSnap = await db
+      .collection("branches")
+      .where("isPublic", "==", true)
+      .select("name")
+      .get();
 
     const branches = branchesSnap.docs.map((d) => ({
       id: d.id,
@@ -1619,7 +1736,14 @@ export const getRankingsController = async (
       branches.map(async (branch) => {
         let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
           .collection("transactions")
-          .select("amount", "userId", "createdAt", "status", "package", "userEmail")
+          .select(
+            "amount",
+            "userId",
+            "createdAt",
+            "status",
+            "package",
+            "userEmail"
+          )
           .where("branchId", "==", branch.id)
           .where("status", "==", "paid")
           .where("createdAt", ">=", startIso)
@@ -1644,9 +1768,15 @@ export const getRankingsController = async (
               if (!uid) continue;
               const amtRaw = data.amount;
               const amt = typeof amtRaw === "string" ? Number(amtRaw) : amtRaw;
-              const createdAt = typeof data.createdAt === "string" ? new Date(data.createdAt) : data.createdAt?.toDate?.() ?? data.createdAt;
+              const createdAt =
+                typeof data.createdAt === "string"
+                  ? new Date(data.createdAt)
+                  : (data.createdAt?.toDate?.() ?? data.createdAt);
               if (!byUser[uid]) {
-                byUser[uid] = { sum: Number.isFinite(amt) ? amt : 0, lastTx: { ...data, createdAt } };
+                byUser[uid] = {
+                  sum: Number.isFinite(amt) ? amt : 0,
+                  lastTx: { ...data, createdAt },
+                };
               } else {
                 byUser[uid].sum += Number.isFinite(amt) ? amt : 0;
                 const prevDate = byUser[uid].lastTx?.createdAt as Date | null;
@@ -1660,13 +1790,24 @@ export const getRankingsController = async (
           }
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          if (msg.includes("FAILED_PRECONDITION") && msg.includes("requires an index")) {
+          if (
+            msg.includes("FAILED_PRECONDITION") &&
+            msg.includes("requires an index")
+          ) {
             // Fallback seguro: escanear por branch en lotes sin filtros compuestos
             try {
-              let fbq: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
-                .collection("transactions")
-                .select("amount", "userId", "createdAt", "status", "package", "userEmail")
-                .where("branchId", "==", branch.id);
+              let fbq: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> =
+                db
+                  .collection("transactions")
+                  .select(
+                    "amount",
+                    "userId",
+                    "createdAt",
+                    "status",
+                    "package",
+                    "userEmail"
+                  )
+                  .where("branchId", "==", branch.id);
               const batchSize = 500;
               let offset = 0;
               let iterations = 0;
@@ -1681,18 +1822,26 @@ export const getRankingsController = async (
                   const uid = data.userId as string | undefined;
                   if (!uid) continue;
                   const statusOk = String(data.status || "") === "paid";
-                  const createdAtVal = typeof data.createdAt === "string"
-                    ? new Date(data.createdAt)
-                    : data.createdAt?.toDate?.() ?? data.createdAt;
-                  const inWindow = createdAtVal instanceof Date && createdAtVal.toISOString() >= startIso;
+                  const createdAtVal =
+                    typeof data.createdAt === "string"
+                      ? new Date(data.createdAt)
+                      : (data.createdAt?.toDate?.() ?? data.createdAt);
+                  const inWindow =
+                    createdAtVal instanceof Date &&
+                    createdAtVal.toISOString() >= startIso;
                   if (!statusOk || !inWindow) continue;
                   const amtRaw = data.amount;
-                  const amt = typeof amtRaw === "string" ? Number(amtRaw) : amtRaw;
+                  const amt =
+                    typeof amtRaw === "string" ? Number(amtRaw) : amtRaw;
                   if (!byUser[uid]) {
-                    byUser[uid] = { sum: Number.isFinite(amt) ? amt : 0, lastTx: { ...data, createdAt: createdAtVal } };
+                    byUser[uid] = {
+                      sum: Number.isFinite(amt) ? amt : 0,
+                      lastTx: { ...data, createdAt: createdAtVal },
+                    };
                   } else {
                     byUser[uid].sum += Number.isFinite(amt) ? amt : 0;
-                    const prevDate = byUser[uid].lastTx?.createdAt as Date | null;
+                    const prevDate = byUser[uid].lastTx
+                      ?.createdAt as Date | null;
                     if (createdAtVal && prevDate && createdAtVal > prevDate) {
                       byUser[uid].lastTx = { ...data, createdAt: createdAtVal };
                     }
@@ -1734,7 +1883,10 @@ export const getRankingsController = async (
           const date = (lastTx.createdAt as Date | null) ?? null;
           const dayOfWeek = date ? DAYS[date.getDay()] : "";
           const hour = date
-            ? date.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })
+            ? date.toLocaleTimeString("es-MX", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })
             : "";
           const pkgLabel = `${lastTx.package?.totalClasses ?? ""} clase(s)`;
           return { userId, sum, fullName, dayOfWeek, hour, pkgLabel };

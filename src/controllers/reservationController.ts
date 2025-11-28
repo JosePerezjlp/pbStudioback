@@ -100,7 +100,8 @@ const statusFromMessage = (m: string): number => {
     m === ERROR_CODES.NO_SLOTS_AVAILABLE ||
     m === ERROR_CODES.NO_CLASSES_AVAILABLE ||
     m === ERROR_CODES.NO_PACKAGES ||
-    m === ERROR_CODES.NO_COMPATIBLE_PACKAGE
+    m === ERROR_CODES.NO_COMPATIBLE_PACKAGE ||
+    m === ERROR_CODES.SEAT_ALREADY_TAKEN
   )
     return 409;
 
@@ -125,6 +126,7 @@ const codeFromMessage = (m: string): string => {
   if (m === ERROR_CODES.NO_PACKAGES) return "NO_PACKAGES";
   if (m === ERROR_CODES.NO_COMPATIBLE_PACKAGE) return "NO_COMPATIBLE_PACKAGE";
   if (m === ERROR_CODES.UNLIMITED_DAILY_LIMIT) return "UNLIMITED_DAILY_LIMIT";
+  if (m === ERROR_CODES.SEAT_ALREADY_TAKEN) return "SEAT_ALREADY_TAKEN";
   if (m === "No se puede reservar una clase que ya pasó")
     return "CLASS_ALREADY_PAST";
   if (m === "La clase no tiene fecha u hora definida")
@@ -145,10 +147,12 @@ export const createReservationController = async (
     const { userId, classId, seat } = req.body as {
       userId: string;
       classId: string;
-      seat: number;
+      seat?: number;
     };
 
     const db = admin.firestore();
+    let assignedSeatEmail: number | null =
+      typeof seat === "number" && Number.isFinite(seat) ? seat : null;
     const userRef = db.collection("users").doc(userId);
     const classRef = db.collection("classes").doc(classId);
     const reservationsRef = db.collection("reservations");
@@ -187,21 +191,57 @@ export const createReservationController = async (
         throw new Error("No se puede reservar una clase que ya pasó");
       }
 
-      // Duplicada
-      const dup = await reservationsRef
-        .where("userId", "==", userId)
-        .where("classId", "==", classId)
-        .where("status", "==", "active")
-        .limit(1)
-        .get();
-      if (!dup.empty) throw new Error(ERROR_CODES.DUPLICATE_RESERVATION);
-
       // Cupos
       const available = (cls.capacity ?? 0) - (cls.occupied ?? 0);
       if (available <= 0) throw new Error(ERROR_CODES.NO_SLOTS_AVAILABLE);
 
       // Tipo de clase normalizado
       const classType = normalizeClassType(cls.type) ?? ClassType.INDIVIDUAL;
+
+      let finalSeat: number | null =
+        typeof seat === "number" && Number.isFinite(seat) ? seat : null;
+
+      if (classType === ClassType.INDIVIDUAL) {
+        const dup = await reservationsRef
+          .where("userId", "==", userId)
+          .where("classId", "==", classId)
+          .where("status", "==", "active")
+          .limit(1)
+          .get();
+        if (!dup.empty) throw new Error(ERROR_CODES.DUPLICATE_RESERVATION);
+        finalSeat = null;
+      } else {
+        if (finalSeat !== null) {
+          const seatTaken = await reservationsRef
+            .where("classId", "==", classId)
+            .where("seat", "==", finalSeat)
+            .where("status", "==", "active")
+            .limit(1)
+            .get();
+          if (!seatTaken.empty) {
+            throw new Error(ERROR_CODES.SEAT_ALREADY_TAKEN);
+          }
+        } else {
+          const occupiedSeatsSnap = await reservationsRef
+            .where("classId", "==", classId)
+            .where("status", "==", "active")
+            .get();
+          const occupiedSeats = occupiedSeatsSnap.docs
+            .map((doc) => (doc.data() as ReservationDoc).seat)
+            .filter((s): s is number => s !== null && typeof s === "number")
+            .sort((a, b) => a - b);
+          const capacity = cls.capacity ?? 0;
+          let assigned: number | null = null;
+          for (let seatNum = 1; seatNum <= capacity; seatNum += 1) {
+            if (!occupiedSeats.includes(seatNum)) {
+              assigned = seatNum;
+              break;
+            }
+          }
+          if (assigned === null && capacity > 0) assigned = capacity;
+          finalSeat = assigned;
+        }
+      }
 
       // Paquetes del usuario (UNA sola vez)
       let pkgs: UserPackage[] = (user.packages ?? []) as any[] as UserPackage[];
@@ -337,7 +377,7 @@ export const createReservationController = async (
         id: resRef.id,
         userId,
         classId,
-        seat,
+        seat: finalSeat,
         status: "active",
         classDay: (cls.day ?? "").slice(0, 10),
         createdAt: new Date().toISOString(),
@@ -345,6 +385,8 @@ export const createReservationController = async (
         packageId,
       };
       t.set(resRef, payload);
+
+      assignedSeatEmail = finalSeat;
 
       return resRef.id;
     });
@@ -377,7 +419,7 @@ export const createReservationController = async (
         u.firstName,
         info,
         cls.type as string,
-        seat
+        assignedSeatEmail
       );
     } catch (e) {
       console.error("Email de confirmación falló:", e);
@@ -615,12 +657,10 @@ export const getReservationsByClassController = async (
     });
   } catch (error) {
     console.error("Error en getReservationsByClassController:", error);
-    res
-      .status(500)
-      .json({
-        error: "Error al obtener reservas de la clase",
-        details: String(error),
-      });
+    res.status(500).json({
+      error: "Error al obtener reservas de la clase",
+      details: String(error),
+    });
   }
 };
 

@@ -13,6 +13,7 @@ export const ERROR_CODES = {
     "Tuvimos un inconveniente inesperado. Intenta nuevamente en unos minutos.",
   UNLIMITED_DAILY_LIMIT:
     "Con tu paquete ilimitado puedes reservar como máximo 2 clases por día.",
+  SEAT_ALREADY_TAKEN: "El asiento seleccionado no está disponible",
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
