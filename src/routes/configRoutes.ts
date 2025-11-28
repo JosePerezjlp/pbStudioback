@@ -24,7 +24,7 @@ router.post("/general-settings", verifyToken, adminSessionGuard, setGeneralSetti
 router.get("/statistics", verifyToken, getStatisticsConfigController);
 router.post("/statistics", verifyToken, adminSessionGuard, setStatisticsConfigController);
 
-router.get("/notice", verifyToken, getNoticeConfigController);
+router.get("/notice", getNoticeConfigController);
 router.post(
   "/notice",
   verifyToken,
