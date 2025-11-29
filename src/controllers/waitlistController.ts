@@ -2,6 +2,7 @@
 import { Request, Response } from "express";
 import admin from "../config/firebase";
 import { ERROR_CODES, ClassType } from "../types/enums";
+import { DateTime } from "luxon";
 import { AuthRequest } from "../middleware/authMiddleware";
 import {
   sendWaitlistEntryEmail,
@@ -69,7 +70,10 @@ interface ReservationDoc {
 const isActiveUnlimited = (p: UserPackage): boolean => {
   if (!p.active || !p.isUnlimited) return false;
   if (!p.expiresAt) return true;
-  return new Date(p.expiresAt) > new Date();
+  const zone = "America/Mexico_City";
+  const exp = DateTime.fromISO(String(p.expiresAt)).setZone(zone);
+  const now = DateTime.now().setZone(zone);
+  return exp.toMillis() > now.toMillis();
 };
 
 /* ===============================================================

@@ -2,6 +2,8 @@
 import { Request, Response } from "express";
 import admin from "../config/firebase";
 import { ERROR_CODES, ClassType } from "../types/enums";
+import { DateTime } from "luxon";
+import { minutesUntilClassMx } from "../utils/time";
 import { AuthRequest } from "../middleware/authMiddleware";
 import {
   sendReservationCancelledEmail,
@@ -69,10 +71,8 @@ interface WaitlistDoc {
 }
 
 /* ---------- Helpers ---------- */
-const diffMinutesFromNow = (day: string, hour: string): number => {
-  const start = new Date(`${day}T${hour}:00`);
-  return Math.floor((start.getTime() - Date.now()) / 60000);
-};
+const diffMinutesFromNow = (day: string, hour: string): number =>
+  minutesUntilClassMx(day, hour);
 
 const canCancelByConfig = (cls: ClassDoc, cfg: CancellationTimes): boolean => {
   const t = normalizeClassType(cls.type) ?? ClassType.INDIVIDUAL;
@@ -166,7 +166,8 @@ export const createReservationController = async (
       const cls = classSnapTx.data() as ClassDoc;
 
       // Validar que la clase NO haya pasado (día + hora exacta)
-      const currentTime = new Date();
+      const zone = "America/Mexico_City";
+      const currentTime = DateTime.now().setZone(zone);
       const classDay = cls.day ?? "";
       const classHour = cls.hour ?? "";
 
@@ -179,15 +180,17 @@ export const createReservationController = async (
         classHour.length === 5 ? `${classHour}:00` : classHour;
 
       // Combinar día + hora para crear fecha/hora exacta de la clase
-      const classDateTime = new Date(`${classDay}T${normalizedHour}`);
+      const classDateTime = DateTime.fromISO(`${classDay}T${normalizedHour}`, {
+        zone,
+      });
 
       // Validar que la fecha/hora sea válida
-      if (isNaN(classDateTime.getTime())) {
+      if (!classDateTime.isValid) {
         throw new Error("La fecha u hora de la clase no es válida");
       }
 
       // Si la clase ya pasó (o está empezando ahora), rechazar
-      if (classDateTime <= currentTime) {
+      if (classDateTime.toMillis() <= currentTime.toMillis()) {
         throw new Error("No se puede reservar una clase que ya pasó");
       }
 
@@ -303,9 +306,13 @@ export const createReservationController = async (
         pkgs = enriched;
       }
 
-      const now = new Date();
-      const isActivePkg = (p: UserPackage) =>
-        p.active && (!p.expiresAt || new Date(p.expiresAt) > now);
+      const now = DateTime.now().setZone(zone);
+      const isActivePkg = (p: UserPackage) => {
+        if (!p.active) return false;
+        if (!p.expiresAt) return true;
+        const exp = DateTime.fromISO(String(p.expiresAt)).setZone(zone);
+        return exp.toMillis() > now.toMillis();
+      };
       const pkgType = (p: UserPackage) =>
         normalizeClassType(p.type) ?? ClassType.INDIVIDUAL;
 
@@ -402,10 +409,31 @@ export const createReservationController = async (
 
       const dateStr = new Date(`${cls.day}T00:00:00`).toLocaleDateString(
         "es-MX",
-        { weekday: "long", day: "numeric", month: "long", year: "numeric" }
+        {
+          weekday: "long",
+          day: "numeric",
+          month: "long",
+          year: "numeric",
+          timeZone: "America/Mexico_City",
+        }
       );
 
-      const info = `${cls.discipline} el ${dateStr} a las ${cls.hour}`;
+      let disciplineName = "";
+      if (typeof (cls as any).discipline === "string") {
+        try {
+          const dSnap = await admin
+            .firestore()
+            .collection("disciplines")
+            .doc(String((cls as any).discipline))
+            .get();
+          disciplineName = String((dSnap.data() as any)?.name || "");
+        } catch {}
+      } else {
+        disciplineName = String(
+          ((cls as any).discipline?.name as string) || ""
+        );
+      }
+      const info = `${disciplineName || "Clase"} el ${dateStr} a las ${cls.hour}`;
 
       const userSnapEmail = await admin
         .firestore()
@@ -572,6 +600,138 @@ export const getAllReservationsController = async (
           classData.branch &&
           user.branches!.includes(classData.branch)
         );
+      });
+    }
+
+    // Expandir clase embebida si expand=class
+    const expandParam = String((req.query as any)?.expand || "").toLowerCase();
+    if (expandParam === "class") {
+      const db = admin.firestore();
+      const classIds = Array.from(
+        new Set(
+          reservations
+            .map((r: any) => String(r.classId || ""))
+            .filter((id) => !!id)
+        )
+      );
+
+      const classesMap: Map<string, any> = new Map();
+      for (let i = 0; i < classIds.length; i += 10) {
+        const chunk = classIds.slice(i, i + 10);
+        const snap = await db
+          .collection("classes")
+          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+          .get();
+        snap.docs.forEach((d) => classesMap.set(d.id, d.data()));
+      }
+
+      const roomIds = Array.from(
+        new Set(
+          Array.from(classesMap.values())
+            .map((c: any) => String(c.room || ""))
+            .filter((v) => !!v)
+        )
+      );
+      const instructorIds = Array.from(
+        new Set(
+          Array.from(classesMap.values())
+            .map((c: any) => String(c.instructor || ""))
+            .filter((v) => !!v)
+        )
+      );
+      const branchIds = Array.from(
+        new Set(
+          Array.from(classesMap.values())
+            .map((c: any) => String(c.branch || ""))
+            .filter((v) => !!v)
+        )
+      );
+      const disciplineIds = Array.from(
+        new Set(
+          Array.from(classesMap.values())
+            .map((c: any) => String(c.discipline || ""))
+            .filter((v) => !!v)
+        )
+      );
+
+      const [roomSnaps, instrSnaps, branchSnaps, discSnaps] = await Promise.all(
+        [
+          Promise.all(
+            roomIds.map((id) => db.collection("classrooms").doc(id).get())
+          ),
+          Promise.all(
+            instructorIds.map((id) =>
+              db.collection("instructors").doc(id).get()
+            )
+          ),
+          Promise.all(
+            branchIds.map((id) => db.collection("branches").doc(id).get())
+          ),
+          Promise.all(
+            disciplineIds.map((id) =>
+              db.collection("disciplines").doc(id).get()
+            )
+          ),
+        ]
+      );
+
+      const roomsMap = new Map<string, any>();
+      roomSnaps.forEach((s) => {
+        if (s.exists) roomsMap.set(s.id, s.data());
+      });
+      const instrMap = new Map<
+        string,
+        { firstName: string; lastName: string }
+      >();
+      instrSnaps.forEach((s) => {
+        if (s.exists) {
+          const d = s.data() as any;
+          instrMap.set(s.id, {
+            firstName: String(d?.firstName ?? ""),
+            lastName: String(d?.lastName ?? ""),
+          });
+        }
+      });
+      const branchesMap = new Map<string, string>();
+      branchSnaps.forEach((s) => {
+        if (s.exists)
+          branchesMap.set(s.id, String((s.data() as any)?.name || ""));
+      });
+      const disciplinesMap = new Map<string, string>();
+      discSnaps.forEach((s) => {
+        if (s.exists)
+          disciplinesMap.set(s.id, String((s.data() as any)?.name || ""));
+      });
+
+      reservations = reservations.map((res: any) => {
+        const cls = classesMap.get(res.classId);
+        if (!cls) return res;
+        const roomId = String(cls.room || "");
+        const instructorId = String(cls.instructor || "");
+        const branchId = String(cls.branch || "");
+        const disciplineId = String(cls.discipline || "");
+        const roomData = roomsMap.get(roomId);
+        const resolvedType =
+          normalizeClassType(
+            typeof roomData?.type === "string" ? roomData.type : undefined
+          ) ?? ClassType.INDIVIDUAL;
+        const instr = instrMap.get(instructorId) || null;
+        const classEmbed = {
+          id: String(res.classId || ""),
+          day: String(cls.day || ""),
+          hour: String(cls.hour || ""),
+          branch: branchId,
+          room: roomId,
+          discipline: disciplineId,
+          instructor: instructorId,
+          type: resolvedType,
+          roomName: roomData ? String(roomData?.name || "") : null,
+          instructorFirstName: instr?.firstName ?? null,
+          instructorLastName: instr?.lastName ?? null,
+          branchName: branchesMap.get(branchId) ?? null,
+          disciplineName: disciplinesMap.get(disciplineId) ?? null,
+        };
+        return { ...res, class: classEmbed };
       });
     }
 
@@ -982,8 +1142,24 @@ export const deleteReservationController = async (
         day: "numeric",
         month: "long",
         year: "numeric",
+        timeZone: "America/Mexico_City",
       });
-      const cancelInfo = `${cancelClass.discipline} el ${cancelDateStr} a las ${cancelClass.hour}`;
+      let cancelDisciplineName = "";
+      if (typeof (cancelClass as any).discipline === "string") {
+        try {
+          const dSnap = await admin
+            .firestore()
+            .collection("disciplines")
+            .doc(String((cancelClass as any).discipline))
+            .get();
+          cancelDisciplineName = String((dSnap.data() as any)?.name || "");
+        } catch {}
+      } else {
+        cancelDisciplineName = String(
+          ((cancelClass as any).discipline?.name as string) || ""
+        );
+      }
+      const cancelInfo = `${cancelDisciplineName || "Clase"} el ${cancelDateStr} a las ${cancelClass.hour}`;
       await sendReservationCancelledEmail(
         cancelUser.email,
         cancelUser.firstName,

@@ -7,6 +7,7 @@ import { AuthRequest } from "../middleware/authMiddleware";
 import { sendPackagePurchaseEmail } from "../utils/emailService";
 import { incrementMetrics } from "../utils/metrics";
 import { DateTime } from "luxon";
+import { mxDayRangeUtc } from "../utils/time";
 
 /* ---------- helpers ---------- */
 /**
@@ -1292,13 +1293,13 @@ export const getCajaTransactionsController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+    const { startIso, endIso, date } = mxDayRangeUtc(DateTime.now());
 
     const snapshot = await admin
       .firestore()
       .collection("transactions")
-      .where("createdAt", ">=", `${today}T00:00:00.000Z`)
-      .where("createdAt", "<=", `${today}T23:59:59.999Z`)
+      .where("createdAt", ">=", startIso)
+      .where("createdAt", "<=", endIso)
       .orderBy("createdAt", "desc")
       .get();
 
@@ -1335,7 +1336,7 @@ export const getCajaTransactionsController = async (
         paidTransactions,
         pendingTransactions,
         rejectedTransactions,
-        date: today,
+        date,
       },
     });
   } catch (err) {

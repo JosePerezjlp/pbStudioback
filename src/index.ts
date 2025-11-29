@@ -342,13 +342,28 @@ cron.schedule("*/10 * * * *", async () => {
                   const { email, firstName: name } = userSnap.data()!;
 
                   try {
+                    let disciplineName = String(
+                      (classData as any)?.discipline?.name || ""
+                    );
+                    if (!disciplineName && typeof (classData as any)?.discipline === "string") {
+                      try {
+                        const dSnap = await admin
+                          .firestore()
+                          .collection("disciplines")
+                          .doc(String((classData as any).discipline))
+                          .get();
+                        disciplineName = String((dSnap.data() as any)?.name || "Clase");
+                      } catch {
+                        disciplineName = "Clase";
+                      }
+                    }
                     await sendClassReminderEmail(
                       email,
                       name ?? "Usuario",
                       {
                         day: classData.day,
                         hour: classData.hour,
-                        discipline: classData.discipline?.name ?? "Clase",
+                        discipline: disciplineName,
                         branch: classData.branch?.name ?? "Sucursal",
                       },
                       classData.type

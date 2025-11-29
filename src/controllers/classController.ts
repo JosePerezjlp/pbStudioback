@@ -487,6 +487,10 @@ export const getClassByIdController = async (
     const disciplineId = String(data?.discipline || "");
     const branchId = String(data?.branch || "");
 
+    // Resolver tipo desde el salón y usarlo para sobreescribir
+    const resolvedType =
+      (await getRoomTypeById(roomId)) ?? ClassType.INDIVIDUAL;
+
     let roomName: string | null = null;
     if (roomId) {
       const r = await db.collection("classrooms").doc(roomId).get();
@@ -528,6 +532,7 @@ export const getClassByIdController = async (
     res.status(200).json({
       id: doc.id,
       ...data,
+      type: resolvedType,
       enabled: String(data?.status || "") === "abierta",
       roomName,
       instructorFirstName,

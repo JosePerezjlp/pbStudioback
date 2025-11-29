@@ -1,5 +1,6 @@
 import { Resend } from "resend";
 import admin from "../config/firebase";
+import { formatDateVisibleMx } from "./time";
 
 const resend = new Resend(process.env.RESEND_API_KEY); // usa variables de entorno en producción
 
@@ -18,7 +19,7 @@ const escapeHtml = (s: string) =>
 // utilidad para convertir tipo de clase a formato legible
 const formatClassType = (type: string | undefined): string => {
   if (!type) return "Individual";
-  
+
   const normalizedType = type.toLowerCase();
   if (normalizedType.includes("group") || normalizedType.includes("grupal")) {
     return "Grupal";
@@ -85,12 +86,13 @@ export const sendReservationConfirmationEmail = async (
   try {
     const safeName = escapeHtml(name);
     const safeClass = escapeHtml(classInfo);
-    
+
     // Determinar tipo de reserva
     const classTypeLower = typeClass.toLowerCase();
-    const isGrupal = classTypeLower.includes("grup") || classTypeLower.includes("groups");
+    const isGrupal =
+      classTypeLower.includes("grup") || classTypeLower.includes("groups");
     const reservationType = isGrupal ? "Reserva Grupal" : "Reserva Individual";
-    
+
     // Generar información del asiento para clases grupales
     let seatInfo = "";
     if (seatNumber !== null && seatNumber !== undefined && isGrupal) {
@@ -155,7 +157,6 @@ export const sendReservationConfirmationEmail = async (
     console.error("Error enviando email de reserva:", error);
   }
 };
-
 
 // Envia copn imagen para cancelar reserva
 export const sendReservationCancelledEmail = async (
@@ -238,11 +239,7 @@ export const sendPackagePurchaseEmail = async (
   modality?: string
 ) => {
   const formattedDate = expiresAt
-    ? new Date(expiresAt).toLocaleDateString("es-CO", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      })
+    ? formatDateVisibleMx(expiresAt.slice(0, 10))
     : "Sin vencimiento";
 
   const formattedModality = modality
@@ -332,7 +329,6 @@ export const sendPackagePurchaseEmail = async (
   }
 };
 
-
 // Paqquete por ExpressValidator, Enviando con imagen
 export const sendPackageExpiryWarningEmail = async (
   to: string,
@@ -396,7 +392,6 @@ export const sendPackageExpiryWarningEmail = async (
     console.error("Error enviando email de expiración de paquete:", error);
   }
 };
-
 
 // NO IMAGEN
 export const sendClassReminderEmail = async (
@@ -481,7 +476,7 @@ export const sendContactNotificationEmail = async (payload: {
   });
 };
 
-/** 2) Autorespuesta al visitante NO PROPORCIONAN IMAGEN */ 
+/** 2) Autorespuesta al visitante NO PROPORCIONAN IMAGEN */
 export const sendContactAutoReplyEmail = async (payload: {
   name: string;
   email: string;
@@ -581,22 +576,31 @@ export const sendPasswordResetCodeEmail = async (
   }
 };
 
-
 async function getClassInfo(classId: string) {
   const doc = await admin.firestore().collection("classes").doc(classId).get();
   if (!doc.exists) throw new Error("Clase no encontrada para email");
   const { discipline, day, hour } = doc.data() as {
-    discipline: string;
+    discipline: string | { name?: string };
     day: string;
     hour: string;
   };
-  const dateStr = new Date(`${day}T00:00:00`).toLocaleDateString("es-CO", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
-  return { discipline, dateStr, hour };
+  const dateStr = formatDateVisibleMx(day);
+  let disciplineName = "";
+  if (typeof discipline === "string") {
+    try {
+      const dSnap = await admin
+        .firestore()
+        .collection("disciplines")
+        .doc(discipline)
+        .get();
+      disciplineName = String((dSnap.data() as any)?.name || discipline);
+    } catch {
+      disciplineName = String(discipline);
+    }
+  } else {
+    disciplineName = String(discipline?.name || "Clase");
+  }
+  return { discipline: disciplineName, dateStr, hour };
 }
 
 // Envia con imagen al entrar en lista de espera
@@ -673,7 +677,6 @@ export const sendWaitlistEntryEmail = async (
   }
 };
 
-
 // Envia con imagen cuando se le da cupo al usuario de la lista de espera
 export const sendWaitlistAcceptedEmail = async (
   to: string,
@@ -690,11 +693,14 @@ export const sendWaitlistAcceptedEmail = async (
     const safeDate = escapeHtml(dateStr);
     const safeHour = escapeHtml(hour);
     const formattedClassType = formatClassType(classType);
-    
+
     // Determinar tipo de reserva
-    const isGrupal = classType && (classType.toLowerCase().includes("grup") || classType.toLowerCase().includes("groups"));
+    const isGrupal =
+      classType &&
+      (classType.toLowerCase().includes("grup") ||
+        classType.toLowerCase().includes("groups"));
     const reservationType = isGrupal ? "Reserva Grupal" : "Reserva Individual";
-    
+
     // Generar información del asiento para clases grupales
     let seatInfo = "";
     if (seatNumber !== null && seatNumber !== undefined && isGrupal) {
@@ -756,10 +762,12 @@ export const sendWaitlistAcceptedEmail = async (
       </table>`,
     });
   } catch (error) {
-    console.error("Error enviando email de aceptación de lista de espera:", error);
+    console.error(
+      "Error enviando email de aceptación de lista de espera:",
+      error
+    );
   }
 };
-
 
 /**
  * Cuando la ventana de espera finaliza sin cupo. envio con imagen
@@ -821,7 +829,6 @@ export const sendWaitlistRejectedEmail = async (
   }
 };
 
-
 // Cancelacion de lista de espera envio con imagen
 
 export const sendWaitlistCancelledByUserEmail = async (
@@ -882,4 +889,3 @@ export const sendWaitlistCancelledByUserEmail = async (
     );
   }
 };
-

@@ -1,5 +1,6 @@
 import admin from "../config/firebase";
 import { ClassType } from "../types/enums";
+import { normalizeClassType } from "./packageSelection";
 
 interface ClassroomDoc {
   type?: unknown;
@@ -14,10 +15,9 @@ export const getRoomTypeById = async (
   if (!snap.exists) return null;
 
   const data = snap.data() as ClassroomDoc | undefined;
-  const raw =
-    typeof data?.type === "string" ? data.type.trim().toLowerCase() : "";
-
-  if (raw === ClassType.GROUPS) return ClassType.GROUPS;
-  if (raw === ClassType.INDIVIDUAL) return ClassType.INDIVIDUAL;
+  const raw = typeof data?.type === "string" ? data.type : null;
+  const normalized = normalizeClassType(raw);
+  if (normalized === ClassType.GROUPS) return ClassType.GROUPS;
+  if (normalized === ClassType.INDIVIDUAL) return ClassType.INDIVIDUAL;
   return null;
 };
