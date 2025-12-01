@@ -598,8 +598,11 @@ export const updateWaitlistController = async (
         });
       }
 
-      // Marcar waitlist rechazada
-      t.update(waitlistCol.doc(waitlistId), { status: "rejected" });
+      // Marcar waitlist rechazada y bandera de email enviado
+      t.update(waitlistCol.doc(waitlistId), {
+        status: "rejected",
+        rejectedEmailSent: true,
+      });
 
       return {
         userId: wl.userId,

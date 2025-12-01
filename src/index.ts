@@ -86,7 +86,8 @@ app.use(
 app.use(express.json());
 app.use((req, res, next) => {
   // @ts-ignore
-  (global as any).__activeRequests = Number((global as any).__activeRequests || 0) + 1;
+  (global as any).__activeRequests =
+    Number((global as any).__activeRequests || 0) + 1;
   const start = Date.now();
   const m0 = process.memoryUsage();
   res.on("finish", () => {
@@ -155,7 +156,10 @@ app.use((req, res, next) => {
       `${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms heap=${heap1}MB Δheap=${delta}MB rss=${rss1}MB uid=${u}`
     );
     // @ts-ignore
-    (global as any).__activeRequests = Math.max(0, Number((global as any).__activeRequests || 1) - 1);
+    (global as any).__activeRequests = Math.max(
+      0,
+      Number((global as any).__activeRequests || 1) - 1
+    );
   });
   next();
 });
@@ -191,7 +195,8 @@ app.use("/staff", verifyToken, adminSessionGuard, staffRouter);
 app.use("/attendance", verifyToken, adminSessionGuard, attendanceRouter);
 app.use("/waitlist", verifyToken, waitListRouter); // adminSessionGuard aplicado en router individual
 
-const PERF_ENABLE = String(process.env.PERF_LOG_ENABLED ?? "true").toLowerCase() !== "false";
+const PERF_ENABLE =
+  String(process.env.PERF_LOG_ENABLED ?? "true").toLowerCase() !== "false";
 const PERF_INTERVAL_SEC = Number(process.env.PERF_SUMMARY_INTERVAL_SEC ?? 60);
 if (PERF_ENABLE && PERF_INTERVAL_SEC > 0) {
   setInterval(() => {
@@ -200,14 +205,16 @@ if (PERF_ENABLE && PERF_INTERVAL_SEC > 0) {
     const rows = Array.from(stats.entries()).map(([key, v]) => {
       const msSorted = [...v.msSamples].sort((a: number, b: number) => a - b);
       const hdSorted = [...v.heapSamples].sort((a: number, b: number) => a - b);
-      const p95 = (arr: number[]) => (arr.length ? arr[Math.floor(0.95 * (arr.length - 1))] : 0);
+      const p95 = (arr: number[]) =>
+        arr.length ? arr[Math.floor(0.95 * (arr.length - 1))] : 0;
       return {
         key,
         count: v.count,
         avgMs: Math.round((v.sumMs / Math.max(1, v.count)) * 100) / 100,
         maxMs: v.maxMs,
         p95Ms: p95(msSorted),
-        avgHeapDeltaMB: Math.round((v.sumHeapDelta / Math.max(1, v.count)) * 100) / 100,
+        avgHeapDeltaMB:
+          Math.round((v.sumHeapDelta / Math.max(1, v.count)) * 100) / 100,
         maxHeapDeltaMB: v.maxHeapDelta,
         p95HeapDeltaMB: p95(hdSorted),
         lastAt: v.lastAt,
@@ -345,14 +352,19 @@ cron.schedule("*/10 * * * *", async () => {
                     let disciplineName = String(
                       (classData as any)?.discipline?.name || ""
                     );
-                    if (!disciplineName && typeof (classData as any)?.discipline === "string") {
+                    if (
+                      !disciplineName &&
+                      typeof (classData as any)?.discipline === "string"
+                    ) {
                       try {
                         const dSnap = await admin
                           .firestore()
                           .collection("disciplines")
                           .doc(String((classData as any).discipline))
                           .get();
-                        disciplineName = String((dSnap.data() as any)?.name || "Clase");
+                        disciplineName = String(
+                          (dSnap.data() as any)?.name || "Clase"
+                        );
                       } catch {
                         disciplineName = "Clase";
                       }
@@ -596,13 +608,23 @@ cron.schedule("0 * * * *", async () => {
           });
         }
 
-        // 4) Marcar waitlist como rechazada
-        batch.update(waitDoc.ref, { status: "rejected" });
+        // 4) Marcar waitlist como rechazada y bandera de email
+        batch.update(waitDoc.ref, {
+          status: "rejected",
+          rejectedEmailSent: true,
+        });
         processed += 1;
 
-        // 5) Enviar email de rechazo (no bloquea el batch)
-        const { email, firstName } = userSnap.data()!;
-        await sendWaitlistRejectedEmail(email, firstName, classId);
+        // 5) Enviar email de rechazo (revisando posible duplicado)
+        const latestWl = await waitDoc.ref.get();
+        const latestData = latestWl.data() as
+          | { rejectedEmailSent?: boolean }
+          | undefined;
+        const alreadySent = Boolean(latestData?.rejectedEmailSent);
+        if (!alreadySent) {
+          const { email, firstName } = userSnap.data()!;
+          await sendWaitlistRejectedEmail(email, firstName, classId);
+        }
       })
     );
 
@@ -649,7 +671,8 @@ cron.schedule("*/2 * * * *", async () => {
       return snap.docs.reduce((sum, d) => {
         const data = d.data() as any;
         if ((start || end) && data.status !== statusNeeded) return sum;
-        const amt = typeof data.amount === "string" ? Number(data.amount) : data.amount;
+        const amt =
+          typeof data.amount === "string" ? Number(data.amount) : data.amount;
         return sum + (Number.isFinite(amt) ? amt : 0);
       }, 0);
     };
@@ -666,15 +689,21 @@ cron.schedule("*/2 * * * *", async () => {
       snap.docs.forEach((d) => {
         const data = d.data() as any;
         if (data.status !== "paid") return;
-        const amt = typeof data.amount === "string" ? Number(data.amount) : data.amount;
+        const amt =
+          typeof data.amount === "string" ? Number(data.amount) : data.amount;
         const val = Number.isFinite(amt) ? amt : 0;
-        if (data.couponUsed) withDisc += val; else withoutDisc += val;
+        if (data.couponUsed) withDisc += val;
+        else withoutDisc += val;
       });
       return { withDisc, withoutDisc };
     };
 
     const sumByMethod = async (start: Date, end: Date) => {
-      const result: { cash: number; terminal: number; paypal: number } = { cash: 0, terminal: 0, paypal: 0 };
+      const result: { cash: number; terminal: number; paypal: number } = {
+        cash: 0,
+        terminal: 0,
+        paypal: 0,
+      };
       let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
         .collection("transactions")
         .select("amount", "status", "createdAt", "paymentMethod");
@@ -684,7 +713,8 @@ cron.schedule("*/2 * * * *", async () => {
       snap.docs.forEach((d) => {
         const data = d.data() as any;
         if (data.status !== "paid") return;
-        const amt = typeof data.amount === "string" ? Number(data.amount) : data.amount;
+        const amt =
+          typeof data.amount === "string" ? Number(data.amount) : data.amount;
         const val = Number.isFinite(amt) ? amt : 0;
         const raw = data.paymentMethod as string | undefined;
         let method: "cash" | "terminal" | "paypal" | null = null;
@@ -694,7 +724,8 @@ cron.schedule("*/2 * * * *", async () => {
         else if (typeof raw === "string") {
           if (raw.startsWith("payment.")) {
             const sub = raw.slice("payment.".length);
-            if (sub === "card" || sub === "pos" || sub === "paypal") method = "terminal";
+            if (sub === "card" || sub === "pos" || sub === "paypal")
+              method = "terminal";
             else if (sub === "cash") method = "cash";
           }
         }
@@ -739,7 +770,9 @@ cron.schedule("*/2 * * * *", async () => {
 
     let total = 0;
     const summaryDoc = await db.doc("metrics/summary").get();
-    const existingTotal = summaryDoc.exists ? (summaryDoc.data()?.total as number | undefined) : undefined;
+    const existingTotal = summaryDoc.exists
+      ? (summaryDoc.data()?.total as number | undefined)
+      : undefined;
     if (typeof existingTotal === "number" && Number.isFinite(existingTotal)) {
       total = existingTotal;
     } else {

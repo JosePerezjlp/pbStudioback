@@ -1186,15 +1186,7 @@ export const deleteReservationController = async (
       ]);
       const cancelUser = cancelUserSnap.data() as UserDoc;
       const cancelClass = cancelClassSnap.data() as ClassDoc;
-      const cancelDateStr = new Date(
-        `${cancelClass.day}T00:00:00`
-      ).toLocaleDateString("es-MX", {
-        weekday: "long",
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-        timeZone: "America/Mexico_City",
-      });
+      const cancelDateStr = formatDateVisibleMx(String(cancelClass.day));
       let cancelDisciplineName = "";
       if (typeof (cancelClass as any).discipline === "string") {
         try {
