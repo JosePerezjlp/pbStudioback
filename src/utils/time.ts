@@ -11,13 +11,18 @@ const toDateTimeMx = (v?: Date | string | DateTime): DateTime => {
   return v.setZone(MX_ZONE);
 };
 
-export const fromIsoMx = (iso: string): DateTime => DateTime.fromISO(iso, { zone: MX_ZONE });
+export const fromIsoMx = (iso: string): DateTime =>
+  DateTime.fromISO(iso, { zone: MX_ZONE });
 
-export const startOfDayMx = (v?: Date | string | DateTime): DateTime => toDateTimeMx(v).startOf("day");
+export const startOfDayMx = (v?: Date | string | DateTime): DateTime =>
+  toDateTimeMx(v).startOf("day");
 
-export const endOfDayMx = (v?: Date | string | DateTime): DateTime => toDateTimeMx(v).endOf("day");
+export const endOfDayMx = (v?: Date | string | DateTime): DateTime =>
+  toDateTimeMx(v).endOf("day");
 
-export const mxDayRangeUtc = (v?: Date | string | DateTime): { startIso: string; endIso: string; date: string } => {
+export const mxDayRangeUtc = (
+  v?: Date | string | DateTime
+): { startIso: string; endIso: string; date: string } => {
   const dt = toDateTimeMx(v);
   return {
     startIso: dt.startOf("day").toUTC().toISO() || "",
@@ -33,10 +38,6 @@ export const minutesUntilClassMx = (day: string, hour: string): number => {
 };
 
 export const formatDateVisibleMx = (dayYmd: string): string =>
-  new Date(`${dayYmd}T00:00:00`).toLocaleDateString("es-MX", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: MX_ZONE,
-  });
+  fromIsoMx(`${dayYmd}T00:00:00`)
+    .setLocale("es-MX")
+    .toFormat("cccc, d 'de' LLLL 'de' yyyy");

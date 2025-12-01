@@ -170,6 +170,165 @@ export const createClassController = async (
   }
 };
 
+export const getFutureClassesController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const day = String(req.query.day || "");
+    const hour = String(req.query.hour || "");
+    const discipline = String(req.query.discipline || "");
+    const branchId = (req.query.branchId as string | undefined) || undefined;
+    const typeParam = (req.query.type as string | undefined) || undefined;
+    const limitParam = Number(req.query.limit ?? 50);
+    const limit =
+      Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 50;
+    const onlyAvailableParam = String(
+      req.query.onlyAvailable ?? "true"
+    ).toLowerCase();
+    const onlyAvailable = onlyAvailableParam !== "false"; // default true
+
+    if (!day || !discipline) {
+      res
+        .status(400)
+        .json({ error: "Parámetros 'day' y 'discipline' son requeridos" });
+      return;
+    }
+
+    const db = admin.firestore();
+    let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
+      .collection("classes")
+      .where("day", ">=", day);
+
+    let base: any[] = [];
+    try {
+      q = q
+        .where("discipline", "==", discipline)
+        .where("status", "==", "abierta");
+      if (branchId) q = q.where("branch", "==", branchId);
+      const snap = await q.get();
+      base = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (
+        msg.includes("FAILED_PRECONDITION") &&
+        msg.includes("requires an index")
+      ) {
+        const snap = await db
+          .collection("classes")
+          .where("day", ">=", day)
+          .get();
+        base = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+      } else {
+        throw e;
+      }
+    }
+
+    const filtered = base
+      .filter((c: any) => {
+        if (typeParam && String(c.type || "") !== typeParam) return false;
+        if (onlyAvailable) {
+          const capacity = Number(c.capacity ?? 0);
+          const occupied = Number(c.occupied ?? 0);
+          if (capacity > 0 && occupied >= capacity) return false;
+        }
+        const sameDay = String(c.day) === day;
+        if (sameDay) return String(c.hour) >= hour;
+        return true;
+      })
+      .sort((a: any, b: any) => {
+        const ad = String(a.day || "");
+        const bd = String(b.day || "");
+        if (ad !== bd) return ad.localeCompare(bd);
+        return String(a.hour || "").localeCompare(String(b.hour || ""));
+      })
+      .slice(0, limit);
+
+    const instructorIds = Array.from(
+      new Set(
+        filtered.map((c: any) => String(c.instructor || "")).filter((v) => !!v)
+      )
+    );
+    const roomIds = Array.from(
+      new Set(filtered.map((c: any) => String(c.room || "")).filter((v) => !!v))
+    );
+    const branchIds = Array.from(
+      new Set(
+        filtered.map((c: any) => String(c.branch || "")).filter((v) => !!v)
+      )
+    );
+    const disciplineIds = Array.from(
+      new Set(
+        filtered.map((c: any) => String(c.discipline || "")).filter((v) => !!v)
+      )
+    );
+
+    const instructorsMap: Map<string, any> = new Map();
+    const roomsMap: Map<string, any> = new Map();
+    const branchesMap: Map<string, any> = new Map();
+    const disciplinesMap: Map<string, any> = new Map();
+
+    for (let i = 0; i < instructorIds.length; i += 10) {
+      const chunk = instructorIds.slice(i, i + 10);
+      const insSnap = await db
+        .collection("instructors")
+        .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+        .get();
+      insSnap.docs.forEach((doc) => instructorsMap.set(doc.id, doc.data()));
+    }
+
+    for (let i = 0; i < roomIds.length; i += 10) {
+      const chunk = roomIds.slice(i, i + 10);
+      const roomSnap = await db
+        .collection("classrooms")
+        .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+        .get();
+      roomSnap.docs.forEach((doc) => roomsMap.set(doc.id, doc.data()));
+    }
+
+    for (let i = 0; i < branchIds.length; i += 10) {
+      const chunk = branchIds.slice(i, i + 10);
+      const brSnap = await db
+        .collection("branches")
+        .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+        .get();
+      brSnap.docs.forEach((doc) => branchesMap.set(doc.id, doc.data()));
+    }
+
+    for (let i = 0; i < disciplineIds.length; i += 10) {
+      const chunk = disciplineIds.slice(i, i + 10);
+      const dSnap = await db
+        .collection("disciplines")
+        .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+        .get();
+      dSnap.docs.forEach((doc) => disciplinesMap.set(doc.id, doc.data()));
+    }
+
+    const classes = filtered.map((c: any) => {
+      const ins = c.instructor
+        ? instructorsMap.get(String(c.instructor))
+        : undefined;
+      const room = c.room ? roomsMap.get(String(c.room)) : undefined;
+      const br = c.branch ? branchesMap.get(String(c.branch)) : undefined;
+      const d = c.discipline
+        ? disciplinesMap.get(String(c.discipline))
+        : undefined;
+      return {
+        ...c,
+        instructorFirstName: String(ins?.firstName || ""),
+        instructorLastName: String(ins?.lastName || ""),
+        roomName: String(room?.name || ""),
+        branchName: String(br?.name || ""),
+        disciplineName: String(d?.name || ""),
+      };
+    });
+
+    res.status(200).json({ classes });
+  } catch (err) {
+    res.status(500).json({ error: "Error interno al obtener clases futuras" });
+  }
+};
+
 /* ============================================================
    LIST – todas las clases
    ============================================================ */
@@ -237,7 +396,7 @@ export const getAllClassesController = async (
 
     if (
       user &&
-      user.role === "employee" &&
+      (user.role === "collaborator" || user.role === "instructor") &&
       Array.isArray(user.branches) &&
       user.branches.length > 0
     ) {
@@ -281,7 +440,7 @@ export const getAllClassesController = async (
 
       if (
         user &&
-        user.role === "employee" &&
+        (user.role === "collaborator" || user.role === "instructor") &&
         Array.isArray(user.branches) &&
         user.branches.length > 10
       ) {
@@ -302,7 +461,7 @@ export const getAllClassesController = async (
         let qb = makeBase();
         if (
           user &&
-          user.role === "employee" &&
+          (user.role === "collaborator" || user.role === "instructor") &&
           Array.isArray(user.branches) &&
           user.branches.length > 0
         ) {
@@ -346,7 +505,7 @@ export const getAllClassesController = async (
     let pageItems = pageDocs.map((doc) => ({ id: doc.id, ...doc.data() }));
     if (
       user &&
-      user.role === "employee" &&
+      (user.role === "collaborator" || user.role === "instructor") &&
       Array.isArray(user.branches) &&
       user.branches.length > 10
     ) {

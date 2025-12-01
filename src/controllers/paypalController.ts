@@ -107,59 +107,8 @@ export const createPayPalOrderController = async (
       couponCode?: string;
     };
 
-    // Validar cupón y calcular precio final si es necesario
-    let finalAmount = Number(amount);
-    
-    if (couponCode && packageId) {
-      const db = admin.firestore();
-      const couponsCol = db.collection("coupons");
-      const packageRef = db.doc(`packages/${packageId}`);
-      
-      // Obtener datos del paquete y cupón en paralelo
-      const [pkgSnap, couponQuery] = await Promise.all([
-        packageRef.get(),
-        couponsCol.where("code", "==", couponCode).limit(1).get()
-      ]);
-      
-      if (!couponQuery.empty && pkgSnap.exists) {
-        const couponDoc = couponQuery.docs[0];
-        const couponData = couponDoc.data();
-        const pkgData = pkgSnap.data()!;
-        
-        // Verificar si el cupón aplica al paquete
-        // Si es universal, aplica a todos los paquetes
-        const isUniversal = couponData.isUniversal === true;
-        const packageIds = couponData.packageIds || [];
-        
-        if (isUniversal || packageIds.includes(packageId)) {
-          // Normalizar fechas para comparar solo por día (sin hora)
-          const today = normalizeToday(); // Fecha actual normalizada a inicio del día
-          const start = normalizeStartDate(couponData.startDate); // Inicio del día
-          const end = normalizeEndDate(couponData.endDate); // Fin del día
-          const usosDisponibles = (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0);
-          
-          // Verificar vigencia: startDate <= hoy <= endDate (inclusive)
-          if (today >= start && today <= end && usosDisponibles > 0) {
-            // Calcular descuento considerando specialPrice si aplica
-            // Si applyToSpecialPrice === true y el paquete tiene specialPrice, usar specialPrice como base
-            // Si no, usar el amount original
-            const baseAmount = (
-              couponData.applyToSpecialPrice === true && 
-              pkgData.specialPrice && 
-              typeof pkgData.specialPrice === 'number' &&
-              pkgData.specialPrice > 0
-            ) ? pkgData.specialPrice : finalAmount;
-            
-            const discountAmount = (baseAmount * couponData.discount) / 100;
-            finalAmount = Math.max(0, baseAmount - discountAmount);
-            
-            console.log(`💰 PayPal - Cupón aplicado: ${couponData.discount}%`);
-            console.log(`💰 PayPal - Base de cálculo: $${baseAmount}`);
-            console.log(`💰 PayPal - Precio final: $${finalAmount}`);
-          }
-        }
-      }
-    }
+    // Usar el monto recibido como final (ya descontado del lado cliente)
+    const finalAmount = Number(amount);
 
     const accessToken = await getAccessToken();
 

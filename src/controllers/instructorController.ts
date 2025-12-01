@@ -39,7 +39,7 @@ interface InstructorDoc {
   staffId?: string;
 
   // fijos
-  role: "employee";
+  role: RolTypeEnum;
   permissions: Record<string, string[]>; // { clases: [...] }
   isAdmin: boolean;
   updatedAt?: string;
@@ -229,7 +229,7 @@ export const createInstructorController = [
         registrationDate: nowIso,
         createdAt: nowIso,
         staffId: uid,
-        role: "employee",
+        role: RolTypeEnum.INSTRUCTOR,
         permissions: {
           clases: [...CLASES_PERMISOS],
         },

@@ -284,7 +284,7 @@ export const createStaffUser = async (
 // 📋 Listar todos los usuarios staff
 // 📋 Listar todos los usuarios staff (solo admin y employee, excluyendo superusuarios)
 export const getAllStaffUsers = async (
-  _req: Request,
+  req: Request,
   res: Response
 ): Promise<void> => {
   try {
@@ -296,25 +296,25 @@ export const getAllStaffUsers = async (
       "admintemporal@pbstudioapp.com",
     ];
 
+    const statusParam = String(req.query.status || "all").toLowerCase();
+    const roleParam = String(req.query.role || "all").toLowerCase();
+
     const staffList: StaffUser[] = snapshot.docs
-      .map((doc) => {
-        const data = doc.data() as Omit<StaffUser, "id">;
-        return {
-          id: doc.id,
-          ...data,
-        };
-      })
+      .map((doc) => ({ id: doc.id, ...(doc.data() as Omit<StaffUser, "id">) }))
+      .filter((user) => !superUsers.includes((user.email ?? "").toLowerCase()))
       .filter((user) => {
-        const email = (user.email ?? "").toLowerCase();
-        const role = String(user.role ?? "").toLowerCase();
-        if (superUsers.includes(email)) return false;
-        return (
-          role === RolTypeEnum.ADMIN ||
-          role === RolTypeEnum.COLLABORATOR ||
-          role === RolTypeEnum.INSTRUCTOR ||
-          role === "employee"
-        );
-      });
+        if (roleParam !== "all") {
+          const r = String(user.role || "").toLowerCase();
+          if (r !== roleParam) return false;
+        }
+        const s = String(user.status || "");
+        if (statusParam === "active") return s === StatusTypeEnum.ACTIVE;
+        if (statusParam === "inactive") return s === StatusTypeEnum.INACTIVE;
+        return true; // all
+      })
+      .sort((a, b) =>
+        String(b.createdAt || "").localeCompare(String(a.createdAt || ""))
+      );
 
     res.status(200).json({ staff: staffList });
   } catch (error) {
@@ -633,14 +633,12 @@ export const changeStaffPassword = async (
           : undefined;
       if (code === "auth/user-not-found") {
         try {
-          await admin
-            .auth()
-            .createUser({
-              uid: id,
-              email,
-              password: newPassword,
-              emailVerified: true,
-            });
+          await admin.auth().createUser({
+            uid: id,
+            email,
+            password: newPassword,
+            emailVerified: true,
+          });
           await admin.auth().revokeRefreshTokens(id);
         } catch (ce: unknown) {
           const ccode =
@@ -655,12 +653,10 @@ export const changeStaffPassword = async (
             await staffCollection
               .doc(id)
               .set({ updatedAt: new Date().toISOString() }, { merge: true });
-            res
-              .status(200)
-              .json({
-                message: "Contraseña actualizada para usuario existente",
-                uid: targetUid,
-              });
+            res.status(200).json({
+              message: "Contraseña actualizada para usuario existente",
+              uid: targetUid,
+            });
             return;
           }
           throw ce;

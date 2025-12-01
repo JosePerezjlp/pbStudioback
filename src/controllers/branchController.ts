@@ -57,7 +57,7 @@ export const getAllBranchesController = async (
 
     // Si el usuario es employee (no admin) y tiene branches limitadas, filtrar
     let branches = [];
-    if (user && user.role === "employee" && user.branches && user.branches.length > 0) {
+    if (user && (user.role === "collaborator" || user.role === "instructor") && user.branches && user.branches.length > 0) {
       // Obtener todas y filtrar en memoria (Firestore no soporta "in" con orderBy fácilmente)
       const snapshot = await query.get();
       const allBranches = snapshot.docs.map((doc) => ({

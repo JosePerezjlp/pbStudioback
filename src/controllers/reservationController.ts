@@ -3,7 +3,7 @@ import { Request, Response } from "express";
 import admin from "../config/firebase";
 import { ERROR_CODES, ClassType } from "../types/enums";
 import { DateTime } from "luxon";
-import { minutesUntilClassMx } from "../utils/time";
+import { minutesUntilClassMx, formatDateVisibleMx } from "../utils/time";
 import { AuthRequest } from "../middleware/authMiddleware";
 import {
   sendReservationCancelledEmail,
@@ -48,6 +48,7 @@ interface ReservationDoc {
   seat: number | null;
   status: ReservationStatus;
   classDay: string; // "YYYY-MM-DD"
+  classHour?: string; // "HH:mm"
   createdAt: string; // ISO
   consumedClass: boolean;
   packageId?: string | null;
@@ -215,18 +216,29 @@ export const createReservationController = async (
         finalSeat = null;
       } else {
         if (finalSeat !== null) {
-          const seatTaken = await reservationsRef
+          const occupiedSeatsSnap = await reservationsRef
             .where("classId", "==", classId)
-            .where("seat", "==", finalSeat)
+            .where("classDay", "==", String(cls.day || ""))
+            .where("classHour", "==", String(cls.hour || ""))
             .where("status", "==", "active")
-            .limit(1)
             .get();
-          if (!seatTaken.empty) {
+          const occupiedSeats = occupiedSeatsSnap.docs
+            .map((doc) => (doc.data() as any).seat)
+            .map((s: any) => (typeof s === "string" ? Number(s) : s))
+            .filter((s): s is number => s !== null && typeof s === "number")
+            .sort((a, b) => a - b);
+          const capacity = Number(cls.capacity ?? 0);
+          if (capacity > 0 && (finalSeat < 1 || finalSeat > capacity)) {
+            throw new Error("El asiento seleccionado no existe en esta clase");
+          }
+          if (occupiedSeats.includes(finalSeat)) {
             throw new Error(ERROR_CODES.SEAT_ALREADY_TAKEN);
           }
         } else {
           const occupiedSeatsSnap = await reservationsRef
             .where("classId", "==", classId)
+            .where("classDay", "==", String(cls.day || ""))
+            .where("classHour", "==", String(cls.hour || ""))
             .where("status", "==", "active")
             .get();
           const occupiedSeats = occupiedSeatsSnap.docs
@@ -387,6 +399,7 @@ export const createReservationController = async (
         seat: finalSeat,
         status: "active",
         classDay: (cls.day ?? "").slice(0, 10),
+        classHour: String(cls.hour || ""),
         createdAt: new Date().toISOString(),
         consumedClass,
         packageId,
@@ -407,16 +420,7 @@ export const createReservationController = async (
         .get();
       const cls = classSnapEmail.data() as ClassDoc;
 
-      const dateStr = new Date(`${cls.day}T00:00:00`).toLocaleDateString(
-        "es-MX",
-        {
-          weekday: "long",
-          day: "numeric",
-          month: "long",
-          year: "numeric",
-          timeZone: "America/Mexico_City",
-        }
-      );
+      const dateStr = formatDateVisibleMx(String(cls.day));
 
       let disciplineName = "";
       if (typeof (cls as any).discipline === "string") {
@@ -460,6 +464,51 @@ export const createReservationController = async (
     const msg = err instanceof Error ? err.message : String(err);
     const status = statusFromMessage(msg);
     const code = codeFromMessage(msg);
+    if (code === "SEAT_ALREADY_TAKEN") {
+      try {
+        const { classId, seat } = req.body as {
+          classId?: string;
+          seat?: number;
+        };
+        const db = admin.firestore();
+        const clsSnap = classId
+          ? await db.collection("classes").doc(String(classId)).get()
+          : null;
+        const clsData = (clsSnap?.data() as any) || {};
+        const capacity = Number(clsData?.capacity ?? 0);
+        const classDay = String(clsData?.day || "");
+        const classHour = String(clsData?.hour || "");
+        const occupiedSeatsSnap = classId
+          ? await db
+              .collection("reservations")
+              .where("classId", "==", String(classId))
+              .where("classDay", "==", classDay)
+              .where("classHour", "==", classHour)
+              .where("status", "==", "active")
+              .get()
+          : null;
+        const occupiedSeats = (occupiedSeatsSnap?.docs || [])
+          .map((d) => (d.data() as any).seat)
+          .map((s: any) => (typeof s === "string" ? Number(s) : s))
+          .filter((s): s is number => s !== null && typeof s === "number")
+          .sort((a, b) => a - b);
+        res.status(status).json({
+          error: msg,
+          code,
+          debug: {
+            classId,
+            classDay,
+            classHour,
+            capacity,
+            requestedSeat: seat,
+            occupiedSeats,
+          },
+        });
+        return;
+      } catch (_) {
+        /* noop */
+      }
+    }
     res.status(status).json({ error: msg, code });
   }
 };
@@ -553,7 +602,7 @@ export const getAllReservationsController = async (
     // Si el usuario es employee (no admin) y tiene branches limitadas, filtrar por branch de las clases
     if (
       user &&
-      user.role === "employee" &&
+      (user.role === "collaborator" || user.role === "instructor") &&
       user.branches &&
       user.branches.length > 0
     ) {
@@ -1054,6 +1103,8 @@ export const deleteReservationController = async (
           // Obtener todos los asientos ocupados para esta clase (excluyendo la reserva que se está cancelando)
           const occupiedSeatsSnap = await reservationsRef
             .where("classId", "==", candidate!.wl.classId)
+            .where("classDay", "==", String(cls.day || ""))
+            .where("classHour", "==", String(cls.hour || ""))
             .where("status", "==", "active")
             .where("seat", "!=", null)
             .get();
@@ -1349,6 +1400,8 @@ export const changeReservationController = async (
         const seatTaken = await db
           .collection("reservations")
           .where("classId", "==", newClassId)
+          .where("classDay", "==", String(newClass.day || ""))
+          .where("classHour", "==", String(newClass.hour || ""))
           .where("seat", "==", newSeat)
           .where("status", "==", "active")
           .limit(1)
@@ -1367,6 +1420,7 @@ export const changeReservationController = async (
         seat: newSeat || null,
         status: "active" as const,
         classDay: newClass.day,
+        classHour: String(newClass.hour || ""),
         createdAt: new Date().toISOString(),
         consumedClass: false,
         packageId: currentRes.packageId,
@@ -1403,6 +1457,7 @@ export const changeReservationController = async (
           classId: newClassId,
           status: "active",
           seat: newSeat || null,
+          classHour: String(newClass.hour || ""),
         },
       };
     });

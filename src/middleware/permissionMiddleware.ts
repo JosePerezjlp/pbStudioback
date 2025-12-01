@@ -28,8 +28,8 @@ export const checkPermission = (
         return;
       }
 
-      // Para empleados, verificar permisos específicos
-      if (role === "employee") {
+      // Para staff (colaborador / instructor), verificar permisos específicos
+      if (role === "collaborator" || role === "instructor") {
         const db = admin.firestore();
         
         // Buscar en users, staff o instructors (prioridad: users -> staff -> instructors)
@@ -99,8 +99,8 @@ export const checkAnyPermission = (
         return;
       }
 
-      // Para empleados, verificar al menos uno de los permisos
-      if (role === "employee") {
+      // Para staff (colaborador / instructor), verificar al menos uno de los permisos
+      if (role === "collaborator" || role === "instructor") {
         const db = admin.firestore();
         
         // Buscar en users, staff o instructors (prioridad: users -> staff -> instructors)

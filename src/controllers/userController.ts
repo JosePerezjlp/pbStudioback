@@ -898,11 +898,11 @@ export const getUserByIdController = async (
     const data = doc.data() || {};
     const role = (data.role as string)?.toLowerCase() || "";
 
-    // Normalizar branches y permissions para employees y admins
+    // Normalizar branches y permissions para staff (colaboradores/instructores) y admins
     let normalizedBranches: string[] = [];
     let normalizedPermissions: Record<string, string[]> = {};
 
-    if (role === "employee" || role === "admin") {
+    if (role === "collaborator" || role === "instructor" || role === "admin") {
       // Normalizar branches
       if (Array.isArray(data.branches)) {
         normalizedBranches = data.branches.filter(

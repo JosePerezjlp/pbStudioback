@@ -217,7 +217,7 @@ export const getAllWaitlistsController = async (
     let query = waitlistCol.orderBy("createdAt", "asc");
 
     // Si es la ruta /my, filtrar por usuario actual
-    if (req.path === '/my' || req.originalUrl.includes('/my')) {
+    if (req.path === "/my" || req.originalUrl.includes("/my")) {
       const authHeader = req.headers.authorization;
       if (!authHeader || !authHeader.startsWith("Bearer ")) {
         res.status(401).json({ error: "Token no proporcionado" });
@@ -227,8 +227,10 @@ export const getAllWaitlistsController = async (
       const idToken = authHeader.slice(7);
       const decoded = await admin.auth().verifyIdToken(idToken);
       const userId = decoded.uid;
-      
-      query = waitlistCol.where("userId", "==", userId).orderBy("createdAt", "asc");
+
+      query = waitlistCol
+        .where("userId", "==", userId)
+        .orderBy("createdAt", "asc");
     }
 
     const snap = await query.get();
@@ -238,15 +240,20 @@ export const getAllWaitlistsController = async (
     }));
 
     // Si el usuario es employee (no admin) y tiene branches limitadas, filtrar por branch de las clases
-    if (user && user.role === "employee" && user.branches && user.branches.length > 0) {
+    if (
+      user &&
+      (user.role === "collaborator" || user.role === "instructor") &&
+      user.branches &&
+      user.branches.length > 0
+    ) {
       // Obtener todas las clases únicas de las waitlists
-      const classIds = Array.from(new Set(
-        list.map((wl: any) => wl.classId).filter(Boolean)
-      ));
-      
+      const classIds = Array.from(
+        new Set(list.map((wl: any) => wl.classId).filter(Boolean))
+      );
+
       // Obtener las clases en chunks (Firestore limita "in" a 10 items)
       const allClasses: Map<string, any> = new Map();
-      
+
       for (let i = 0; i < classIds.length; i += 10) {
         const chunk = classIds.slice(i, i + 10);
         const classesSnap = await admin
@@ -254,7 +261,7 @@ export const getAllWaitlistsController = async (
           .collection("classes")
           .where(admin.firestore.FieldPath.documentId(), "in", chunk)
           .get();
-        classesSnap.docs.forEach(doc => {
+        classesSnap.docs.forEach((doc) => {
           allClasses.set(doc.id, doc.data());
         });
       }
@@ -262,11 +269,108 @@ export const getAllWaitlistsController = async (
       // Filtrar waitlists por branch de las clases
       list = list.filter((wl: any) => {
         const classData = allClasses.get(wl.classId);
-        return classData && classData.branch && user.branches!.includes(classData.branch);
+        return (
+          classData &&
+          classData.branch &&
+          user.branches!.includes(classData.branch)
+        );
       });
     }
 
-    res.status(200).json({ waitlists: list });
+    // Enriquecer con datos de la clase
+    try {
+      const classIds = Array.from(
+        new Set(list.map((wl: any) => wl.classId).filter(Boolean))
+      );
+      const classesMap: Map<string, any> = new Map();
+      for (let i = 0; i < classIds.length; i += 10) {
+        const chunk = classIds.slice(i, i + 10);
+        const classesSnap = await admin
+          .firestore()
+          .collection("classes")
+          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+          .get();
+        classesSnap.docs.forEach((doc) => {
+          classesMap.set(doc.id, { id: doc.id, ...doc.data() });
+        });
+      }
+
+      const instructorIds = Array.from(
+        new Set(
+          Array.from(classesMap.values())
+            .map((c: any) =>
+              typeof c.instructor === "string"
+                ? c.instructor
+                : String(c.instructor || "")
+            )
+            .filter((id) => !!id)
+        )
+      );
+      const disciplineIds = Array.from(
+        new Set(
+          Array.from(classesMap.values())
+            .map((c: any) =>
+              typeof c.discipline === "string"
+                ? c.discipline
+                : String(c.discipline || "")
+            )
+            .filter((id) => !!id)
+        )
+      );
+
+      const instructorsMap: Map<
+        string,
+        { firstName?: string; lastName?: string }
+      > = new Map();
+      const disciplinesMap: Map<string, { name?: string }> = new Map();
+
+      for (let i = 0; i < instructorIds.length; i += 10) {
+        const chunk = instructorIds.slice(i, i + 10);
+        const snap = await admin
+          .firestore()
+          .collection("instructors")
+          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+          .get();
+        snap.docs.forEach((d) => instructorsMap.set(d.id, d.data() as any));
+      }
+
+      for (let i = 0; i < disciplineIds.length; i += 10) {
+        const chunk = disciplineIds.slice(i, i + 10);
+        const snap = await admin
+          .firestore()
+          .collection("disciplines")
+          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+          .get();
+        snap.docs.forEach((d) => disciplinesMap.set(d.id, d.data() as any));
+      }
+
+      const enriched = list.map((wl: any) => {
+        const cls = classesMap.get(wl.classId) ?? null;
+        if (!cls) return { ...wl, class: null };
+        const did =
+          typeof cls.discipline === "string"
+            ? cls.discipline
+            : String(cls.discipline || "");
+        const iid =
+          typeof cls.instructor === "string"
+            ? cls.instructor
+            : String(cls.instructor || "");
+        const d = did ? disciplinesMap.get(did) : undefined;
+        const ins = iid ? instructorsMap.get(iid) : undefined;
+        return {
+          ...wl,
+          class: {
+            ...cls,
+            disciplineName: String(d?.name || ""),
+            instructorFirstName: String(ins?.firstName || ""),
+            instructorLastName: String(ins?.lastName || ""),
+          },
+        };
+      });
+      res.status(200).json({ waitlists: enriched });
+    } catch (e) {
+      res.status(200).json({ waitlists: list });
+    }
   } catch (err) {
     console.error("getAllWaitlists error:", err);
     res.status(500).json({ error: "Error interno al listar waitlists" });
@@ -382,9 +486,9 @@ export const updateWaitlistController = async (
             : normalizeClassType(
                 typeof cls.type === "string" ? cls.type : undefined
               )) ?? ClassType.INDIVIDUAL;
-        
+
         let assignedSeat: number | null = null;
-        
+
         // Si es clase grupal, encontrar el primer asiento disponible
         if (classType === ClassType.GROUPS) {
           // Obtener todos los asientos ocupados para esta clase
@@ -393,15 +497,18 @@ export const updateWaitlistController = async (
             .where("status", "==", "active")
             .where("seat", "!=", null)
             .get();
-          
+
           const occupiedSeats = occupiedSeatsSnap.docs
-            .map(doc => {
+            .map((doc) => {
               const data = doc.data() as ReservationDoc;
               return data.seat;
             })
-            .filter((seat): seat is number => seat !== null && typeof seat === 'number')
+            .filter(
+              (seat): seat is number =>
+                seat !== null && typeof seat === "number"
+            )
             .sort((a, b) => a - b);
-          
+
           // Encontrar el primer asiento disponible (del 1 al capacity)
           const capacity = cls.capacity ?? 0;
           for (let seatNum = 1; seatNum <= capacity; seatNum++) {
@@ -410,7 +517,7 @@ export const updateWaitlistController = async (
               break;
             }
           }
-          
+
           // Si no se encontró asiento disponible, usar null (no debería pasar si hay cupo)
           if (assignedSeat === null && capacity > 0) {
             assignedSeat = capacity; // Fallback: usar el último asiento
@@ -511,11 +618,19 @@ export const updateWaitlistController = async (
           const classSnap = await classesCol.doc(result.classId).get();
           const classData = classSnap.data() as ClassDoc | undefined;
           const classType = classData?.type || "individual";
-          
+
           // Obtener el asiento asignado desde la reserva creada
           let assignedSeat: number | null = null;
-          const acceptedResult = result as { userId: string; classId: string; action: "accepted"; seat?: number | null };
-          if (acceptedResult.seat !== undefined && acceptedResult.seat !== null) {
+          const acceptedResult = result as {
+            userId: string;
+            classId: string;
+            action: "accepted";
+            seat?: number | null;
+          };
+          if (
+            acceptedResult.seat !== undefined &&
+            acceptedResult.seat !== null
+          ) {
             assignedSeat = acceptedResult.seat;
           } else {
             // Si no viene en el resultado, buscar la reserva recién creada
@@ -526,14 +641,21 @@ export const updateWaitlistController = async (
               .orderBy("createdAt", "desc")
               .limit(1)
               .get();
-            
+
             if (!reservationSnap.empty) {
-              const reservationData = reservationSnap.docs[0].data() as ReservationDoc;
+              const reservationData =
+                reservationSnap.docs[0].data() as ReservationDoc;
               assignedSeat = reservationData.seat ?? null;
             }
           }
-          
-          await sendWaitlistAcceptedEmail(u.email, u.firstName, result.classId, assignedSeat, classType);
+
+          await sendWaitlistAcceptedEmail(
+            u.email,
+            u.firstName,
+            result.classId,
+            assignedSeat,
+            classType
+          );
         } else {
           await sendWaitlistRejectedEmail(u.email, u.firstName, result.classId);
         }
@@ -633,7 +755,11 @@ export const deleteWaitlistController = async (
       const userSnap = await usersCol.doc(result.userId).get();
       const u = userSnap.data() as UserDoc | undefined;
       if (u) {
-        await sendWaitlistCancelledByUserEmail(u.email, u.firstName, result.classId);
+        await sendWaitlistCancelledByUserEmail(
+          u.email,
+          u.firstName,
+          result.classId
+        );
       }
     } catch (e) {
       console.error("Email waitlist cancelled (by user) falló:", e);

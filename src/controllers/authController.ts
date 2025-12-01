@@ -56,7 +56,7 @@ export const loginController = async (
     const roleRaw = str(data.role);
     const role = roleRaw ? roleRaw.toLowerCase() : "";
 
-    // Normalización si viene de instructors (tu panel lo trata como "employee")
+    // Normalización si viene de instructors
     if (collection === "instructors") {
       const enabled = boolishTrue(data.enabled);
       const status = enabled ? "Activo" : "Inactivo";
@@ -102,7 +102,7 @@ export const loginController = async (
         uid,
         email: str(data.email),
         ...data,
-        role: "employee",
+        role: "instructor",
         status,
         branches,
         branch,
@@ -134,7 +134,7 @@ export const loginController = async (
         uid,
         email: str(safeData.email),
         ...safeData,
-        role: "employee",
+        role: (str(safeData.role) || "collaborator").toLowerCase(),
         status,
         branches,
         permissions,
@@ -150,7 +150,7 @@ export const loginController = async (
     let newSessionId: string | null = null;
     let sessionNotice: string | null = null;
 
-    if (role === "admin" || role === "employee") {
+    if (role === "admin" || role === "collaborator" || role === "instructor") {
       newSessionId = uuidv4();
       await userRef.update({
         sessionId: newSessionId,
@@ -164,7 +164,7 @@ export const loginController = async (
     let normalizedBranches: string[] = [];
     let normalizedPermissions: Record<string, string[]> = {};
 
-    if (role === "employee") {
+    if (role === "collaborator" || role === "instructor") {
       // Normalizar branches
       if (Array.isArray(data.branches)) {
         normalizedBranches = data.branches.filter(
@@ -201,10 +201,12 @@ export const loginController = async (
       ...rest,
       role,
       // Asegurar que employees tengan branches y permissions en la respuesta
-      ...(role === "employee" && {
-        branches: normalizedBranches,
-        permissions: normalizedPermissions,
-      }),
+      ...(role === "collaborator" || role === "instructor"
+        ? {
+            branches: normalizedBranches,
+            permissions: normalizedPermissions,
+          }
+        : {}),
       ...(role === "admin" && {
         branches: [],
       }),
@@ -341,7 +343,7 @@ export const oauthLoginController = async (
         uid,
         email: str(data.email),
         ...data,
-        role: "employee",
+        role: "instructor",
         status,
         branches,
         branch,
@@ -370,7 +372,7 @@ export const oauthLoginController = async (
         uid,
         email: str((safeData as any).email),
         ...safeData,
-        role: "employee",
+        role: (str((safeData as any).role) || "collaborator").toLowerCase(),
         status,
         branches,
         permissions,
@@ -384,7 +386,7 @@ export const oauthLoginController = async (
     const userRef = db.collection(collection!).doc(snap.id);
     let newSessionId: string | null = null;
     let sessionNotice: string | null = null;
-    if (role === "admin" || role === "employee") {
+    if (role === "admin" || role === "collaborator" || role === "instructor") {
       newSessionId = uuidv4();
       await userRef.update({
         sessionId: newSessionId,
@@ -395,7 +397,7 @@ export const oauthLoginController = async (
     }
     let normalizedBranches: string[] = [];
     let normalizedPermissions: Record<string, string[]> = {};
-    if (role === "employee") {
+    if (role === "collaborator" || role === "instructor") {
       if (Array.isArray((data as any).branches)) {
         normalizedBranches = (data as any).branches.filter(
           (b: unknown) => typeof b === "string"
@@ -423,10 +425,12 @@ export const oauthLoginController = async (
       email: str((rest as any).email),
       ...rest,
       role,
-      ...(role === "employee" && {
-        branches: normalizedBranches,
-        permissions: normalizedPermissions,
-      }),
+      ...(role === "collaborator" || role === "instructor"
+        ? {
+            branches: normalizedBranches,
+            permissions: normalizedPermissions,
+          }
+        : {}),
       ...(role === "admin" && { branches: [] }),
       sessionId: newSessionId,
       sessionNotice,
