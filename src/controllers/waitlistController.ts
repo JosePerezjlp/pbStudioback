@@ -491,18 +491,14 @@ export const updateWaitlistController = async (
 
         // Si es clase grupal, encontrar el primer asiento disponible
         if (classType === ClassType.GROUPS) {
-          // Obtener todos los asientos ocupados para esta clase
+          // Obtener reservaciones activas de la clase y filtrar asientos en memoria
           const occupiedSeatsSnap = await reservationsCol
             .where("classId", "==", wl.classId)
             .where("status", "==", "active")
-            .where("seat", "!=", null)
             .get();
 
           const occupiedSeats = occupiedSeatsSnap.docs
-            .map((doc) => {
-              const data = doc.data() as ReservationDoc;
-              return data.seat;
-            })
+            .map((doc) => (doc.data() as ReservationDoc).seat)
             .filter(
               (seat): seat is number =>
                 seat !== null && typeof seat === "number"

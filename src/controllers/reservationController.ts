@@ -1100,19 +1100,17 @@ export const deleteReservationController = async (
 
         // Si es clase grupal, encontrar el primer asiento disponible
         if (classType === ClassType.GROUPS) {
-          // Obtener todos los asientos ocupados para esta clase (excluyendo la reserva que se está cancelando)
+          // Obtener todas las reservaciones activas de esta clase y filtrar asientos en memoria
           const occupiedSeatsSnap = await reservationsRef
             .where("classId", "==", candidate!.wl.classId)
             .where("classDay", "==", String(cls.day || ""))
             .where("classHour", "==", String(cls.hour || ""))
             .where("status", "==", "active")
-            .where("seat", "!=", null)
             .get();
 
           const occupiedSeats = occupiedSeatsSnap.docs
             .map((doc) => {
               const data = doc.data() as ReservationDoc;
-              // Excluir el asiento de la reserva que se está cancelando
               if (doc.id === reservationId) return null;
               return data.seat;
             })

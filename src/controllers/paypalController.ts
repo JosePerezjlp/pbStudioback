@@ -470,6 +470,47 @@ export const capturePayPalOrderController = async (
       }
     });
 
+    // Si se usó cupón, verificar si alcanzó el límite y desactivar automáticamente
+    if (finalCouponId && couponIsValid) {
+      try {
+        const cRef = admin.firestore().doc(`coupons/${finalCouponId}`);
+        const cSnap = await cRef.get();
+        if (cSnap.exists) {
+          const cData = cSnap.data() as any;
+          const limitUses = cData?.limitUses !== false;
+          const total = typeof cData?.totalUses === "number" ? cData.totalUses : null;
+          const used = typeof cData?.usedCount === "number" ? cData.usedCount : 0;
+          if (limitUses && total != null && used >= total) {
+            // Marcar desactivado
+            await cRef.update({ disabled: true, updatedAt: new Date().toISOString() });
+            // Si era automático, limpiar descuentos en paquetes que lo tengan asignado
+            if (cData?.isAutomatic === true) {
+              const pkgsSnap = await admin
+                .firestore()
+                .collection("packages")
+                .where("couponId", "==", finalCouponId)
+                .get();
+              const nowIso = new Date().toISOString();
+              await Promise.all(
+                pkgsSnap.docs.map((doc) =>
+                  doc.ref.update({
+                    couponId: admin.firestore.FieldValue.delete(),
+                    discount: admin.firestore.FieldValue.delete(),
+                    discountInfo: admin.firestore.FieldValue.delete(),
+                    applyToSpecialPrice: admin.firestore.FieldValue.delete(),
+                    specialPrice: admin.firestore.FieldValue.delete(),
+                    updatedAt: nowIso,
+                  })
+                )
+              );
+            }
+          }
+        }
+      } catch (e) {
+        // noop
+      }
+    }
+
     const updatedSnap = await userRef.get();
     const updatedUser = { id: uid, ...(updatedSnap.data() || {}) };
 
