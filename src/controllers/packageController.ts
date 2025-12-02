@@ -8,9 +8,9 @@ import { DateTime } from "luxon";
  */
 const normalizeStartDate = (dateInput: string | Date | any): Date => {
   let date: Date;
-  if (typeof dateInput === 'string') {
+  if (typeof dateInput === "string") {
     date = new Date(dateInput);
-  } else if (dateInput?.toDate && typeof dateInput.toDate === 'function') {
+  } else if (dateInput?.toDate && typeof dateInput.toDate === "function") {
     date = dateInput.toDate();
   } else {
     date = dateInput as Date;
@@ -26,9 +26,9 @@ const normalizeStartDate = (dateInput: string | Date | any): Date => {
  */
 const normalizeEndDate = (dateInput: string | Date | any): Date => {
   let date: Date;
-  if (typeof dateInput === 'string') {
+  if (typeof dateInput === "string") {
     date = new Date(dateInput);
-  } else if (dateInput?.toDate && typeof dateInput.toDate === 'function') {
+  } else if (dateInput?.toDate && typeof dateInput.toDate === "function") {
     date = dateInput.toDate();
   } else {
     date = dateInput as Date;
@@ -85,39 +85,39 @@ export const getAllPackagesController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const snapshot = await collection
-      .orderBy("createdAt", "desc")
-      .get();
+    const snapshot = await collection.orderBy("createdAt", "desc").get();
 
     // Normalizar fecha actual para comparación por día (sin hora)
     const today = normalizeToday();
-    
+
     // Filtrar paquetes por fechas de publicación
     const packages = snapshot.docs
       .map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
+        id: doc.id,
+        ...doc.data(),
       }))
       .filter((pkg: any) => {
         // Si no tiene fechas de publicación, mostrarlo (compatibilidad)
         if (!pkg.startDate && !pkg.endDate) {
           return true;
         }
-        
+
         // Normalizar fechas del paquete para comparación por día
-        const startDate = pkg.startDate ? normalizeStartDate(pkg.startDate) : null;
+        const startDate = pkg.startDate
+          ? normalizeStartDate(pkg.startDate)
+          : null;
         const endDate = pkg.endDate ? normalizeEndDate(pkg.endDate) : null;
-        
+
         // Verificar fecha de inicio: startDate <= hoy
         if (startDate && today < startDate) {
           return false; // Aún no se publica
         }
-        
+
         // Verificar fecha de fin: hoy <= endDate
         if (endDate && today > endDate) {
           return false; // Ya expiró
         }
-        
+
         return true; // Está en el rango de publicación
       });
 
@@ -125,6 +125,39 @@ export const getAllPackagesController = async (
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
     console.error("Error al obtener paquetes:", msg);
+    res.status(500).json({ error: "Error interno del servidor", details: msg });
+  }
+};
+
+export const getActivePackagesController = async (
+  _req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const snapshot = await collection.where("isActive", "==", true).get();
+
+    const today = normalizeToday();
+
+    const packages = snapshot.docs
+      .map((doc) => ({ id: doc.id, ...doc.data() }))
+      .filter((pkg: any) => {
+        const hasStart = Boolean(pkg.startDate);
+        const hasEnd = Boolean(pkg.endDate);
+        if (!hasStart && !hasEnd) return false;
+        const startDate = hasStart ? normalizeStartDate(pkg.startDate) : null;
+        const endDate = hasEnd ? normalizeEndDate(pkg.endDate) : null;
+        if (startDate && today < startDate) return false;
+        if (endDate && today > endDate) return false;
+        return true;
+      })
+      .sort((a: any, b: any) =>
+        String(b.createdAt || "").localeCompare(String(a.createdAt || ""))
+      );
+
+    res.status(200).json({ packages, total: packages.length });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Error desconocido";
+    console.error("Error al obtener paquetes activos:", msg);
     res.status(500).json({ error: "Error interno del servidor", details: msg });
   }
 };

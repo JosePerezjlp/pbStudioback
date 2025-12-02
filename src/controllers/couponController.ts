@@ -302,6 +302,7 @@ export const updateCouponController = async (
       packageIds,
       applyToSpecialPrice,
       isAutomatic = false,
+      isUniversal = false,
       limitUses: limitUsesRaw,
     } = req.body;
 
@@ -346,30 +347,34 @@ export const updateCouponController = async (
     // Solo aplicar descuento si el cupón está vigente (no expirado, no antes de startDate, y con usos)
     const effectiveDiscount = (isActive && !isUsedUp) ? discount : 0;
 
-    const pkgDocs = await fetchPackagesByIds(packageIds);
-    const packagesWithOtherCoupon = pkgDocs.filter(
-      (d) => d.data().couponId && d.data().couponId !== couponId
-    );
+    const shouldCheckConflicts = !isUniversal && Array.isArray(packageIds) && packageIds.length > 0;
+    let pkgDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+    if (shouldCheckConflicts) {
+      pkgDocs = await fetchPackagesByIds(packageIds);
+      const packagesWithOtherCoupon = pkgDocs.filter(
+        (d) => d.data().couponId && d.data().couponId !== couponId
+      );
 
-    const couponIdsToCheck = Array.from(
-      new Set(packagesWithOtherCoupon.map((d) => d.data().couponId))
-    );
+      const couponIdsToCheck = Array.from(
+        new Set(packagesWithOtherCoupon.map((d) => d.data().couponId))
+      );
 
-    const couponsById = await fetchCouponsByIds(couponIdsToCheck, couponsCol);
-    const conflicts = buildConflictList(
-      packagesWithOtherCoupon,
-      couponsById,
-      newStart,
-      newEnd,
-      couponId
-    );
+      const couponsById = await fetchCouponsByIds(couponIdsToCheck, couponsCol);
+      const conflicts = buildConflictList(
+        packagesWithOtherCoupon,
+        couponsById,
+        newStart,
+        newEnd,
+        couponId
+      );
 
-    if (conflicts.length > 0) {
-      res.status(400).json({
-        error: "Conflicto con otros cupones activos",
-        conflicts,
-      });
-      return;
+      if (conflicts.length > 0) {
+        res.status(400).json({
+          error: "Conflicto con otros cupones activos",
+          conflicts,
+        });
+        return;
+      }
     }
 
     // ✅ Actualiza cupón preservando `usedCount`
@@ -381,9 +386,10 @@ export const updateCouponController = async (
       discount,
       totalUses: limitUses ? normalizedTotalUses ?? 0 : null,
       usedCount, // 🔒 no lo toca el frontend
-      packageIds,
+      packageIds: isUniversal ? [] : packageIds,
       applyToSpecialPrice,
       isAutomatic,
+      isUniversal,
       limitUses,
       updatedAt: now,
     });
@@ -408,7 +414,7 @@ export const updateCouponController = async (
 
     // Asigna a paquetes nuevos o existentes SOLO si es automático
     // Los cupones específicos (isAutomatic === false) NO se aplican automáticamente
-    const toAssign = isAutomatic ? pkgDocs.map((pkgDoc) => {
+    const toAssign = isAutomatic && shouldCheckConflicts ? pkgDocs.map((pkgDoc) => {
       const rawAmount = pkgDoc.data().amount;
       const amount =
         typeof rawAmount === "number" ? rawAmount : parseFloat(rawAmount);
