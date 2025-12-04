@@ -422,9 +422,7 @@ export const updateCouponController = async (
     // Si está usado al límite, marcar deshabilitado y limpiar paquetes asignados
     if (limitUses && (normalizedTotalUses ?? 0) <= usedCount) {
       await couponRef.update({ disabled: true, updatedAt: now });
-      const pkgsSnap = await packagesCol
-        .where("couponId", "==", couponId)
-        .get();
+      const pkgsSnap = await packagesCol.where("couponId", "==", couponId).get();
       await Promise.all(
         pkgsSnap.docs.map((doc) =>
           doc.ref.update({
@@ -459,12 +457,10 @@ export const updateCouponController = async (
 
     // Asigna a paquetes nuevos o existentes SOLO si es automático
     // Los cupones específicos (isAutomatic === false) NO se aplican automáticamente
-    const toAssign =
-      isAutomatic && shouldCheckConflicts && effectiveDiscount > 0
-        ? pkgDocs.map((pkgDoc) => {
-            const rawAmount = pkgDoc.data().amount;
-            const amount =
-              typeof rawAmount === "number" ? rawAmount : parseFloat(rawAmount);
+    const toAssign = isAutomatic && shouldCheckConflicts && effectiveDiscount > 0 ? pkgDocs.map((pkgDoc) => {
+      const rawAmount = pkgDoc.data().amount;
+      const amount =
+        typeof rawAmount === "number" ? rawAmount : parseFloat(rawAmount);
 
             if (typeof amount !== "number" || Number.isNaN(amount)) {
               throw new Error(
@@ -477,16 +473,15 @@ export const updateCouponController = async (
                 ? Math.max(0, amount - (amount * effectiveDiscount) / 100)
                 : 0;
 
-            return pkgDoc.ref.update({
-              couponId,
-              discount: effectiveDiscount,
-              discountInfo: effectiveDiscount > 0 ? name : "--",
-              applyToSpecialPrice,
-              specialPrice,
-              updatedAt: now,
-            });
-          })
-        : [];
+      return pkgDoc.ref.update({
+        couponId,
+        discount: effectiveDiscount,
+        discountInfo: effectiveDiscount > 0 ? name : "--",
+        applyToSpecialPrice,
+        specialPrice,
+        updatedAt: now,
+      });
+    }) : [];
 
     await Promise.all([...toClean, ...toAssign]);
 
