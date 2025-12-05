@@ -861,6 +861,172 @@ export const deleteClassController = async (
   }
 };
 
+export const createClassesBulkController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const body = req.body as {
+      day: string;
+      branchId: string;
+      slots: Array<{
+        hour: string;
+        roomId: string;
+        disciplineId: string;
+        instructorId: string;
+        info?: string;
+        isActive?: boolean;
+        capacity: number;
+        occupied: number;
+      }>;
+    };
+
+    const day = String(body.day || "").slice(0, 10);
+    const branchId = String(body.branchId || "");
+    const slots = Array.isArray(body.slots) ? body.slots : [];
+
+    if (!day || !branchId || slots.length === 0) {
+      res.status(400).json({ error: "Datos inválidos o faltantes" });
+      return;
+    }
+
+    const created: string[] = [];
+    const updated: string[] = [];
+    const skipped: Array<{ key: string; reason: string }> = [];
+    const errors: Array<{ key: string; message: string }> = [];
+
+    const db = admin.firestore();
+    const nowIso = new Date().toISOString();
+
+    const uniqueRoomIds = Array.from(new Set(slots.map((s) => String(s.roomId))));
+    const roomTypeMap: Record<string, ClassType> = {};
+    for (const r of uniqueRoomIds) {
+      const t = (await getRoomTypeById(r)) ?? ClassType.INDIVIDUAL;
+      roomTypeMap[r] = t;
+    }
+
+    const toKey = (d: string, b: string, r: string, h: string) => `${d}|${b}|${r}|${h}`;
+
+    const createPayloads: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown> }> = [];
+    const updatePayloads: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown> }> = [];
+
+    // Pre-scan and decide create/update/skip
+    for (const slot of slots) {
+      const hour = String(slot.hour || "");
+      const roomId = String(slot.roomId || "");
+      const disciplineId = String(slot.disciplineId || "");
+      const instructorId = String(slot.instructorId || "");
+      const infoNormalized = slot.info && typeof slot.info === "string" ? slot.info.trim() : "";
+      const statusNorm = slot.isActive === false ? "cerrada" : "abierta";
+
+      let parsedCapacity: number;
+      let parsedOccupied: number;
+      try {
+        parsedCapacity = parseNumberOrFail(slot.capacity);
+        parsedOccupied = parseNumberOrFail(slot.occupied);
+      } catch {
+        errors.push({ key: toKey(day, branchId, roomId, hour), message: "capacity u occupied inválida" });
+        continue;
+      }
+
+      try {
+        const existingSnap = await db
+          .collection("classes")
+          .where("day", "==", day)
+          .where("hour", "==", hour)
+          .where("branch", "==", branchId)
+          .where("room", "==", roomId)
+          .limit(1)
+          .get();
+
+        const key = toKey(day, branchId, roomId, hour);
+        if (!existingSnap.empty) {
+          const doc = existingSnap.docs[0];
+          const cur = doc.data() as ClassDoc;
+          const changes: Partial<ClassDoc> = {};
+          if (String(cur.discipline) !== disciplineId) changes.discipline = disciplineId;
+          if (String(cur.instructor) !== instructorId) changes.instructor = instructorId;
+          if ((cur.info || "") !== infoNormalized) changes.info = infoNormalized;
+          if (Number(cur.capacity) !== parsedCapacity) changes.capacity = parsedCapacity;
+          if (Number(cur.occupied) !== parsedOccupied) changes.occupied = parsedOccupied;
+          if (String(cur.status) !== statusNorm) changes.status = statusNorm as any;
+          const typeFromRoom = roomTypeMap[roomId] ?? ClassType.INDIVIDUAL;
+          if ((cur.type ?? ClassType.INDIVIDUAL) !== typeFromRoom) changes.type = typeFromRoom;
+
+          if (Object.keys(changes).length === 0) {
+            skipped.push({ key, reason: "sin cambios" });
+          } else {
+            const ref = db.collection("classes").doc(doc.id);
+            updatePayloads.push({ ref, data: { ...changes, updatedAt: nowIso } });
+            updated.push(doc.id);
+          }
+        } else {
+          const ref = db.collection("classes").doc();
+          const typeFromRoom = roomTypeMap[roomId] ?? ClassType.INDIVIDUAL;
+          const data: Record<string, unknown> = {
+            day,
+            hour,
+            branch: branchId,
+            room: roomId,
+            discipline: disciplineId,
+            instructor: instructorId,
+            capacity: parsedCapacity,
+            occupied: parsedOccupied,
+            status: statusNorm,
+            type: typeFromRoom,
+            createdAt: nowIso,
+          };
+          if (infoNormalized) data.info = infoNormalized;
+          createPayloads.push({ ref, data });
+          created.push(ref.id);
+        }
+      } catch (e) {
+        errors.push({ key: toKey(day, branchId, roomId, hour), message: String(e) });
+      }
+    }
+
+    // Assign legacyId and create docs inside a transaction to keep counters consistent
+    if (createPayloads.length > 0) {
+      await db.runTransaction(async (t) => {
+        const countersRef = db.collection("__meta").doc("legacyCounters");
+        const countersSnap = await t.get(countersRef);
+        const data = countersSnap.exists ? (countersSnap.data() as any) : {};
+        let next = Number(data?.classNext ?? 0);
+        if (!Number.isFinite(next) || next <= 0) {
+          next = 0;
+          const recent = await db
+            .collection("classes")
+            .orderBy("createdAt", "desc")
+            .limit(50)
+            .get();
+          for (const d of recent.docs) {
+            const v = (d.data() as any)?.legacyId;
+            const n = Number(v);
+            if (Number.isFinite(n)) next = Math.max(next, n);
+          }
+        }
+        let curLegacy = next + 1;
+        for (const c of createPayloads) {
+          t.set(c.ref, { ...c.data, legacyId: curLegacy });
+          curLegacy += 1;
+        }
+        t.set(countersRef, { classNext: curLegacy }, { merge: true });
+      });
+    }
+
+    // Apply updates in batch
+    if (updatePayloads.length > 0) {
+      const batch = db.batch();
+      updatePayloads.forEach((u) => batch.update(u.ref, u.data));
+      await batch.commit();
+    }
+
+    res.status(200).json({ message: "Procesado", created, updated, skipped, errors });
+  } catch (error) {
+    res.status(500).json({ error: "Error en procesamiento bulk", details: String(error) });
+  }
+};
+
 /* ============================================================
    STATS – conteos por disciplina para mes/semana/día
    ============================================================ */

@@ -7,12 +7,14 @@ import {
   getAllClassroomsController,
   getClassroomByIdController,
   updateClassroomController,
+  getClassroomsByBranchController,
 } from "../controllers/salonsController";
 
 const router = express.Router();
 
 // Pública
 router.get("/", getAllClassroomsController);
+router.get("/branch/:branchId", getClassroomsByBranchController);
 
 // Protegidas
 router.get("/:classroomId", verifyToken, getClassroomByIdController);
