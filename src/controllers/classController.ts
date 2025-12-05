@@ -907,8 +907,14 @@ export const createClassesBulkController = async (
 
     const toKey = (d: string, b: string, r: string, h: string) => `${d}|${b}|${r}|${h}`;
 
-    const createPayloads: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown> }> = [];
-    const updatePayloads: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown> }> = [];
+    const createPayloads: Array<{
+      ref: FirebaseFirestore.DocumentReference;
+      data: FirebaseFirestore.WithFieldValue<FirebaseFirestore.DocumentData>;
+    }> = [];
+    const updatePayloads: Array<{
+      ref: FirebaseFirestore.DocumentReference;
+      data: FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData>;
+    }> = [];
 
     // Pre-scan and decide create/update/skip
     for (const slot of slots) {
@@ -957,13 +963,17 @@ export const createClassesBulkController = async (
             skipped.push({ key, reason: "sin cambios" });
           } else {
             const ref = db.collection("classes").doc(doc.id);
-            updatePayloads.push({ ref, data: { ...changes, updatedAt: nowIso } });
+            const updateData: FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData> = {
+              ...changes,
+              updatedAt: nowIso,
+            } as FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData>;
+            updatePayloads.push({ ref, data: updateData });
             updated.push(doc.id);
           }
         } else {
           const ref = db.collection("classes").doc();
           const typeFromRoom = roomTypeMap[roomId] ?? ClassType.INDIVIDUAL;
-          const data: Record<string, unknown> = {
+          const data: FirebaseFirestore.WithFieldValue<FirebaseFirestore.DocumentData> = {
             day,
             hour,
             branch: branchId,

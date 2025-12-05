@@ -1378,13 +1378,11 @@ export const exportTransactionsController = async (
       return;
     }
 
-    res
-      .status(200)
-      .json({
-        transactions,
-        total: transactions.length,
-        summary: { totalAmount: sum },
-      });
+    res.status(200).json({
+      transactions,
+      total: transactions.length,
+      summary: { totalAmount: sum },
+    });
   } catch (err) {
     res
       .status(500)
