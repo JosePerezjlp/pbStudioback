@@ -25,9 +25,9 @@ dotenv.config();
  */
 const normalizeStartDate = (dateInput: string | Date | any): Date => {
   let date: Date;
-  if (typeof dateInput === 'string') {
+  if (typeof dateInput === "string") {
     date = new Date(dateInput);
-  } else if (dateInput?.toDate && typeof dateInput.toDate === 'function') {
+  } else if (dateInput?.toDate && typeof dateInput.toDate === "function") {
     // Firestore Timestamp
     date = dateInput.toDate();
   } else {
@@ -46,9 +46,9 @@ const normalizeStartDate = (dateInput: string | Date | any): Date => {
  */
 const normalizeEndDate = (dateInput: string | Date | any): Date => {
   let date: Date;
-  if (typeof dateInput === 'string') {
+  if (typeof dateInput === "string") {
     date = new Date(dateInput);
-  } else if (dateInput?.toDate && typeof dateInput.toDate === 'function') {
+  } else if (dateInput?.toDate && typeof dateInput.toDate === "function") {
     // Firestore Timestamp
     date = dateInput.toDate();
   } else {
@@ -74,7 +74,9 @@ const CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET!;
 
 /* ---------- helpers ---------- */
 const cleanUndefined = <T extends Record<string, unknown>>(obj: T): T =>
-  Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as T;
+  Object.fromEntries(
+    Object.entries(obj).filter(([, v]) => v !== undefined)
+  ) as T;
 
 const getAccessToken = async (): Promise<string> => {
   const params = new URLSearchParams({ grant_type: "client_credentials" });
@@ -134,10 +136,10 @@ export const createPayPalOrderController = async (
       }
     );
 
-    res.status(201).json({ 
+    res.status(201).json({
       orderID: data.id,
       finalAmount: finalAmount,
-      originalAmount: Number(amount)
+      originalAmount: Number(amount),
     });
   } catch (err) {
     console.error(
@@ -191,42 +193,52 @@ export const capturePayPalOrderController = async (
     const today = normalizeToday();
     const pkgStartDate = pkgData.startDate;
     const pkgEndDate = pkgData.endDate;
-    
+
     if (pkgStartDate || pkgEndDate) {
       // Normalizar fechas del paquete (manejar Firestore Timestamps)
       let pkgStart: Date | null = null;
       let pkgEnd: Date | null = null;
-      
+
       if (pkgStartDate) {
-        if (typeof pkgStartDate === 'string') {
+        if (typeof pkgStartDate === "string") {
           pkgStart = normalizeStartDate(pkgStartDate);
-        } else if (pkgStartDate && typeof pkgStartDate === 'object' && 'toDate' in pkgStartDate && typeof pkgStartDate.toDate === 'function') {
+        } else if (
+          pkgStartDate &&
+          typeof pkgStartDate === "object" &&
+          "toDate" in pkgStartDate &&
+          typeof pkgStartDate.toDate === "function"
+        ) {
           pkgStart = normalizeStartDate(pkgStartDate.toDate());
         } else {
           pkgStart = normalizeStartDate(pkgStartDate as Date);
         }
       }
-      
+
       if (pkgEndDate) {
-        if (typeof pkgEndDate === 'string') {
+        if (typeof pkgEndDate === "string") {
           pkgEnd = normalizeEndDate(pkgEndDate);
-        } else if (pkgEndDate && typeof pkgEndDate === 'object' && 'toDate' in pkgEndDate && typeof pkgEndDate.toDate === 'function') {
+        } else if (
+          pkgEndDate &&
+          typeof pkgEndDate === "object" &&
+          "toDate" in pkgEndDate &&
+          typeof pkgEndDate.toDate === "function"
+        ) {
           pkgEnd = normalizeEndDate(pkgEndDate.toDate());
         } else {
           pkgEnd = normalizeEndDate(pkgEndDate as Date);
         }
       }
-      
+
       if (pkgStart && today < pkgStart) {
-        res.status(400).json({ 
-          error: "Este paquete aún no está disponible para la venta" 
+        res.status(400).json({
+          error: "Este paquete aún no está disponible para la venta",
         });
         return;
       }
-      
+
       if (pkgEnd && today > pkgEnd) {
-        res.status(400).json({ 
-          error: "Este paquete ya no está disponible" 
+        res.status(400).json({
+          error: "Este paquete ya no está disponible",
         });
         return;
       }
@@ -238,12 +250,15 @@ export const capturePayPalOrderController = async (
       if (!type) return "Individual";
       const normalizedType = type.toLowerCase();
       // Detecta "group", "groups", "grupal", "grupales" (con o sin 's')
-      if (normalizedType.includes("group") || normalizedType.includes("grupal")) {
+      if (
+        normalizedType.includes("group") ||
+        normalizedType.includes("grupal")
+      ) {
         return "Grupal";
       }
       return "Individual";
     };
-    
+
     const cleanedPackage = cleanUndefined({
       id: packageId,
       totalClasses: pkgData.totalClasses,
@@ -266,10 +281,16 @@ export const capturePayPalOrderController = async (
       if (!direct.exists) {
         const num = Number(effectiveBranchId);
         if (Number.isFinite(num)) {
-          const q = await branchesCol.where("legacyId", "==", num).limit(1).get();
+          const q = await branchesCol
+            .where("legacyId", "==", num)
+            .limit(1)
+            .get();
           if (!q.empty) effectiveBranchId = q.docs[0].id;
         } else {
-          const q = await branchesCol.where("legacyId", "==", effectiveBranchId).limit(1).get();
+          const q = await branchesCol
+            .where("legacyId", "==", effectiveBranchId)
+            .limit(1)
+            .get();
           if (!q.empty) effectiveBranchId = q.docs[0].id;
         }
       }
@@ -282,8 +303,8 @@ export const capturePayPalOrderController = async (
     const paypalAmount =
       data.purchase_units?.[0]?.payments?.captures?.[0]?.amount?.value ?? "0";
     const paypalCurrency =
-      data.purchase_units?.[0]?.payments?.captures?.[0]?.amount?.currency_code ??
-      "MXN";
+      data.purchase_units?.[0]?.payments?.captures?.[0]?.amount
+        ?.currency_code ?? "MXN";
     const captureID =
       data.purchase_units?.[0]?.payments?.captures?.[0]?.id ?? "";
     const capturedAt =
@@ -316,25 +337,25 @@ export const capturePayPalOrderController = async (
     let automaticCouponId: string | null = null;
     const db = admin.firestore();
     const couponsCol = db.collection("coupons");
-    
+
     // 1. Buscar cupón por código si no hay couponId
     if (couponCode && !finalCouponId) {
       const couponQuery = await couponsCol
         .where("code", "==", couponCode)
         .limit(1)
         .get();
-      
+
       if (!couponQuery.empty) {
         finalCouponId = couponQuery.docs[0].id;
       }
     }
-    
+
     // 2. Si NO hay cupón por código, verificar si el paquete tiene un cupón automático
     if (!finalCouponId && !couponCode && pkgData.couponId) {
       automaticCouponId = pkgData.couponId as string;
       const automaticCouponRef = db.doc(`coupons/${automaticCouponId}`);
       const automaticCouponSnap = await automaticCouponRef.get();
-      
+
       if (automaticCouponSnap.exists) {
         const automaticCouponData = automaticCouponSnap.data()!;
         // Verificar que sea un cupón automático
@@ -343,12 +364,12 @@ export const capturePayPalOrderController = async (
         }
       }
     }
-    
+
     // 3. Validar cupón si existe
     if (finalCouponId) {
       const couponRef = db.doc(`coupons/${finalCouponId}`);
       const couponSnap = await couponRef.get();
-      
+
       if (couponSnap.exists) {
         const couponData = couponSnap.data()!;
         const today = normalizeToday();
@@ -358,12 +379,16 @@ export const capturePayPalOrderController = async (
         const usosDisponibles = limitUses
           ? (couponData.totalUses ?? 0) - (couponData.usedCount ?? 0)
           : Number.POSITIVE_INFINITY;
-        
+
         const isUniversal = couponData.isUniversal === true;
         const packageIds = couponData.packageIds || [];
-        
+
         // Verificar si aplica al paquete
-        if (isUniversal || packageIds.includes(packageId) || automaticCouponId) {
+        if (
+          isUniversal ||
+          packageIds.includes(packageId) ||
+          automaticCouponId
+        ) {
           // Verificar si el usuario ya usó este cupón antes (solo para cupones con código)
           if (!automaticCouponId) {
             const existingTx = await db
@@ -372,39 +397,43 @@ export const capturePayPalOrderController = async (
               .where("couponId", "==", finalCouponId)
               .limit(1)
               .get();
-            
+
             if (!existingTx.empty) {
-              res.status(400).json({ 
-                error: "Ya has usado este cupón anteriormente" 
+              res.status(400).json({
+                error: "Ya has usado este cupón anteriormente",
               });
               return;
             }
           }
-          
+
           // Verificar vigencia con mensajes específicos
           if (today < start) {
-            res.status(400).json({ 
-              error: "El cupón aún no está vigente" 
+            res.status(400).json({
+              error: "El cupón aún no está vigente",
             });
             return;
           }
-          
+
           if (today > end) {
-            res.status(400).json({ 
-              error: "El cupón ha expirado" 
+            res.status(400).json({
+              error: "El cupón ha expirado",
             });
             return;
           }
-          
+
           if (limitUses && usosDisponibles <= 0) {
-            res.status(400).json({ 
-              error: "El cupón ha alcanzado su límite de usos" 
+            res.status(400).json({
+              error: "El cupón ha alcanzado su límite de usos",
             });
             return;
           }
-          
+
           // Si todas las validaciones pasan, el cupón es válido
-          if (today >= start && today <= end && (limitUses ? usosDisponibles > 0 : true)) {
+          if (
+            today >= start &&
+            today <= end &&
+            (limitUses ? usosDisponibles > 0 : true)
+          ) {
             couponIsValid = true;
           }
         }
@@ -459,7 +488,7 @@ export const capturePayPalOrderController = async (
         "classes.total": admin.firestore.FieldValue.increment(addTotal),
         "classes.available": admin.firestore.FieldValue.increment(addTotal),
       });
-      
+
       // Incrementar usedCount para cualquier cupón usado (automático o por código)
       if (finalCouponId && couponIsValid) {
         const couponRefToUpdate = db.doc(`coupons/${finalCouponId}`);
@@ -478,11 +507,16 @@ export const capturePayPalOrderController = async (
         if (cSnap.exists) {
           const cData = cSnap.data() as any;
           const limitUses = cData?.limitUses !== false;
-          const total = typeof cData?.totalUses === "number" ? cData.totalUses : null;
-          const used = typeof cData?.usedCount === "number" ? cData.usedCount : 0;
+          const total =
+            typeof cData?.totalUses === "number" ? cData.totalUses : null;
+          const used =
+            typeof cData?.usedCount === "number" ? cData.usedCount : 0;
           if (limitUses && total != null && used >= total) {
             // Marcar desactivado
-            await cRef.update({ disabled: true, updatedAt: new Date().toISOString() });
+            await cRef.update({
+              disabled: true,
+              updatedAt: new Date().toISOString(),
+            });
             // Si era automático, limpiar descuentos en paquetes que lo tengan asignado
             if (cData?.isAutomatic === true) {
               const pkgsSnap = await admin
@@ -515,8 +549,7 @@ export const capturePayPalOrderController = async (
     const updatedUser = { id: uid, ...(updatedSnap.data() || {}) };
 
     /* ---------- Email de compra (preferimos email de la web) ---------- */
-    const userEmailForMail =
-      appEmail ?? data.payer?.email_address ?? null; // fallback por si acaso
+    const userEmailForMail = appEmail ?? data.payer?.email_address ?? null; // fallback por si acaso
     const userFirstName =
       userDoc.firstName ?? data?.payer?.name?.given_name ?? "Usuario";
 
@@ -544,6 +577,10 @@ export const capturePayPalOrderController = async (
       message: "Pago capturado y paquete asignado",
       transaction: paypalTx, // incluye branchId
       user: updatedUser,
+      coupon: {
+        used: couponIsValid,
+        id: finalCouponId || null,
+      },
     });
   } catch (err) {
     console.error(
@@ -562,7 +599,10 @@ export const getAllTransactionsController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const snap = await admin.firestore().collection("paypal_transactions").get();
+    const snap = await admin
+      .firestore()
+      .collection("paypal_transactions")
+      .get();
     const transactions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     res.status(200).json({ transactions });
   } catch (err) {
