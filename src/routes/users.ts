@@ -11,6 +11,7 @@ import {
   enableUserController,
   disableUserController,
   getUsersStatsController,
+  updateMyBirthDateController,
 } from "../controllers/userController";
 import { userRegisterValidations } from "../validations/userValidations";
 import { verifyToken } from "../middleware/authMiddleware";
@@ -23,6 +24,7 @@ const router = express.Router();
 router.post("/register", userRegisterValidations, userController);
 router.post("/complete-profile", completeProfileFromAuthController);
 router.get("/me", verifyToken, getUserByIdController); // Obtener perfil del usuario actual
+router.put("/me", verifyToken, updateMyBirthDateController);
 router.get("/stats", verifyToken, checkPermission("usuarios", "listado"), getUsersStatsController);
 router.get("/recent", verifyToken, checkPermission("usuarios", "listado"), getRecentUsersController);
 

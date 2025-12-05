@@ -513,6 +513,242 @@ export const createReservationController = async (
   }
 };
 
+export const createBulkReservationsController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { userId, classId, seats } = req.body as {
+      userId: string;
+      classId: string;
+      seats: number[];
+    };
+
+    if (!Array.isArray(seats) || seats.length === 0) {
+      res.status(400).json({ error: "seats es requerido" });
+      return;
+    }
+
+    const db = admin.firestore();
+    const userRef = db.collection("users").doc(userId);
+    const classRef = db.collection("classes").doc(classId);
+    const reservationsRef = db.collection("reservations");
+
+    const result = await db.runTransaction(async (t) => {
+      const [userSnapTx, classSnapTx] = await t.getAll(userRef, classRef);
+      if (!userSnapTx.exists) throw new Error(ERROR_CODES.USER_NOT_FOUND);
+      if (!classSnapTx.exists) throw new Error(ERROR_CODES.CLASS_NOT_FOUND);
+
+      const user = userSnapTx.data() as UserDoc;
+      const cls = classSnapTx.data() as ClassDoc;
+
+      const zone = "America/Mexico_City";
+      const currentTime = DateTime.now().setZone(zone);
+      const classDay = cls.day ?? "";
+      const classHour = cls.hour ?? "";
+      if (!classDay || !classHour) throw new Error("La clase no tiene fecha u hora definida");
+      const normalizedHour = classHour.length === 5 ? `${classHour}:00` : classHour;
+      const classDateTime = DateTime.fromISO(`${classDay}T${normalizedHour}`, { zone });
+      if (!classDateTime.isValid) throw new Error("La fecha u hora de la clase no es válida");
+      if (classDateTime.toMillis() <= currentTime.toMillis()) {
+        throw new Error("No se puede reservar una clase que ya pasó");
+      }
+
+      const available = (cls.capacity ?? 0) - (cls.occupied ?? 0);
+      if (available <= 0) throw new Error(ERROR_CODES.NO_SLOTS_AVAILABLE);
+
+      const classType = normalizeClassType(cls.type) ?? ClassType.INDIVIDUAL;
+      if (classType === ClassType.INDIVIDUAL && seats.length > 1) {
+        throw new Error(ERROR_CODES.DUPLICATE_RESERVATION);
+      }
+
+      const occupiedSeatsSnap = await reservationsRef
+        .where("classId", "==", classId)
+        .where("classDay", "==", String(cls.day || ""))
+        .where("classHour", "==", String(cls.hour || ""))
+        .where("status", "==", "active")
+        .get();
+      const occupiedSeats = occupiedSeatsSnap.docs
+        .map((doc) => (doc.data() as any).seat)
+        .map((s: any) => (typeof s === "string" ? Number(s) : s))
+        .filter((s): s is number => s !== null && typeof s === "number")
+        .sort((a, b) => a - b);
+
+      let pkgs: UserPackage[] = (user.packages ?? []) as any[] as UserPackage[];
+      const normalizePkg = async (p: any): Promise<UserPackage | null> => {
+        if (p && typeof p === "object" && typeof p.id === "string") {
+          const hasShape = "active" in p && "totalClasses" in p && "isUnlimited" in p && "type" in p;
+          if (hasShape) {
+            const classesUsed = typeof (p as any).classesUsed === "number" ? (p as any).classesUsed : 0;
+            return { ...p, classesUsed } as UserPackage;
+          }
+          const ref = db.collection("packages").doc(String(p.id));
+          const snap = await ref.get();
+          if (!snap.exists) return null;
+          const d = snap.data() as any;
+          return {
+            id: String(p.id),
+            active: true,
+            totalClasses: Number(d?.totalClasses ?? 0),
+            classesUsed: Number((p as any)?.classesUsed ?? 0),
+            isUnlimited: Boolean(d?.isUnlimited ?? false),
+            type: String(d?.type ?? "individual"),
+            expiresAt: (p as any)?.expiresAt ?? null,
+            assignedAt: (p as any)?.assignedAt ?? undefined,
+            modality: (p as any)?.modality ?? d?.modality,
+          };
+        }
+        if (typeof p === "string") {
+          const ref = db.collection("packages").doc(p);
+          const snap = await ref.get();
+          if (!snap.exists) return null;
+          const d = snap.data() as any;
+          return {
+            id: p,
+            active: true,
+            totalClasses: Number(d?.totalClasses ?? 0),
+            classesUsed: 0,
+            isUnlimited: Boolean(d?.isUnlimited ?? false),
+            type: String(d?.type ?? "individual"),
+            expiresAt: null,
+            assignedAt: undefined,
+            modality: d?.modality,
+          };
+        }
+        return null;
+      };
+      if (Array.isArray(pkgs)) {
+        const enriched: UserPackage[] = [];
+        for (let i = 0; i < pkgs.length; i += 1) {
+          const e = await normalizePkg(pkgs[i] as any);
+          if (e) enriched.push(e);
+        }
+        pkgs = enriched;
+      }
+
+      const now = DateTime.now().setZone(zone);
+      const isActivePkg = (p: UserPackage) => {
+        if (!p.active) return false;
+        if (!p.expiresAt) return true;
+        const exp = DateTime.fromISO(String(p.expiresAt)).setZone(zone);
+        return exp.toMillis() > now.toMillis();
+      };
+      const pkgType = (p: UserPackage) => normalizeClassType(p.type) ?? ClassType.INDIVIDUAL;
+      if (!pkgs.some(isActivePkg)) throw new Error(ERROR_CODES.NO_PACKAGES);
+      if (!pkgs.some((p) => isActivePkg(p) && pkgType(p) === classType)) {
+        throw new Error(ERROR_CODES.NO_COMPATIBLE_PACKAGE);
+      }
+
+      const sameDay = await reservationsRef
+        .where("userId", "==", userId)
+        .where("status", "==", "active")
+        .where("classDay", "==", String((cls.day ?? "").slice(0, 10)))
+        .get();
+
+      const assignments: { seat: number | null; packageId: string | null }[] = [];
+      const capacity = Number(cls.capacity ?? 0);
+
+      for (let i = 0; i < seats.length; i += 1) {
+        const requested = seats[i];
+        let finalSeat: number | null = null;
+        if (classType === ClassType.GROUPS) {
+          if (requested != null) {
+            if (capacity > 0 && (requested < 1 || requested > capacity)) {
+              assignments.push({ seat: null, packageId: null });
+              continue;
+            }
+            if (occupiedSeats.includes(requested) || assignments.some((a) => a.seat === requested)) {
+              assignments.push({ seat: null, packageId: null });
+              continue;
+            }
+            finalSeat = requested;
+          } else {
+            let assigned: number | null = null;
+            for (let seatNum = 1; seatNum <= capacity; seatNum += 1) {
+              if (!occupiedSeats.includes(seatNum) && !assignments.some((a) => a.seat === seatNum)) {
+                assigned = seatNum;
+                break;
+              }
+            }
+            finalSeat = assigned;
+          }
+        } else {
+          finalSeat = null;
+          if (i > 0) {
+            assignments.push({ seat: null, packageId: null });
+            continue;
+          }
+        }
+
+        let packageId: string | null = null;
+        let consumedClass = false;
+        const hasUnlimited = pkgs.some((p) => isActivePkg(p) && p.isUnlimited && pkgType(p) === classType);
+        if (!hasUnlimited) {
+          const pick = selectPackageForClass(pkgs, classType);
+          if (!pick) {
+            assignments.push({ seat: null, packageId: null });
+            continue;
+          }
+          const { index, pkg } = pick;
+          packageId = pkg.id;
+          consumedClass = true;
+          if (!pkg.isUnlimited) {
+            pkgs[index] = { ...pkg, classesUsed: pkg.classesUsed + 1 };
+          }
+          const agg: UserClassesAgg = user.classes ?? { total: 0, taken: 0, available: 0 };
+          const newTaken = (agg.taken ?? 0) + 1;
+          const newAvailable = Math.max(0, (agg.total ?? 0) - newTaken);
+          user.classes = { total: agg.total ?? 0, taken: newTaken, available: newAvailable };
+        } else {
+          const limit = 2;
+          const currentCount = sameDay.size + assignments.filter((a) => a.seat != null).length;
+          if (currentCount >= limit) {
+            assignments.push({ seat: null, packageId: null });
+            continue;
+          }
+        }
+
+        assignments.push({ seat: finalSeat, packageId });
+      }
+
+      const created: string[] = [];
+      for (const a of assignments) {
+        if (a.seat == null && classType === ClassType.GROUPS) continue;
+        const resRef = reservationsRef.doc();
+        const payload: ReservationDoc = {
+          id: resRef.id,
+          userId,
+          classId,
+          seat: a.seat,
+          status: "active",
+          classDay: (cls.day ?? "").slice(0, 10),
+          classHour: String(cls.hour || ""),
+          createdAt: new Date().toISOString(),
+          consumedClass: Boolean(a.packageId),
+          packageId: a.packageId,
+        };
+        t.set(resRef, payload);
+        created.push(resRef.id);
+      }
+
+      const occupiedInc = created.length;
+      if (occupiedInc > 0) {
+        t.update(classRef, { occupied: (cls.occupied ?? 0) + occupiedInc });
+        t.update(userRef, { packages: pkgs, classes: user.classes });
+      }
+
+      return { created };
+    });
+
+    res.status(201).json({ message: "Reservas creadas", ...result });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const status = statusFromMessage(msg);
+    const code = codeFromMessage(msg);
+    res.status(status).json({ error: msg, code });
+  }
+};
+
 /* ===============================================================
    LIST / GET ONE
    =============================================================== */

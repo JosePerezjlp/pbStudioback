@@ -4,6 +4,7 @@ import { validationResult } from "express-validator";
 import admin from "../config/firebase";
 import { DateTime } from "luxon";
 import { sendWelcomeEmail } from "../utils/emailService";
+import { AuthRequest } from "../middleware/authMiddleware";
 
 export const completeProfileFromAuthController = async (
   req: Request,
@@ -502,6 +503,39 @@ export const updateUserController = async (
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
     console.error("Error al actualizar usuario:", msg);
+    res.status(500).json({ error: "Error interno del servidor", details: msg });
+  }
+};
+
+export const updateMyBirthDateController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const authReq = req as AuthRequest;
+    const uid = authReq.user?.uid;
+    if (!uid) {
+      res.status(401).json({ error: "Token no proporcionado" });
+      return;
+    }
+
+    const { birthDate } = req.body as { birthDate?: string | null };
+    const db = admin.firestore();
+    const userRef = db.collection("users").doc(uid);
+    const snap = await userRef.get();
+    if (!snap.exists) {
+      res.status(404).json({ error: "Usuario no encontrado" });
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    await userRef.set(
+      { birthDate: birthDate ?? null, updatedAt: nowIso },
+      { merge: true }
+    );
+    const fresh = await userRef.get();
+    res.status(200).json({ id: uid, uid, ...fresh.data() });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Error desconocido";
     res.status(500).json({ error: "Error interno del servidor", details: msg });
   }
 };
