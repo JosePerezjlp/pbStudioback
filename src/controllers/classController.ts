@@ -1,3 +1,9 @@
+/* eslint-disable no-nested-ternary */
+/* eslint-disable no-continue */
+/* eslint-disable no-restricted-syntax */
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable no-await-in-loop */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // src/controllers/classController.ts
 import { Request, Response } from "express";
 import { DateTime } from "luxon";
@@ -5,6 +11,8 @@ import admin from "../config/firebase";
 import { ClassType } from "../types/enums";
 import { getRoomTypeById } from "../utils/getRoomType";
 import { AuthRequest } from "../middleware/authMiddleware";
+import { GympassService } from "../services/gympass.service";
+import { CreateSlotRequest } from "../models/CreateSlotRequest";
 
 interface ClassDoc {
   day: string;
@@ -67,6 +75,7 @@ export const createClassController = async (
       occupied,
       status = "abierta",
       enabled,
+      gympass
     } = req.body as Record<string, unknown>;
 
     // Números válidos
@@ -97,7 +106,7 @@ export const createClassController = async (
       });
       return;
     }
-   // 👇 Añadir gympass solo si viene en body
+       // 👇 Añadir gympass solo si viene en body
     if (!gympass && typeof gympass !== "object") {
      res.status(409).json({
         error: "No ha creado una clase en Wellhub",
@@ -105,6 +114,7 @@ export const createClassController = async (
       });
       return;
     }
+
     // Obtener tipo desde el salón, con fallback al enum
     const roomType =
       (await getRoomTypeById(String(room))) ?? ClassType.INDIVIDUAL;
@@ -133,7 +143,7 @@ export const createClassController = async (
           const n = Number(v);
           if (Number.isFinite(n)) next = Math.max(next, n);
         }
-        next = next + 1;
+        next += 1;
       }
 
       const classRef = db.collection("classes").doc();
@@ -166,7 +176,18 @@ export const createClassController = async (
       t.set(countersRef, { classNext: next + 1 }, { merge: true });
       return classRef.id;
     });
-
+  // Construir objeto para Gympass
+    const slot = new CreateSlotRequest();
+    slot.occur_date = `${day}T${hour}:00`; 
+    slot.room = String(room);
+    slot.total_capacity = parsedCapacity;
+    slot.total_booked = parsedOccupied;
+    slot.status = status === "abierta" ? 1 : 0;
+    slot.length_in_minutes = 60; 
+    slot.instructors =  [];
+    slot.product_id = 198; 
+    slot.booking_window = null; 
+    GympassService.createClass(198,5,slot)
     res.status(201).json({ message: "Clase creada correctamente", id: newId });
   } catch (error) {
     console.error("Error al crear clase:", error);
@@ -345,7 +366,7 @@ export const getAllClassesController = async (
 ) => {
   try {
     const authReq = req as AuthRequest;
-    const user = authReq.user;
+    const {user} = authReq;
 
     const pageParam = Number(req.query.page ?? 1);
     const limitParam = Number(req.query.limit ?? 20);
@@ -506,7 +527,7 @@ export const getAllClassesController = async (
       throw e;
     }
 
-    const docs = snap.docs;
+    const {docs} = snap;
     const hasMore = docs.length > limit;
     const pageDocs = hasMore ? docs.slice(0, limit) : docs;
     let pageItems = pageDocs.map((doc) => ({ id: doc.id, ...doc.data() }));
@@ -865,6 +886,182 @@ export const deleteClassController = async (
     res
       .status(500)
       .json({ error: "Error al eliminar clase", details: String(error) });
+  }
+};
+
+export const createClassesBulkController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const body = req.body as {
+      day: string;
+      branchId: string;
+      slots: Array<{
+        hour: string;
+        roomId: string;
+        disciplineId: string;
+        instructorId: string;
+        info?: string;
+        isActive?: boolean;
+        capacity: number;
+        occupied: number;
+      }>;
+    };
+
+    const day = String(body.day || "").slice(0, 10);
+    const branchId = String(body.branchId || "");
+    const slots = Array.isArray(body.slots) ? body.slots : [];
+
+    if (!day || !branchId || slots.length === 0) {
+      res.status(400).json({ error: "Datos inválidos o faltantes" });
+      return;
+    }
+
+    const created: string[] = [];
+    const updated: string[] = [];
+    const skipped: Array<{ key: string; reason: string }> = [];
+    const errors: Array<{ key: string; message: string }> = [];
+
+    const db = admin.firestore();
+    const nowIso = new Date().toISOString();
+
+    const uniqueRoomIds = Array.from(new Set(slots.map((s) => String(s.roomId))));
+    const roomTypeMap: Record<string, ClassType> = {};
+    for (const r of uniqueRoomIds) {
+      const t = (await getRoomTypeById(r)) ?? ClassType.INDIVIDUAL;
+      roomTypeMap[r] = t;
+    }
+
+    const toKey = (d: string, b: string, r: string, h: string) => `${d}|${b}|${r}|${h}`;
+
+    const createPayloads: Array<{
+      ref: FirebaseFirestore.DocumentReference;
+      data: FirebaseFirestore.WithFieldValue<FirebaseFirestore.DocumentData>;
+    }> = [];
+    const updatePayloads: Array<{
+      ref: FirebaseFirestore.DocumentReference;
+      data: FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData>;
+    }> = [];
+
+    // Pre-scan and decide create/update/skip
+    for (const slot of slots) {
+      const hour = String(slot.hour || "");
+      const roomId = String(slot.roomId || "");
+      const disciplineId = String(slot.disciplineId || "");
+      const instructorId = String(slot.instructorId || "");
+      const infoNormalized = slot.info && typeof slot.info === "string" ? slot.info.trim() : "";
+      const statusNorm = slot.isActive === false ? "cerrada" : "abierta";
+
+      let parsedCapacity: number;
+      let parsedOccupied: number;
+      try {
+        parsedCapacity = parseNumberOrFail(slot.capacity);
+        parsedOccupied = parseNumberOrFail(slot.occupied);
+      } catch {
+        errors.push({ key: toKey(day, branchId, roomId, hour), message: "capacity u occupied inválida" });
+        continue;
+      }
+
+      try {
+        const existingSnap = await db
+          .collection("classes")
+          .where("day", "==", day)
+          .where("hour", "==", hour)
+          .where("branch", "==", branchId)
+          .where("room", "==", roomId)
+          .limit(1)
+          .get();
+
+        const key = toKey(day, branchId, roomId, hour);
+        if (!existingSnap.empty) {
+          const doc = existingSnap.docs[0];
+          const cur = doc.data() as ClassDoc;
+          const changes: Partial<ClassDoc> = {};
+          if (String(cur.discipline) !== disciplineId) changes.discipline = disciplineId;
+          if (String(cur.instructor) !== instructorId) changes.instructor = instructorId;
+          if ((cur.info || "") !== infoNormalized) changes.info = infoNormalized;
+          if (Number(cur.capacity) !== parsedCapacity) changes.capacity = parsedCapacity;
+          if (Number(cur.occupied) !== parsedOccupied) changes.occupied = parsedOccupied;
+          if (String(cur.status) !== statusNorm) changes.status = statusNorm as any;
+          const typeFromRoom = roomTypeMap[roomId] ?? ClassType.INDIVIDUAL;
+          if ((cur.type ?? ClassType.INDIVIDUAL) !== typeFromRoom) changes.type = typeFromRoom;
+
+          if (Object.keys(changes).length === 0) {
+            skipped.push({ key, reason: "sin cambios" });
+          } else {
+            const ref = db.collection("classes").doc(doc.id);
+            const updateData: FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData> = {
+              ...changes,
+              updatedAt: nowIso,
+            } as FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData>;
+            updatePayloads.push({ ref, data: updateData });
+            updated.push(doc.id);
+          }
+        } else {
+          const ref = db.collection("classes").doc();
+          const typeFromRoom = roomTypeMap[roomId] ?? ClassType.INDIVIDUAL;
+          const data: FirebaseFirestore.WithFieldValue<FirebaseFirestore.DocumentData> = {
+            day,
+            hour,
+            branch: branchId,
+            room: roomId,
+            discipline: disciplineId,
+            instructor: instructorId,
+            capacity: parsedCapacity,
+            occupied: parsedOccupied,
+            status: statusNorm,
+            type: typeFromRoom,
+            createdAt: nowIso,
+          };
+          if (infoNormalized) data.info = infoNormalized;
+          createPayloads.push({ ref, data });
+          created.push(ref.id);
+        }
+      } catch (e) {
+        errors.push({ key: toKey(day, branchId, roomId, hour), message: String(e) });
+      }
+    }
+
+    // Assign legacyId and create docs inside a transaction to keep counters consistent
+    if (createPayloads.length > 0) {
+      await db.runTransaction(async (t) => {
+        const countersRef = db.collection("__meta").doc("legacyCounters");
+        const countersSnap = await t.get(countersRef);
+        const data = countersSnap.exists ? (countersSnap.data() as any) : {};
+        let next = Number(data?.classNext ?? 0);
+        if (!Number.isFinite(next) || next <= 0) {
+          next = 0;
+          const recent = await db
+            .collection("classes")
+            .orderBy("createdAt", "desc")
+            .limit(50)
+            .get();
+          for (const d of recent.docs) {
+            const v = (d.data() as any)?.legacyId;
+            const n = Number(v);
+            if (Number.isFinite(n)) next = Math.max(next, n);
+          }
+        }
+        let curLegacy = next + 1;
+        for (const c of createPayloads) {
+          t.set(c.ref, { ...c.data, legacyId: curLegacy });
+          curLegacy += 1;
+        }
+        t.set(countersRef, { classNext: curLegacy }, { merge: true });
+      });
+    }
+
+    // Apply updates in batch
+    if (updatePayloads.length > 0) {
+      const batch = db.batch();
+      updatePayloads.forEach((u) => batch.update(u.ref, u.data));
+      await batch.commit();
+    }
+
+    res.status(200).json({ message: "Procesado", created, updated, skipped, errors });
+  } catch (error) {
+    res.status(500).json({ error: "Error en procesamiento bulk", details: String(error) });
   }
 };
 
