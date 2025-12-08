@@ -1038,6 +1038,358 @@ export const getAllTransactionsController = async (
   }
 };
 
+export const exportTransactionsController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const {
+      status,
+      method,
+      branch,
+      packageId,
+      startDate,
+      endDate,
+      userId,
+      userEmail,
+      userName,
+      format,
+      max: maxStr,
+    } = req.query as {
+      status?: string;
+      method?: string;
+      branch?: string;
+      packageId?: string;
+      startDate?: string;
+      endDate?: string;
+      userId?: string;
+      userEmail?: string;
+      userName?: string;
+      format?: string;
+      max?: string;
+    };
+
+    const toStr = (v?: string) =>
+      typeof v === "string" ? v.trim() : undefined;
+    const nonEmpty = (v?: string) => {
+      const s = toStr(v);
+      return s && s.length > 0 ? s : undefined;
+    };
+
+    const statusFilter = nonEmpty(status);
+    const methodRaw = nonEmpty(method);
+    const branchFilter = nonEmpty(branch);
+    const packageFilter = nonEmpty(packageId);
+    const startIso = nonEmpty(startDate);
+    const endIso = nonEmpty(endDate);
+    const userIdFilter = nonEmpty(userId);
+    const userEmailFilter = nonEmpty(userEmail);
+    const userNameFilter = nonEmpty(userName);
+    const fmt =
+      (typeof format === "string" ? format.toLowerCase() : "json") || "json";
+    const maxParsed = Number(maxStr);
+    const MAX = Number.isFinite(maxParsed)
+      ? Math.max(100, Math.min(maxParsed, 50000))
+      : 10000;
+
+    let normalizedMethod: PaymentMethod | undefined;
+    if (methodRaw) {
+      const m = methodRaw.toLowerCase();
+      if (m === "pos" || m === "terminal") normalizedMethod = "terminal";
+      else if (m === "card" || m === "paypal") normalizedMethod = "paypal";
+      else if (m === "cash") normalizedMethod = "cash";
+    }
+
+    const db = admin.firestore();
+
+    let candidateUserIdsName: string[] | null = null;
+    let candidateUserIdsEmail: string[] | null = null;
+
+    if (
+      !userIdFilter &&
+      userEmailFilter &&
+      (userEmailFilter.includes("@") || userEmailFilter.includes("."))
+    ) {
+      const usersCol = db.collection("users");
+      let ids: string[] = [];
+      try {
+        const exactSnap = await usersCol
+          .where("email", "==", userEmailFilter)
+          .limit(5)
+          .get();
+        ids = exactSnap.docs.map((d) => d.id);
+      } catch {}
+      if (ids.length === 0) {
+        const s2 = await usersCol.limit(80).get();
+        const target = userEmailFilter.toLowerCase();
+        ids = s2.docs
+          .filter(
+            (d) =>
+              String((d.data() as any).email || "").toLowerCase() === target
+          )
+          .map((d) => d.id);
+      }
+      if (ids.length > 0) candidateUserIdsEmail = ids.slice(0, 10);
+    }
+
+    if (!userIdFilter && !userEmailFilter && userNameFilter) {
+      const name = userNameFilter.toLowerCase();
+      const usersCol = db.collection("users");
+      let candidateIds: string[] = [];
+      try {
+        const firstSnap = await usersCol.orderBy("firstName").limit(100).get();
+        const lastSnap = await usersCol.orderBy("lastName").limit(100).get();
+        const firstIds = firstSnap.docs
+          .filter((d) =>
+            String((d.data() as any).firstName || "")
+              .toLowerCase()
+              .includes(name)
+          )
+          .map((d) => d.id);
+        const lastIds = lastSnap.docs
+          .filter((d) =>
+            String((d.data() as any).lastName || "")
+              .toLowerCase()
+              .includes(name)
+          )
+          .map((d) => d.id);
+        candidateIds = Array.from(new Set([...firstIds, ...lastIds]));
+      } catch {
+        const snap = await usersCol.limit(150).get();
+        candidateIds = snap.docs
+          .filter((d) => {
+            const data = d.data() as any;
+            const fn = String(data.firstName || "").toLowerCase();
+            const ln = String(data.lastName || "").toLowerCase();
+            const full = `${fn} ${ln}`.trim();
+            return (
+              fn.includes(name) || ln.includes(name) || full.includes(name)
+            );
+          })
+          .map((d) => d.id);
+      }
+      if (candidateIds.length > 0)
+        candidateUserIdsName = candidateIds.slice(0, 10);
+    }
+
+    const match = (data: any): boolean => {
+      if (statusFilter && String(data.status) !== String(statusFilter))
+        return false;
+      if (
+        normalizedMethod &&
+        String(data.paymentMethod) !== String(normalizedMethod)
+      )
+        return false;
+      if (branchFilter && String(data.branchId) !== String(branchFilter))
+        return false;
+      if (
+        packageFilter &&
+        String(data.package?.id ?? "") !== String(packageFilter)
+      )
+        return false;
+      if (userIdFilter && String(data.userId) !== String(userIdFilter))
+        return false;
+      if (
+        !userIdFilter &&
+        userEmailFilter &&
+        !(userEmailFilter.includes("@") || userEmailFilter.includes("."))
+      ) {
+        const emailTerm = userEmailFilter.toLowerCase();
+        const e = String(data.userEmail || "").toLowerCase();
+        if (!e.includes(emailTerm)) return false;
+      }
+      if (
+        !userIdFilter &&
+        userEmailFilter &&
+        (userEmailFilter.includes("@") || userEmailFilter.includes("."))
+      ) {
+        if (
+          Array.isArray(candidateUserIdsEmail) &&
+          candidateUserIdsEmail.length > 0
+        ) {
+          if (!candidateUserIdsEmail.includes(String(data.userId)))
+            return false;
+        }
+      }
+      if (userNameFilter && !userIdFilter && !userEmailFilter) {
+        if (
+          Array.isArray(candidateUserIdsName) &&
+          candidateUserIdsName.length > 0
+        ) {
+          if (!candidateUserIdsName.includes(String(data.userId))) return false;
+        }
+      }
+      return true;
+    };
+
+    let scanQ = db.collection("transactions").orderBy("createdAt", "desc");
+    if (startIso)
+      scanQ = scanQ.where("createdAt", ">=", new Date(startIso).toISOString());
+    if (endIso)
+      scanQ = scanQ.where("createdAt", "<=", new Date(endIso).toISOString());
+
+    const batchSize = 1000;
+    let lastCursor: string | null = null;
+    const collected: any[] = [];
+    let iterations = 0;
+    while (iterations < 50 && collected.length < MAX) {
+      let q = scanQ;
+      if (lastCursor) q = q.startAfter(lastCursor);
+      const s = await q.limit(batchSize).get();
+      if (s.empty) break;
+      for (const d of s.docs) {
+        const data = d.data();
+        lastCursor = String(data.createdAt ?? "");
+        if (match(data)) collected.push({ id: d.id, ...data });
+        if (collected.length >= MAX) break;
+      }
+      if (collected.length >= MAX) break;
+      iterations += 1;
+    }
+
+    const base = collected.map((t) => {
+      const data = { ...t } as any;
+      if (data.package && data.package.type) {
+        data.package.type = formatPackageType(data.package.type);
+      }
+      return data;
+    });
+
+    const usersMap: Map<string, any> = new Map();
+    const packagesMap: Map<string, any> = new Map();
+    const userIds = Array.from(
+      new Set(base.map((t: any) => t.userId).filter((v: any) => !!v))
+    );
+    const packageIds = Array.from(
+      new Set(base.map((t: any) => t.package?.id).filter((v: any) => !!v))
+    );
+
+    for (let i = 0; i < userIds.length; i += 10) {
+      const chunk = userIds.slice(i, i + 10);
+      const usersSnap = await db
+        .collection("users")
+        .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+        .get();
+      usersSnap.docs.forEach((doc) => usersMap.set(doc.id, doc.data()));
+    }
+
+    for (let i = 0; i < packageIds.length; i += 10) {
+      const chunk = packageIds.slice(i, i + 10);
+      const pkgsSnap = await db
+        .collection("packages")
+        .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+        .get();
+      pkgsSnap.docs.forEach((doc) => packagesMap.set(doc.id, doc.data()));
+    }
+
+    const transactions = base.map((t: any) => {
+      const u = t.userId ? usersMap.get(t.userId) : undefined;
+      const pId = t.package?.id;
+      const p = pId ? packagesMap.get(pId) : undefined;
+      const user = u
+        ? {
+            firstName: u.firstName ?? "",
+            lastName: u.lastName ?? "",
+            email: u.email ?? t.userEmail ?? "",
+          }
+        : undefined;
+      const packageDoc = p
+        ? {
+            id: pId,
+            name: p.name ?? undefined,
+            totalClasses: p.totalClasses ?? undefined,
+            isUnlimited: p.isUnlimited ?? undefined,
+            type: formatPackageType(String(p.type ?? t.package?.type ?? "")),
+            modality: p.modality ?? t.package?.modality,
+          }
+        : undefined;
+      return { ...t, user, packageDoc };
+    });
+
+    const sum = transactions.reduce(
+      (acc, tx) => acc + (Number(tx.amount) || 0),
+      0
+    );
+
+    if (fmt === "csv") {
+      const headers = [
+        "Usuario",
+        "Email",
+        "Paquete",
+        "Modalidad",
+        "Monto",
+        "Cupón",
+        "Método",
+        "Estado",
+        "F. creación",
+        "Vencimiento",
+      ];
+      const rows = transactions.map((tx: any) => {
+        const userName =
+          `${tx.user?.firstName ?? ""} ${tx.user?.lastName ?? ""}`.trim();
+        const email = tx.user?.email ?? tx.userEmail ?? "";
+        const pkg = tx.packageDoc
+          ? String(
+              tx.packageDoc.name ??
+                `${tx.packageDoc.totalClasses ?? ""} clase(s)`
+            )
+          : `${tx.package?.totalClasses ?? ""} clase(s)`;
+        const modality = tx.packageDoc?.modality ?? tx.package?.modality ?? "";
+        const amount = Number(tx.amount ?? 0).toFixed(2);
+        const coupon = tx.couponUsed ? "Sí" : "—";
+        const method = String(tx.paymentMethod || "");
+        const statusOut = String(tx.status || "");
+        const created = String(tx.createdAt || "");
+        const exp = String(tx.expiresAt || "");
+        const cols = [
+          userName,
+          email,
+          pkg,
+          modality,
+          amount,
+          coupon,
+          method,
+          statusOut,
+          created,
+          exp,
+        ];
+        return cols
+          .map((c) => {
+            const v = String(c ?? "");
+            if (
+              v.includes(",") ||
+              v.includes("\n") ||
+              v.includes("\r") ||
+              v.includes('"')
+            ) {
+              return `"${v.replace(/"/g, '""')}"`;
+            }
+            return v;
+          })
+          .join(",");
+      });
+      const csv = [headers.join(","), ...rows].join("\n");
+      res.set("Content-Type", "text/csv; charset=utf-8");
+      res.set(
+        "Content-Disposition",
+        "attachment; filename=transactions_export.csv"
+      );
+      res.status(200).send(csv);
+      return;
+    }
+
+    res.status(200).json({
+      transactions,
+      total: transactions.length,
+      summary: { totalAmount: sum },
+    });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ error: "Error al exportar transacciones", details: String(err) });
+  }
+};
+
 export const getUserTransactionsController = async (
   req: Request,
   res: Response

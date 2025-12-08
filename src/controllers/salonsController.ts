@@ -182,19 +182,28 @@ export const getAllClassroomsController = async (
       .orderBy("createdAt", "desc")
       .get();
 
-    const base = snapshot.docs.map((doc) => ({ id: doc.id, ...(doc.data() as ClassroomData) }));
+    const base = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...(doc.data() as ClassroomData),
+    }));
 
     const disciplineIds = Array.from(
       new Set(
         base
-          .map((c: any) => (typeof c.discipline === "string" ? c.discipline : String(c.discipline || "")))
+          .map((c: any) =>
+            typeof c.discipline === "string"
+              ? c.discipline
+              : String(c.discipline || "")
+          )
           .filter((id) => !!id)
       )
     );
     const branchIds = Array.from(
       new Set(
         base
-          .map((c: any) => (typeof c.branch === "string" ? c.branch : String(c.branch || "")))
+          .map((c: any) =>
+            typeof c.branch === "string" ? c.branch : String(c.branch || "")
+          )
           .filter((id) => !!id)
       )
     );
@@ -233,10 +242,14 @@ export const getAllClassroomsController = async (
     }
 
     const classrooms = base.map((c: any) => {
-      const did = typeof c.discipline === "string" ? c.discipline : String(c.discipline || "");
-      const bid = typeof c.branch === "string" ? c.branch : String(c.branch || "");
-      const disciplineName = did ? disciplineNameMap[did] ?? null : null;
-      const branchName = bid ? branchNameMap[bid] ?? null : null;
+      const did =
+        typeof c.discipline === "string"
+          ? c.discipline
+          : String(c.discipline || "");
+      const bid =
+        typeof c.branch === "string" ? c.branch : String(c.branch || "");
+      const disciplineName = did ? (disciplineNameMap[did] ?? null) : null;
+      const branchName = bid ? (branchNameMap[bid] ?? null) : null;
       return { ...c, disciplineName, branchName };
     });
 
@@ -246,6 +259,118 @@ export const getAllClassroomsController = async (
     res
       .status(500)
       .json({ error: "Error al obtener salones", details: String(err) });
+  }
+};
+
+export const getClassroomsByBranchController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { branchId } = req.params as { branchId: string };
+    const db = admin.firestore();
+    let snapshot: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
+    try {
+      snapshot = await db
+        .collection("classrooms")
+        .where("branch", "==", String(branchId))
+        .orderBy("createdAt", "desc")
+        .get();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (
+        msg.includes("FAILED_PRECONDITION") &&
+        msg.includes("requires an index")
+      ) {
+        snapshot = await db
+          .collection("classrooms")
+          .where("branch", "==", String(branchId))
+          .get();
+      } else {
+        throw e;
+      }
+    }
+
+    const base = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...(doc.data() as ClassroomData),
+    }));
+
+    const disciplineIds = Array.from(
+      new Set(
+        base
+          .map((c: any) =>
+            typeof c.discipline === "string"
+              ? c.discipline
+              : String(c.discipline || "")
+          )
+          .filter((id) => !!id)
+      )
+    );
+    const branchIds = Array.from(
+      new Set(
+        base
+          .map((c: any) =>
+            typeof c.branch === "string" ? c.branch : String(c.branch || "")
+          )
+          .filter((id) => !!id)
+      )
+    );
+
+    const disciplineNameMap: Record<string, string> = {};
+    const branchNameMap: Record<string, string> = {};
+
+    if (disciplineIds.length > 0) {
+      const BATCH = 10;
+      for (let i = 0; i < disciplineIds.length; i += BATCH) {
+        const chunk = disciplineIds.slice(i, i + BATCH);
+        const snap = await db
+          .collection("disciplines")
+          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+          .get();
+        snap.docs.forEach((d) => {
+          const data = d.data() as { name?: string };
+          disciplineNameMap[d.id] = String(data?.name || "");
+        });
+      }
+    }
+
+    if (branchIds.length > 0) {
+      const BATCH = 10;
+      for (let i = 0; i < branchIds.length; i += BATCH) {
+        const chunk = branchIds.slice(i, i + BATCH);
+        const snap = await db
+          .collection("branches")
+          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+          .get();
+        snap.docs.forEach((d) => {
+          const data = d.data() as { name?: string };
+          branchNameMap[d.id] = String(data?.name || "");
+        });
+      }
+    }
+
+    const classrooms = base.map((c: any) => {
+      const did =
+        typeof c.discipline === "string"
+          ? c.discipline
+          : String(c.discipline || "");
+      const bid =
+        typeof c.branch === "string" ? c.branch : String(c.branch || "");
+      const disciplineName = did ? (disciplineNameMap[did] ?? null) : null;
+      const branchName = bid ? (branchNameMap[bid] ?? null) : null;
+      return { ...c, disciplineName, branchName };
+    });
+
+    res.status(200).json({ classrooms });
+  } catch (err) {
+    console.error("Error al obtener salones por sucursal:", err);
+    res
+      .status(500)
+      .json({
+        error: "Error al obtener salones por sucursal",
+        details: String(err),
+      });
   }
 };
 
@@ -264,8 +389,12 @@ export const getClassroomByIdController = async (
     }
 
     const data = doc.data() as ClassroomData;
-    const did = typeof data.discipline === "string" ? data.discipline : String(data.discipline || "");
-    const bid = typeof data.branch === "string" ? data.branch : String(data.branch || "");
+    const did =
+      typeof data.discipline === "string"
+        ? data.discipline
+        : String(data.discipline || "");
+    const bid =
+      typeof data.branch === "string" ? data.branch : String(data.branch || "");
 
     let disciplineName: string | null = null;
     let branchName: string | null = null;

@@ -9,6 +9,7 @@ import {
   getClassesStatsController,
   updateClassController,
   getFutureClassesController,
+  createClassesBulkController,
 } from "../controllers/classController";
 import { adminSessionGuard } from "../middleware/adminSessionGuard";
 
@@ -22,6 +23,13 @@ router.get("/:classId", verifyToken, getClassByIdController);
 
 // Protegidas con permisos específicos y sesión única (solo para administradores/staff)
 router.post("/", verifyToken, adminSessionGuard, checkPermission("clases", "crear"), createClassController);
+router.post(
+  "/bulk",
+  verifyToken,
+  adminSessionGuard,
+  checkPermission("clases", "crear"),
+  createClassesBulkController
+);
 router.put("/:classId", verifyToken, adminSessionGuard, checkPermission("clases", "editar"), updateClassController);
 router.delete("/:classId", verifyToken, adminSessionGuard, checkPermission("clases", "cancelar"), deleteClassController);
 

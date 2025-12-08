@@ -5,6 +5,7 @@ import { adminSessionGuard } from "../middleware/adminSessionGuard";
 import {
   createCashTransactionController,
   getAllTransactionsController,
+  exportTransactionsController,
   getUserTransactionsController,
   updateTransactionStatusController,
   cancelTransactionController,
@@ -30,6 +31,13 @@ router.get(
   getAllTransactionsController
 );
 router.get(
+  "/export",
+  verifyToken,
+  adminSessionGuard,
+  checkPermission("transacciones", "exportar"),
+  exportTransactionsController
+);
+router.get(
   "/recent",
   verifyToken,
   adminSessionGuard,
@@ -49,10 +57,7 @@ router.get(
   // checkPermission("transacciones", "listado"),
   getTransactionSummaryController
 );
-router.get(
-  "/rankings",
-  getRankingsController
-);
+router.get("/rankings", getRankingsController);
 router.get(
   "/:userId",
   verifyToken,
