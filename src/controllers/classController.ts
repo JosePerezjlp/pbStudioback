@@ -1,10 +1,18 @@
+/* eslint-disable no-nested-ternary */
+/* eslint-disable no-continue */
+/* eslint-disable no-restricted-syntax */
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable no-await-in-loop */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // src/controllers/classController.ts
 import { Request, Response } from "express";
+import { DateTime } from "luxon";
 import admin from "../config/firebase";
 import { ClassType } from "../types/enums";
 import { getRoomTypeById } from "../utils/getRoomType";
 import { AuthRequest } from "../middleware/authMiddleware";
-import { DateTime } from "luxon";
+import { GympassService } from "../services/gympass.service";
+import { CreateSlotRequest } from "../models/CreateSlotRequest";
 
 interface ClassDoc {
   day: string;
@@ -67,6 +75,7 @@ export const createClassController = async (
       occupied,
       status = "abierta",
       enabled,
+      gympass
     } = req.body as Record<string, unknown>;
 
     // Números válidos
@@ -93,6 +102,14 @@ export const createClassController = async (
     if (!conflictQuery.empty) {
       res.status(409).json({
         error: "Ya existe una clase programada en ese salón, sede y horario.",
+        code: "CONFLICTING_CLASS",
+      });
+      return;
+    }
+       // 👇 Añadir gympass solo si viene en body
+    if (!gympass && typeof gympass !== "object") {
+     res.status(409).json({
+        error: "No ha creado una clase en Wellhub",
         code: "CONFLICTING_CLASS",
       });
       return;
@@ -126,7 +143,7 @@ export const createClassController = async (
           const n = Number(v);
           if (Number.isFinite(n)) next = Math.max(next, n);
         }
-        next = next + 1;
+        next += 1;
       }
 
       const classRef = db.collection("classes").doc();
@@ -159,7 +176,18 @@ export const createClassController = async (
       t.set(countersRef, { classNext: next + 1 }, { merge: true });
       return classRef.id;
     });
-
+  // Construir objeto para Gympass
+    const slot = new CreateSlotRequest();
+    slot.occur_date = `${day}T${hour}:00`; 
+    slot.room = String(room);
+    slot.total_capacity = parsedCapacity;
+    slot.total_booked = parsedOccupied;
+    slot.status = status === "abierta" ? 1 : 0;
+    slot.length_in_minutes = 60; 
+    slot.instructors =  [];
+    slot.product_id = 198; 
+    slot.booking_window = null; 
+    GympassService.createClass(198,5,slot)
     res.status(201).json({ message: "Clase creada correctamente", id: newId });
   } catch (error) {
     console.error("Error al crear clase:", error);
@@ -338,7 +366,7 @@ export const getAllClassesController = async (
 ) => {
   try {
     const authReq = req as AuthRequest;
-    const user = authReq.user;
+    const {user} = authReq;
 
     const pageParam = Number(req.query.page ?? 1);
     const limitParam = Number(req.query.limit ?? 20);
@@ -499,7 +527,7 @@ export const getAllClassesController = async (
       throw e;
     }
 
-    const docs = snap.docs;
+    const {docs} = snap;
     const hasMore = docs.length > limit;
     const pageDocs = hasMore ? docs.slice(0, limit) : docs;
     let pageItems = pageDocs.map((doc) => ({ id: doc.id, ...doc.data() }));
