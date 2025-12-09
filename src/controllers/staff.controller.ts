@@ -240,17 +240,7 @@ export const createStaffUser = async (
       isAdmin: role === RolTypeEnum.ADMIN,
     });
 
-    if (role === RolTypeEnum.INSTRUCTOR) {
-      await admin.firestore().collection("instructors").doc(uid).set({
-        firstName: "",
-        email,
-        lastName: "",
-        branchId: "",
-        disciplines: [],
-        createdAt: new Date().toISOString(),
-        staffId: uid,
-      });
-    }
+    
 
     res.status(201).json({
       message: "Staff creado correctamente",
