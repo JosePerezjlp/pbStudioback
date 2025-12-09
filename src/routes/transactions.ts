@@ -57,10 +57,7 @@ router.get(
   // checkPermission("transacciones", "listado"),
   getTransactionSummaryController
 );
-router.get(
-  "/rankings",
-  getRankingsController
-);
+router.get("/rankings", getRankingsController);
 router.get(
   "/:userId",
   verifyToken,

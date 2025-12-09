@@ -180,7 +180,7 @@ app.use("/instructors", instructorRouter);
 app.use("/rooms", salonsRouter);
 app.use("/disciplines", disciplinesRouter);
 app.use("/branches", branchRouter);
-app.use("/classes", verifyToken, classesRouter); // adminSessionGuard aplicado en router individual
+app.use("/classes", classesRouter); // rutas públicas y protegidas manejadas dentro del router
 app.use("/daily-classes", dailyClassesRouter);
 app.use("/paypal", paypalRouter);
 app.use("/transactions", verifyToken, transactionsRouter); // adminSessionGuard aplicado en router individual

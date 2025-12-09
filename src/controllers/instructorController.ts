@@ -1,53 +1,37 @@
 // src/controllers/instructorController.ts
 import { Request, Response } from "express";
-import bcrypt from "bcrypt";
 import multer from "multer";
 import admin from "../config/firebase";
 import { uploadToFirebase } from "../utils/uploadToFirebase";
-import { RolTypeEnum, StatusTypeEnum } from "../types/enums";
 
 /* ─────────────────────────────
    Colecciones y constantes
 ────────────────────────────── */
 const db = admin.firestore();
 const instructorsCol = db.collection("instructors");
-const staffCol = db.collection("staff");
-
-// Permisos fijos SOLO de clases, dentro de permissions.clases
-const CLASES_PERMISOS: ReadonlyArray<
-  "listado" | "crear" | "editar" | "cancelar" | "reservaciones" | "lista_espera"
-> = ["listado", "crear", "editar", "cancelar", "reservaciones", "lista_espera"];
+// No se crean/gestionan usuarios de Auth ni documentos en staff para instructores
 
 /* ─────────────────────────────
    Tipos
 ────────────────────────────── */
 interface InstructorDoc {
-  email: string;
-  password: string; // hashed
+  email?: string;
   firstName: string;
-  lastName: string;
+  lastName?: string;
   phone: string;
   address?: string;
-  description?: string;
-  joinDate?: string; // ISO
+  description: string;
+  joinDate: string; // ISO
   disciplines: string[];
   enabled: unknown; // puede llegar como string/boolean (respetamos)
   branch: string;
-  image?: string;
-  registrationDate: string; // ISO
+  image: string;
   createdAt: string; // ISO
-  staffId?: string;
-
-  // fijos
-  role: RolTypeEnum;
-  permissions: Record<string, string[]>; // { clases: [...] }
-  isAdmin: boolean;
-  updatedAt?: string;
+  updatedAt?: string; // ISO
 }
 
 interface UpdateInstructorBody {
   email?: string;
-  password?: string;
   firstName?: string;
   lastName?: string;
   phone?: string;
@@ -57,7 +41,6 @@ interface UpdateInstructorBody {
   disciplines?: string | string[];
   enabled?: unknown;
   branch?: string;
-  // NO se aceptan: role, permissions, isAdmin (las blindamos)
   [key: string]: unknown;
 }
 
@@ -104,7 +87,6 @@ export const createInstructorController = [
     try {
       const {
         email,
-        password,
         firstName,
         lastName,
         phone,
@@ -114,7 +96,6 @@ export const createInstructorController = [
         enabled = true,
         branch,
         branchId,
-        status,
       } = req.body as Record<string, unknown>;
       const enabledFinal =
         (req.body as any).isActive !== undefined
@@ -122,126 +103,64 @@ export const createInstructorController = [
           : enabled;
 
       const branchFinal = String(branchId ?? branch ?? "");
-
-      const statusRaw = typeof status === "string" ? status : undefined;
-      const staffStatus: StatusTypeEnum =
-        statusRaw === StatusTypeEnum.INACTIVE
-          ? StatusTypeEnum.INACTIVE
-          : statusRaw === StatusTypeEnum.ACTIVE
-            ? StatusTypeEnum.ACTIVE
-            : enabledFinal === true ||
-                String(enabledFinal).toLowerCase() === "true"
-              ? StatusTypeEnum.ACTIVE
-              : StatusTypeEnum.INACTIVE;
-
-      // 0) Verificar duplicado en staff por email
-      const dupSnap = await staffCol
-        .where("email", "==", String(email))
-        .limit(1)
-        .get();
-      if (!dupSnap.empty) {
+      // Validar requeridos para crear/editar instructor "producto"
+      const disciplines = parseDisciplines(req.body.disciplines);
+      if (
+        !String(firstName || "").trim() ||
+        disciplines.length === 0 ||
+        !String(description || "").trim() ||
+        !String(branchFinal || "").trim() ||
+        !String(phone || "").trim() ||
+        !String(joinDate || "").trim()
+      ) {
         res.status(400).json({
-          error: "Este correo ya está registrado en la base de datos",
-          code: "firestore/email-already-exists",
+          error:
+            "Faltan campos obligatorios: nombre, disciplinas, descripción, sucursal, teléfono y fecha de ingreso",
         });
         return;
       }
 
-      // 1) Crear o reutilizar usuario en Firebase Auth
-      let uid: string;
-      try {
-        const existingAuth = await admin.auth().getUserByEmail(String(email));
-        uid = existingAuth.uid;
-        await admin.auth().updateUser(uid, {
-          password: String(password),
-          emailVerified: true,
-        });
-      } catch (err: unknown) {
-        const code =
-          typeof err === "object" && err !== null && "errorInfo" in err
-            ? (err as { errorInfo?: { code?: string } }).errorInfo?.code
-            : undefined;
-        if (code === "auth/user-not-found") {
-          const created = await admin.auth().createUser({
-            email: String(email),
-            password: String(password),
-            emailVerified: true,
-          });
-          uid = created.uid;
-        } else {
-          throw err;
-        }
-      }
-
-      // 2) Asegurar que no exista documento en users para este UID
-      try {
-        const usersRef = db.collection("users").doc(uid);
-        const usersSnap = await usersRef.get();
-        if (usersSnap.exists) await usersRef.delete();
-      } catch (_) {}
-
-      // 3) Crear documento en staff con role instructor y permisos vacíos
-      await staffCol.doc(uid).set({
-        email: String(email),
-        role: RolTypeEnum.INSTRUCTOR,
-        branches: branchFinal ? [branchFinal] : [],
-        permissions: {},
-        status: staffStatus,
-        firstName: String(firstName ?? ""),
-        lastName: String(lastName ?? ""),
-        phone: String(phone ?? "0000000000"),
-        branch: branchFinal,
-        createdAt: new Date().toISOString(),
-        isAdmin: false,
-      });
-
-      // 4) Subir imagen (opcional)
+      // Imagen obligatoria en creación
       let imageUrl = "";
       if (req.file) {
         try {
-          imageUrl = await uploadToFirebase(req.file, `instructor/${uid}`);
+          imageUrl = await uploadToFirebase(
+            req.file,
+            `instructor/${Date.now()}`
+          );
         } catch (_) {
           imageUrl = "";
         }
       }
-
-      // 5) Disciplinas
-      const disciplines = parseDisciplines(req.body.disciplines);
-
-      // 6) Hash local (si decides conservar hash en colec. instructors)
-      const hashedPassword = await bcrypt.hash(String(password), 10);
+      if (!imageUrl) {
+        res.status(400).json({
+          error: "La imagen de perfil es obligatoria",
+        });
+        return;
+      }
       const nowIso = new Date().toISOString();
 
-      // 7) Guardar doc en instructors/{uid} con role/permissions/isAdmin fijos y staffId
       const instructorDoc: InstructorDoc = {
-        email: String(email),
-        password: hashedPassword,
         firstName: String(firstName),
-        lastName: String(lastName),
         phone: String(phone),
-        address: address ? String(address) : "",
-        description: description ? String(description) : "",
-        joinDate: joinDate ? String(joinDate) : undefined,
+        description: String(description),
+        joinDate: String(joinDate),
         disciplines,
         enabled: enabledFinal,
         branch: branchFinal,
-        image: imageUrl || undefined,
-        registrationDate: nowIso,
+        image: imageUrl,
         createdAt: nowIso,
-        staffId: uid,
-        role: RolTypeEnum.INSTRUCTOR,
-        permissions: {
-          clases: [...CLASES_PERMISOS],
-        },
-        isAdmin: true,
       };
 
-      await instructorsCol.doc(uid).set(instructorDoc);
+      if (email) instructorDoc.email = String(email);
+      if (lastName) instructorDoc.lastName = String(lastName);
+      if (address) instructorDoc.address = String(address);
 
-      res.status(201).json({
-        message: "Instructor creado correctamente",
-        id: uid,
-      });
+      const ref = await instructorsCol.add(instructorDoc);
+
+      res
+        .status(201)
+        .json({ message: "Instructor creado correctamente", id: ref.id });
     } catch (error: unknown) {
       // eslint-disable-next-line no-console
       console.error("🔥 ERROR al crear instructor:", error);
@@ -414,19 +333,10 @@ export const updateInstructorController = [
         updateData.disciplines = disciplinesParsed;
       }
 
-      // email → también en Auth
+      // email opcional, solo se guarda en el documento
       if (typeof body.email === "string" && body.email.trim()) {
         const newEmail = body.email.trim();
         updateData.email = newEmail;
-        await admin.auth().updateUser(instructorId, { email: newEmail });
-      }
-
-      // password → hash + Auth
-      if (typeof body.password === "string" && body.password.trim()) {
-        const newPlain = body.password.trim();
-        const hashed = await bcrypt.hash(newPlain, 10);
-        updateData.password = hashed;
-        await admin.auth().updateUser(instructorId, { password: newPlain });
       }
 
       // Imagen (si NO viene archivo, se conserva la actual; no tocamos storage)
@@ -444,27 +354,35 @@ export const updateInstructorController = [
         } catch (_) {}
       }
 
-      // ── Normalización SOLO si faltan o son inválidos ──────────────────
-      // role
-      if ((current?.role as string) !== "employee") {
-        updateData.role = "employee";
-      }
-      // permissions.clases debe ser array con los permisos
-      const hasValidPermissions =
-        current?.permissions &&
-        typeof current.permissions === "object" &&
-        Array.isArray((current.permissions as Record<string, unknown>).clases);
-
-      if (!hasValidPermissions) {
-        updateData.permissions = { clases: [...CLASES_PERMISOS] };
-      }
-      // isAdmin true
-      if (current?.isAdmin !== true) {
-        updateData.isAdmin = true;
-      }
-
       // timestamp de actualización
       updateData.updatedAt = new Date().toISOString();
+
+      // Validar obligatorios contra el estado final
+      const finalState = {
+        ...(current || {}),
+        ...updateData,
+      } as Partial<InstructorDoc>;
+      const hasImage =
+        typeof finalState.image === "string" &&
+        finalState.image.trim().length > 0;
+      const hasDisciplines =
+        Array.isArray(finalState.disciplines) &&
+        finalState.disciplines.length > 0;
+      if (
+        !String(finalState.firstName || "").trim() ||
+        !hasDisciplines ||
+        !String(finalState.description || "").trim() ||
+        !String(finalState.branch || "").trim() ||
+        !String(finalState.phone || "").trim() ||
+        !String(finalState.joinDate || "").trim() ||
+        !hasImage
+      ) {
+        res.status(400).json({
+          error:
+            "Faltan campos obligatorios: nombre, disciplinas, descripción, sucursal, teléfono, fecha de ingreso e imagen",
+        });
+        return;
+      }
 
       await ref.update(updateData);
 
@@ -514,10 +432,7 @@ export const deleteInstructorController = async (
     const data = snap.data() as InstructorDoc;
     if (data?.image) await deleteFromFirebase(data.image);
 
-    await Promise.allSettled([
-      ref.delete(),
-      admin.auth().deleteUser(instructorId),
-    ]);
+    await Promise.allSettled([ref.delete()]);
 
     res.status(200).json({ message: "Instructor eliminado correctamente" });
   } catch (error) {

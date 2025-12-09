@@ -526,6 +526,11 @@ export const updateStaffUser = async (
       }
     }
 
+    // Ignorar campo no soportado 'birthday' en actualizaciones
+    if ("birthday" in updateData) {
+      delete updateData.birthday;
+    }
+
     // Comparar y agregar solo cambios
     Object.keys(updateData).forEach((key) => {
       if (
