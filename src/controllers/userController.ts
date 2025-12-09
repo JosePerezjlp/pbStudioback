@@ -119,7 +119,7 @@ export const completeProfileFromAuthController = async (
           ...baseDoc,
           isNew: true,
           enabled: true,
-          freeSession: false,
+          freeSession: true,
           registrationDate: nowIso,
           createdAt: nowIso,
           packages: [],
@@ -236,7 +236,7 @@ export const userController = async (
           isAdmin: false,
           isNew: true,
           enabled,
-          freeSession,
+          freeSession: true,
           birthDate: birthDate ?? null,
           registrationDate: nowIso,
           emergencyContact: {
@@ -1248,5 +1248,177 @@ export const adminResetPasswordController = async (
     }
 
     res.status(status).json({ error: code, message });
+  }
+};
+
+export const searchUsersController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const qRaw = String((req.query as any)?.q || "").trim();
+    const limitNum = Number((req.query as any)?.limit ?? 10);
+    const limit =
+      Number.isFinite(limitNum) && limitNum > 0 ? Math.min(limitNum, 20) : 10;
+
+    if (qRaw.length < 2) {
+      res.status(200).json({ users: [] });
+      return;
+    }
+
+    const db = admin.firestore();
+    const col = db.collection("users");
+
+    const qLower = qRaw.toLowerCase();
+    const tokens = qLower.split(/\s+/).filter(Boolean);
+
+    const seen = new Set<string>();
+    const results: Array<{
+      id: string;
+      firstName?: string;
+      lastName?: string;
+      email?: string;
+    }> = [];
+
+    const pushDoc = (doc: FirebaseFirestore.QueryDocumentSnapshot) => {
+      if (seen.has(doc.id)) return;
+      const data = doc.data() as any;
+      if (String(data.role || "").toLowerCase() !== "user") return;
+      results.push({
+        id: doc.id,
+        firstName: data.firstName ?? "",
+        lastName: data.lastName ?? "",
+        email: data.email ?? "",
+      });
+      seen.add(doc.id);
+    };
+
+    const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
+    if (tokens.length >= 2) {
+      const [fnTok, lnTok] = tokens;
+      const fnVariants = [fnTok, cap(fnTok)].filter(
+        (v, i, a) => v && a.indexOf(v) === i
+      );
+      const lnVariants = [lnTok, cap(lnTok)].filter(
+        (v, i, a) => v && a.indexOf(v) === i
+      );
+
+      for (const f of fnVariants) {
+        for (const l of lnVariants) {
+          const snap = await col
+            .where("role", "==", "user")
+            .where("firstName", "==", f)
+            .where("lastName", "==", l)
+            .limit(limit - results.length)
+            .get();
+          snap.docs.forEach(pushDoc);
+          if (results.length >= limit) break;
+        }
+        if (results.length >= limit) break;
+      }
+
+      if (results.length < limit) {
+        try {
+          const snap = await col
+            .where("role", "==", "user")
+            .where("firstName", "==", cap(fnTok))
+            .orderBy("lastName")
+            .startAt(lnTok)
+            .endAt(`${lnTok}\uf8ff`)
+            .limit(limit - results.length)
+            .get();
+          snap.docs.forEach(pushDoc);
+        } catch (e) {
+          const scan = await col
+            .where("role", "==", "user")
+            .orderBy("createdAt", "desc")
+            .limit(60)
+            .get();
+          const list = scan.docs.filter((d) => {
+            const data = d.data() as any;
+            const f = String(data.firstName || "").toLowerCase();
+            const l = String(data.lastName || "").toLowerCase();
+            return f.startsWith(fnTok) && l.startsWith(lnTok);
+          });
+          list.slice(0, limit - results.length).forEach(pushDoc);
+        }
+      }
+    } else {
+      const t = tokens[0];
+      const variants = [t, cap(t)].filter((v, i, a) => v && a.indexOf(v) === i);
+      for (const v of variants) {
+        try {
+          const snap1 = await col
+            .where("role", "==", "user")
+            .orderBy("firstName")
+            .startAt(v)
+            .endAt(`${v}\uf8ff`)
+            .limit(limit - results.length)
+            .get();
+          snap1.docs.forEach(pushDoc);
+        } catch (_) {
+          const scan = await col
+            .where("role", "==", "user")
+            .orderBy("createdAt", "desc")
+            .limit(60)
+            .get();
+          const list = scan.docs.filter((d) =>
+            String((d.data() as any).firstName || "")
+              .toLowerCase()
+              .startsWith(t)
+          );
+          list.slice(0, limit - results.length).forEach(pushDoc);
+        }
+        if (results.length >= limit) break;
+      }
+
+      if (results.length < limit) {
+        for (const v of variants) {
+          try {
+            const snap2 = await col
+              .where("role", "==", "user")
+              .orderBy("lastName")
+              .startAt(v)
+              .endAt(`${v}\uf8ff`)
+              .limit(limit - results.length)
+              .get();
+            snap2.docs.forEach(pushDoc);
+          } catch (_) {
+            const scan2 = await col
+              .where("role", "==", "user")
+              .orderBy("createdAt", "desc")
+              .limit(60)
+              .get();
+            const list2 = scan2.docs.filter((d) =>
+              String((d.data() as any).lastName || "")
+                .toLowerCase()
+                .startsWith(t)
+            );
+            list2.slice(0, limit - results.length).forEach(pushDoc);
+          }
+          if (results.length >= limit) break;
+        }
+      }
+
+      if (results.length < limit) {
+        try {
+          const snap3 = await col
+            .where("role", "==", "user")
+            .orderBy("email")
+            .startAt(qLower)
+            .endAt(`${qLower}\uf8ff`)
+            .limit(limit - results.length)
+            .get();
+          snap3.docs.forEach(pushDoc);
+        } catch (_) {}
+      }
+    }
+
+    const sliced = results.slice(0, limit);
+    res.status(200).json({ users: sliced });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Error desconocido";
+    res.status(500).json({ error: "Error interno del servidor", details: msg });
   }
 };

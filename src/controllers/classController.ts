@@ -620,6 +620,170 @@ export const getAllClassesController = async (
 };
 
 /* ============================================================
+   LIST – públicas solo abiertas
+   ============================================================ */
+export const getOpenClassesPublicController = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const pageParam = Number(req.query.page ?? 1);
+    const limitParam = Number(req.query.limit ?? 20);
+    const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
+    const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 20;
+    const cursorId = (req.query.cursor as string | undefined) || undefined;
+
+    const instructorId = (req.query.instructor as string | undefined) || undefined;
+    const branchId = (req.query.branchId as string | undefined) || undefined;
+    const roomId = (req.query.roomId as string | undefined) || undefined;
+    const hourParam = (req.query.hour as string | undefined) || undefined;
+    const startDate = (req.query.startDate as string | undefined) || undefined;
+    const endDate = (req.query.endDate as string | undefined) || undefined;
+
+    const db = admin.firestore();
+    let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
+      .collection("classes")
+      .select(
+        "day",
+        "hour",
+        "status",
+        "branch",
+        "room",
+        "discipline",
+        "instructor",
+        "capacity",
+        "occupied",
+        "createdAt",
+        "legacyId"
+      )
+      .where("status", "==", "abierta");
+
+    if (branchId) q = q.where("branch", "==", branchId);
+    if (instructorId) q = q.where("instructor", "==", instructorId);
+    if (roomId) q = q.where("room", "==", roomId);
+    if (hourParam) q = q.where("hour", "==", hourParam);
+
+    let orderedByDay = false;
+    if (startDate || endDate) {
+      const start = startDate ?? "0000-01-01";
+      const end = endDate ?? "9999-12-31";
+      q = q
+        .where("day", ">=", start)
+        .where("day", "<=", end)
+        .orderBy("day", "desc")
+        .orderBy("hour", "desc");
+      orderedByDay = true;
+    } else {
+      q = q.orderBy("createdAt", "desc");
+    }
+
+    if (cursorId) {
+      const cursorSnap = await db.collection("classes").doc(cursorId).get();
+      if (cursorSnap.exists) {
+        q = q.startAfter(cursorSnap);
+      }
+    }
+    if (!cursorId && page > 1) {
+      q = q.offset((page - 1) * limit);
+    }
+
+    q = q.limit(limit + 1);
+
+    let snap: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
+    try {
+      snap = await q.get();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("FAILED_PRECONDITION")) {
+        res.status(422).json({ error: "index_required", indexRequired: true, details: msg });
+        return;
+      }
+      throw e;
+    }
+
+    const docs = snap.docs;
+    const hasMore = docs.length > limit;
+    const pageDocs = hasMore ? docs.slice(0, limit) : docs;
+    const pageItems = pageDocs.map((doc) => ({ id: doc.id, ...doc.data() }));
+
+    const roomIds = Array.from(new Set(pageItems.map((c: any) => String(c.room || "")).filter((v) => v)));
+    const instructorIds = Array.from(
+      new Set(pageItems.map((c: any) => String(c.instructor || "")).filter((v) => v))
+    );
+    const branchIds = Array.from(new Set(pageItems.map((c: any) => String(c.branch || "")).filter((v) => v)));
+    const disciplineIds = Array.from(
+      new Set(pageItems.map((c: any) => String(c.discipline || "")).filter((v) => v))
+    );
+
+    const roomSnaps = await Promise.all(roomIds.map((id) => db.collection("classrooms").doc(id).get()));
+    const roomsMap = new Map<string, string>();
+    roomSnaps.forEach((s) => {
+      if (s.exists) {
+        const d = s.data() as any;
+        roomsMap.set(s.id, String(d?.name ?? ""));
+      }
+    });
+
+    const instrSnaps = await Promise.all(instructorIds.map((id) => db.collection("instructors").doc(id).get()));
+    const instrMap = new Map<string, { firstName: string; lastName: string }>();
+    instrSnaps.forEach((s) => {
+      if (s.exists) {
+        const d = s.data() as any;
+        instrMap.set(s.id, { firstName: String(d?.firstName ?? ""), lastName: String(d?.lastName ?? "") });
+      }
+    });
+
+    const branchSnaps = await Promise.all(branchIds.map((id) => db.collection("branches").doc(id).get()));
+    const branchesMap = new Map<string, string>();
+    branchSnaps.forEach((s) => {
+      if (s.exists) {
+        const d = s.data() as any;
+        branchesMap.set(s.id, String(d?.name ?? ""));
+      }
+    });
+
+    const discSnaps = await Promise.all(disciplineIds.map((id) => db.collection("disciplines").doc(id).get()));
+    const disciplinesMap = new Map<string, string>();
+    discSnaps.forEach((s) => {
+      if (s.exists) {
+        const d = s.data() as any;
+        disciplinesMap.set(s.id, String(d?.name ?? ""));
+      }
+    });
+
+    const enriched = pageItems.map((c: any) => {
+      const roomIdLocal = String(c.room || "");
+      const instructorIdLocal = String(c.instructor || "");
+      const branchIdLocal = String(c.branch || "");
+      const disciplineIdLocal = String(c.discipline || "");
+      const roomName = roomsMap.get(roomIdLocal) ?? null;
+      const instr = instrMap.get(instructorIdLocal) || null;
+      const branchName = branchesMap.get(branchIdLocal) ?? null;
+      const disciplineName = disciplinesMap.get(disciplineIdLocal) ?? null;
+      return {
+        ...c,
+        roomName,
+        instructorFirstName: instr?.firstName ?? null,
+        instructorLastName: instr?.lastName ?? null,
+        branchName,
+        disciplineName,
+      };
+    });
+
+    const nextCursor = hasMore ? String(pageDocs[pageDocs.length - 1].id) : null;
+    res.status(200).json({
+      classes: enriched,
+      nextCursor,
+      hasMore,
+      limit,
+      page,
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Error al obtener clases abiertas", details: String(error) });
+  }
+};
+
+/* ============================================================
    GET ONE – clase por id
    ============================================================ */
 export const getClassByIdController = async (

@@ -477,11 +477,19 @@ export const createCashTransactionController = async (
       const txRef = db.collection("transactions").doc();
       t.set(txRef, cleanUndefined(tx));
 
+      const hasFreeSession = Boolean((userData as any)?.freeSession);
+      const shouldUnsetFreeSession =
+        hasFreeSession &&
+        Boolean((pkgData as any)?.isActive) &&
+        Boolean((pkgData as any)?.public) &&
+        Boolean((pkgData as any)?.isNewUser);
+
       t.update(userRef, {
         packages: admin.firestore.FieldValue.arrayUnion(userPackage),
         "classes.total": admin.firestore.FieldValue.increment(addTotal),
         "classes.available": admin.firestore.FieldValue.increment(addTotal),
         "classes.taken": admin.firestore.FieldValue.increment(0),
+        ...(shouldUnsetFreeSession ? { freeSession: false } : {}),
       });
 
       // Incrementar usedCount para cualquier cupón usado (automático o por código)

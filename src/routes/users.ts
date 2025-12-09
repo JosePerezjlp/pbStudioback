@@ -12,6 +12,7 @@ import {
   disableUserController,
   getUsersStatsController,
   updateMyBirthDateController,
+  searchUsersController,
 } from "../controllers/userController";
 import { userRegisterValidations } from "../validations/userValidations";
 import { verifyToken } from "../middleware/authMiddleware";
@@ -30,6 +31,7 @@ router.get("/recent", verifyToken, checkPermission("usuarios", "listado"), getRe
 
 // Rutas administrativas (requieren permisos específicos)
 router.get("/", verifyToken, checkPermission("usuarios", "listado"), getAllUsersController);
+router.get("/search", verifyToken, checkPermission("usuarios", "listado"), searchUsersController);
 router.get("/export", verifyToken, checkPermission("usuarios", "exportar"), getAllUsersController); // TODO: Implementar exportación
 router.get("/:userId", verifyToken, checkPermission("usuarios", "perfil"), getUserByIdController);
 router.put("/:userId", verifyToken, checkPermission("usuarios", "editar"), updateUserController);

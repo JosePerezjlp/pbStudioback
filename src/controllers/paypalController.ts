@@ -466,6 +466,14 @@ export const capturePayPalOrderController = async (
     }
 
     /* ---------- Actualizar usuario (incluye modality) ---------- */
+    const settingsSnap = await admin
+      .firestore()
+      .collection("configurations")
+      .doc("general_settings")
+      .get();
+    const welcomePackageId = settingsSnap.exists
+      ? String(((settingsSnap.data() || {}) as any).package || "")
+      : "";
     const userRef = admin.firestore().doc(`users/${uid}`);
     const addTotal = pkgData.isUnlimited ? 0 : pkgData.totalClasses;
     const userPackage = {
@@ -483,10 +491,26 @@ export const capturePayPalOrderController = async (
     };
 
     await admin.firestore().runTransaction(async (t) => {
+      const snap = await t.get(userRef);
+      const data = snap.data() || {};
+      const hadPackages =
+        Array.isArray((data as any).packages) &&
+        (data as any).packages.length > 0;
+      const markNotNew = genericStatus === "paid" && !hadPackages;
+      const hasFreeSession = Boolean((data as any).freeSession);
+      const shouldUnsetFreeSession =
+        genericStatus === "paid" &&
+        hasFreeSession &&
+        Boolean((pkgData as any)?.isActive) &&
+        Boolean((pkgData as any)?.public) &&
+        Boolean((pkgData as any)?.isNewUser);
+
       t.update(userRef, {
         packages: admin.firestore.FieldValue.arrayUnion(userPackage),
         "classes.total": admin.firestore.FieldValue.increment(addTotal),
         "classes.available": admin.firestore.FieldValue.increment(addTotal),
+        ...(markNotNew ? { isNew: false } : {}),
+        ...(shouldUnsetFreeSession ? { freeSession: false } : {}),
       });
 
       // Incrementar usedCount para cualquier cupón usado (automático o por código)

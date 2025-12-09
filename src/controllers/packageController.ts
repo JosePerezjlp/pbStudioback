@@ -61,13 +61,21 @@ export const createPackageController = async (
   }
 
   try {
-    const data = req.body;
+    const { startDate, endDate, ...rest } = req.body;
+    const norm = (v: any) => {
+      if (v === undefined || v === null) return null;
+      if (typeof v === "string") {
+        const t = v.trim();
+        return t.length > 0 ? t : null;
+      }
+      return null;
+    };
     const newPackage = await collection.add({
-      ...data,
+      ...rest,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      startDate: data.startDate ?? null,
-      endDate: data.endDate ?? null,
+      startDate: norm(startDate),
+      endDate: norm(endDate),
     });
 
     res
@@ -143,7 +151,7 @@ export const getActivePackagesController = async (
       .filter((pkg: any) => {
         const hasStart = Boolean(pkg.startDate);
         const hasEnd = Boolean(pkg.endDate);
-        if (!hasStart && !hasEnd) return false;
+        if (!hasStart && !hasEnd) return true;
         const startDate = hasStart ? normalizeStartDate(pkg.startDate) : null;
         const endDate = hasEnd ? normalizeEndDate(pkg.endDate) : null;
         if (startDate && today < startDate) return false;
@@ -190,12 +198,27 @@ export const updatePackageController = async (
 ): Promise<void> => {
   const { packageId } = req.params;
   const updateData = { ...req.body };
-
-  if ("startDate" in updateData && typeof updateData.startDate !== "string") {
-    delete updateData.startDate;
+  if ("startDate" in updateData) {
+    const v = updateData.startDate;
+    if (typeof v === "string") {
+      const t = v.trim();
+      updateData.startDate = t.length > 0 ? t : null;
+    } else if (v === null) {
+      updateData.startDate = null;
+    } else {
+      delete updateData.startDate;
+    }
   }
-  if ("endDate" in updateData && typeof updateData.endDate !== "string") {
-    delete updateData.endDate;
+  if ("endDate" in updateData) {
+    const v = updateData.endDate;
+    if (typeof v === "string") {
+      const t = v.trim();
+      updateData.endDate = t.length > 0 ? t : null;
+    } else if (v === null) {
+      updateData.endDate = null;
+    } else {
+      delete updateData.endDate;
+    }
   }
 
   try {
@@ -217,9 +240,11 @@ export const updatePackageController = async (
     ];
     nonEditableFields.forEach((field) => delete updateData[field]);
 
-    // 🧹 Eliminar null/undefined del payload
     Object.keys(updateData).forEach((key) => {
-      if (updateData[key] === undefined || updateData[key] === null) {
+      if (
+        updateData[key] === undefined ||
+        (updateData[key] === null && key !== "startDate" && key !== "endDate")
+      ) {
         delete updateData[key];
       }
     });
