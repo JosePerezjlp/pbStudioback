@@ -9,6 +9,7 @@ import { Request, Response } from "express";
 import { DateTime } from "luxon";
 import admin from "../config/firebase";
 import { ClassType } from "../types/enums";
+import { normalizeClassType } from "../utils/packageSelection";
 import { getRoomTypeById } from "../utils/getRoomType";
 import { AuthRequest } from "../middleware/authMiddleware";
 import { GympassService } from "../services/gympass.service";
@@ -1375,5 +1376,116 @@ export const getClassesStatsController = async (
       error: "Error al obtener estadísticas de clases",
       details: error instanceof Error ? error.message : String(error),
     });
+  }
+};
+
+export const getAvailableClassesByBranchController = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const branchId = String(req.query.branchId || "");
+    if (!branchId) {
+      res.status(400).json({ error: "branchId es requerido" });
+      return;
+    }
+
+    const disciplineId = (req.query.disciplineId as string | undefined) || undefined;
+    const instructorId = (req.query.instructorId as string | undefined) || undefined;
+    const typeRaw = (req.query.type as string | undefined) || undefined;
+    const normalizedType = normalizeClassType(typeRaw ?? null) || undefined;
+
+    const db = admin.firestore();
+    let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
+      .collection("classes")
+      .where("branch", "==", branchId)
+      .where("status", "==", "abierta");
+
+    if (disciplineId) q = q.where("discipline", "==", disciplineId);
+    if (instructorId) q = q.where("instructor", "==", instructorId);
+    if (normalizedType) q = q.where("type", "==", normalizedType);
+
+    let snap: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
+    try {
+      snap = await q.orderBy("day", "asc").orderBy("hour", "asc").get();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("FAILED_PRECONDITION") && msg.includes("requires an index")) {
+        snap = await q.get();
+      } else {
+        throw e;
+      }
+    }
+
+    let items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+    items = items.filter((c: any) => {
+      const capacity = Number(c.capacity ?? 0);
+      const occupied = Number(c.occupied ?? 0);
+      return capacity > 0 && occupied < capacity;
+    });
+
+    const roomIds = Array.from(new Set(items.map((c: any) => String(c.room || "")).filter((v) => v)));
+    const instructorIds = Array.from(new Set(items.map((c: any) => String(c.instructor || "")).filter((v) => v)));
+    const branchIds = Array.from(new Set(items.map((c: any) => String(c.branch || "")).filter((v) => v)));
+    const disciplineIds = Array.from(new Set(items.map((c: any) => String(c.discipline || "")).filter((v) => v)));
+
+    const roomSnaps = await Promise.all(roomIds.map((id) => db.collection("classrooms").doc(id).get()));
+    const roomsMap = new Map<string, string>();
+    roomSnaps.forEach((s) => {
+      if (s.exists) {
+        const d = s.data() as any;
+        roomsMap.set(s.id, String(d?.name ?? ""));
+      }
+    });
+
+    const instrSnaps = await Promise.all(instructorIds.map((id) => db.collection("instructors").doc(id).get()));
+    const instrMap = new Map<string, { firstName: string; lastName: string }>();
+    instrSnaps.forEach((s) => {
+      if (s.exists) {
+        const d = s.data() as any;
+        instrMap.set(s.id, { firstName: String(d?.firstName ?? ""), lastName: String(d?.lastName ?? "") });
+      }
+    });
+
+    const branchSnaps = await Promise.all(branchIds.map((id) => db.collection("branches").doc(id).get()));
+    const branchesMap = new Map<string, string>();
+    branchSnaps.forEach((s) => {
+      if (s.exists) {
+        const d = s.data() as any;
+        branchesMap.set(s.id, String(d?.name ?? ""));
+      }
+    });
+
+    const discSnaps = await Promise.all(disciplineIds.map((id) => db.collection("disciplines").doc(id).get()));
+    const disciplinesMap = new Map<string, string>();
+    discSnaps.forEach((s) => {
+      if (s.exists) {
+        const d = s.data() as any;
+        disciplinesMap.set(s.id, String(d?.name ?? ""));
+      }
+    });
+
+    const enriched = items.map((c: any) => {
+      const roomIdLocal = String(c.room || "");
+      const instructorIdLocal = String(c.instructor || "");
+      const branchIdLocal = String(c.branch || "");
+      const disciplineIdLocal = String(c.discipline || "");
+      const roomName = roomsMap.get(roomIdLocal) ?? null;
+      const instr = instrMap.get(instructorIdLocal) || null;
+      const branchName = branchesMap.get(branchIdLocal) ?? null;
+      const disciplineName = disciplinesMap.get(disciplineIdLocal) ?? null;
+      return {
+        ...c,
+        roomName,
+        instructorFirstName: instr?.firstName ?? null,
+        instructorLastName: instr?.lastName ?? null,
+        branchName,
+        disciplineName,
+      };
+    });
+
+    res.status(200).json({ classes: enriched });
+  } catch (error) {
+    res.status(500).json({ error: "Error al obtener clases disponibles", details: String(error) });
   }
 };

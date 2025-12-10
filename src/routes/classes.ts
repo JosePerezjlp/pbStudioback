@@ -11,6 +11,7 @@ import {
   getFutureClassesController,
   createClassesBulkController,
   getOpenClassesPublicController,
+  getAvailableClassesByBranchController,
 } from "../controllers/classController";
 import { adminSessionGuard } from "../middleware/adminSessionGuard";
 
@@ -21,6 +22,7 @@ router.get("/", getAllClassesController);
 router.get("/stats", getClassesStatsController);
 router.get("/future", getFutureClassesController);
 router.get("/open", getOpenClassesPublicController);
+router.get("/available", getAvailableClassesByBranchController);
 router.get("/:classId", verifyToken, getClassByIdController);
 
 // Protegidas con permisos específicos y sesión única (solo para administradores/staff)
