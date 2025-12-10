@@ -92,6 +92,11 @@ export const completeProfileFromAuthController = async (
         name: emergencyContact?.name ?? null,
         phone: emergencyContact?.phone ?? null,
       },
+      firstNameLower: String(firstName ?? "").toLowerCase(),
+      lastNameLower: String(lastName ?? "").toLowerCase(),
+      emailLower: String(emailFromToken ?? "").toLowerCase(),
+      fullNameLower:
+        `${String(firstName ?? "").toLowerCase()} ${String(lastName ?? "").toLowerCase()}`.trim(),
     };
 
     if (!snap.exists) {
@@ -249,6 +254,11 @@ export const userController = async (
           classes: { total: 0, available: 0, taken: 0 },
           createdAt: nowIso,
           legacyId: next,
+          firstNameLower: String(firstName ?? "").toLowerCase(),
+          lastNameLower: String(lastName ?? "").toLowerCase(),
+          emailLower: String(email ?? "").toLowerCase(),
+          fullNameLower:
+            `${String(firstName ?? "").toLowerCase()} ${String(lastName ?? "").toLowerCase()}`.trim(),
         });
         t.set(countersRef, { userNext: next + 1 }, { merge: true });
       });
@@ -489,6 +499,32 @@ export const updateUserController = async (
       }
     });
 
+    const cur = userDoc.data() as any;
+    const fn =
+      typeof updateData.firstName === "string"
+        ? updateData.firstName
+        : String(cur?.firstName ?? "");
+    const ln =
+      typeof updateData.lastName === "string"
+        ? updateData.lastName
+        : String(cur?.lastName ?? "");
+    const em =
+      typeof updateData.email === "string"
+        ? updateData.email
+        : String(cur?.email ?? "");
+    if (
+      updateData.firstName !== undefined ||
+      updateData.lastName !== undefined
+    ) {
+      (updateData as any).firstNameLower = String(fn).toLowerCase();
+      (updateData as any).lastNameLower = String(ln).toLowerCase();
+      (updateData as any).fullNameLower =
+        `${String(fn).toLowerCase()} ${String(ln).toLowerCase()}`.trim();
+    }
+    if (updateData.email !== undefined) {
+      (updateData as any).emailLower = String(em).toLowerCase();
+    }
+
     if (Object.keys(updateData).length === 0) {
       res.status(200).json({ message: "No hay datos para actualizar" });
       return;
@@ -603,6 +639,25 @@ export const updateMyProfileController = async (
       const val = updateData[key];
       if (val === undefined) delete updateData[key];
     });
+
+    const cur = snap.data() as any;
+    const fn =
+      typeof updateData.firstName === "string"
+        ? (updateData.firstName as string)
+        : String(cur?.firstName ?? "");
+    const ln =
+      typeof updateData.lastName === "string"
+        ? (updateData.lastName as string)
+        : String(cur?.lastName ?? "");
+    if (
+      updateData.firstName !== undefined ||
+      updateData.lastName !== undefined
+    ) {
+      (updateData as any).firstNameLower = String(fn).toLowerCase();
+      (updateData as any).lastNameLower = String(ln).toLowerCase();
+      (updateData as any).fullNameLower =
+        `${String(fn).toLowerCase()} ${String(ln).toLowerCase()}`.trim();
+    }
 
     if (Object.keys(updateData).length === 0) {
       res.status(200).json({ message: "No hay datos para actualizar" });
@@ -1341,18 +1396,15 @@ export const searchUsersController = async (
     const limitNum = Number((req.query as any)?.limit ?? 10);
     const limit =
       Number.isFinite(limitNum) && limitNum > 0 ? Math.min(limitNum, 20) : 10;
-
     if (qRaw.length < 2) {
       res.status(200).json({ users: [] });
       return;
     }
-
     const db = admin.firestore();
     const col = db.collection("users");
-
+    const selectFields = ["firstName", "lastName", "email"] as const;
     const qLower = qRaw.toLowerCase();
     const tokens = qLower.split(/\s+/).filter(Boolean);
-
     const seen = new Set<string>();
     const results: Array<{
       id: string;
@@ -1360,11 +1412,9 @@ export const searchUsersController = async (
       lastName?: string;
       email?: string;
     }> = [];
-
     const pushDoc = (doc: FirebaseFirestore.QueryDocumentSnapshot) => {
       if (seen.has(doc.id)) return;
       const data = doc.data() as any;
-      if (String(data.role || "").toLowerCase() !== "user") return;
       results.push({
         id: doc.id,
         firstName: data.firstName ?? "",
@@ -1373,132 +1423,73 @@ export const searchUsersController = async (
       });
       seen.add(doc.id);
     };
-
-    const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
-
+    const run = async (
+      q: () => Promise<
+        FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>
+      >
+    ) => {
+      if (results.length >= limit) return;
+      const snap = await q();
+      snap.docs.forEach(pushDoc);
+    };
     if (tokens.length >= 2) {
-      const [fnTok, lnTok] = tokens;
-      const fnVariants = [fnTok, cap(fnTok)].filter(
-        (v, i, a) => v && a.indexOf(v) === i
+      const [a, b] = tokens;
+      const full = `${a} ${b}`;
+      await run(() =>
+        col
+          .select(...selectFields)
+          .where("role", "==", "user")
+          .orderBy("fullNameLower")
+          .startAt(full)
+          .endAt(`${full}\uf8ff`)
+          .limit(Math.max(0, limit - results.length))
+          .get()
       );
-      const lnVariants = [lnTok, cap(lnTok)].filter(
-        (v, i, a) => v && a.indexOf(v) === i
-      );
-
-      for (const f of fnVariants) {
-        for (const l of lnVariants) {
-          const snap = await col
-            .where("role", "==", "user")
-            .where("firstName", "==", f)
-            .where("lastName", "==", l)
-            .limit(limit - results.length)
-            .get();
-          snap.docs.forEach(pushDoc);
-          if (results.length >= limit) break;
-        }
-        if (results.length >= limit) break;
-      }
-
-      if (results.length < limit) {
-        try {
-          for (const f of fnVariants) {
-            if (results.length >= limit) break;
-            const snap = await col
-              .where("role", "==", "user")
-              .where("firstName", "==", f)
-              .orderBy("lastName")
-              .startAt(lnTok)
-              .endAt(`${lnTok}\uf8ff`)
-              .limit(limit - results.length)
-              .get();
-            snap.docs.forEach(pushDoc);
-          }
-        } catch (e) {
-          const scan = await col.where("role", "==", "user").get();
-          const list = scan.docs.filter((d) => {
-            const data = d.data() as any;
-            const f = String(data.firstName || "").toLowerCase();
-            const l = String(data.lastName || "").toLowerCase();
-            return f.includes(fnTok) && l.includes(lnTok);
-          });
-          list.slice(0, limit - results.length).forEach(pushDoc);
-        }
-      }
     } else {
       const t = tokens[0];
-      const variants = [t, cap(t)].filter((v, i, a) => v && a.indexOf(v) === i);
-      for (const v of variants) {
-        try {
-          const snap1 = await col
-            .where("role", "==", "user")
-            .orderBy("firstName")
-            .startAt(v)
-            .endAt(`${v}\uf8ff`)
-            .limit(limit - results.length)
-            .get();
-          snap1.docs.forEach(pushDoc);
-        } catch (_) {
-          const scan = await col.where("role", "==", "user").get();
-          const list = scan.docs.filter((d) =>
-            String((d.data() as any).firstName || "")
-              .toLowerCase()
-              .includes(t)
-          );
-          list.slice(0, limit - results.length).forEach(pushDoc);
-        }
-        if (results.length >= limit) break;
-      }
-
+      await run(() =>
+        col
+          .select(...selectFields)
+          .where("role", "==", "user")
+          .orderBy("firstNameLower")
+          .startAt(t)
+          .endAt(`${t}\uf8ff`)
+          .limit(Math.max(0, limit - results.length))
+          .get()
+      );
+      await run(() =>
+        col
+          .select(...selectFields)
+          .where("role", "==", "user")
+          .orderBy("lastNameLower")
+          .startAt(t)
+          .endAt(`${t}\uf8ff`)
+          .limit(Math.max(0, limit - results.length))
+          .get()
+      );
       if (results.length < limit) {
-        for (const v of variants) {
-          try {
-            const snap2 = await col
-              .where("role", "==", "user")
-              .orderBy("lastName")
-              .startAt(v)
-              .endAt(`${v}\uf8ff`)
-              .limit(limit - results.length)
-              .get();
-            snap2.docs.forEach(pushDoc);
-          } catch (_) {
-            const scan2 = await col.where("role", "==", "user").get();
-            const list2 = scan2.docs.filter((d) =>
-              String((d.data() as any).lastName || "")
-                .toLowerCase()
-                .includes(t)
-            );
-            list2.slice(0, limit - results.length).forEach(pushDoc);
-          }
-          if (results.length >= limit) break;
-        }
-      }
-
-      if (results.length < limit) {
-        try {
-          const snap3 = await col
+        await run(() =>
+          col
+            .select(...selectFields)
             .where("role", "==", "user")
-            .orderBy("email")
+            .orderBy("emailLower")
             .startAt(qLower)
             .endAt(`${qLower}\uf8ff`)
-            .limit(limit - results.length)
-            .get();
-          snap3.docs.forEach(pushDoc);
-        } catch (_) {
-          const scan3 = await col.where("role", "==", "user").get();
-          const list3 = scan3.docs.filter((d) =>
-            String((d.data() as any).email || "")
-              .toLowerCase()
-              .includes(qLower)
-          );
-          list3.slice(0, limit - results.length).forEach(pushDoc);
-        }
+            .limit(Math.max(0, limit - results.length))
+            .get()
+        );
       }
     }
-
     const sliced = results.slice(0, limit);
     res.status(200).json({ users: sliced });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
+    if (typeof msg === "string" && msg.includes("FAILED_PRECONDITION")) {
+      res
+        .status(422)
+        .json({ error: "index_required", indexRequired: true, details: msg });
+      return;
+    }
     res.status(500).json({ error: "Error interno del servidor", details: msg });
   }
 };
