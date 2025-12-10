@@ -540,6 +540,87 @@ export const updateMyBirthDateController = async (
   }
 };
 
+export const updateMyProfileController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const authReq = req as AuthRequest;
+    const uid = authReq.user?.uid;
+    if (!uid) {
+      res.status(401).json({ error: "Token no proporcionado" });
+      return;
+    }
+
+    const db = admin.firestore();
+    const userRef = db.collection("users").doc(uid);
+    const snap = await userRef.get();
+    if (!snap.exists) {
+      res.status(404).json({ error: "Usuario no encontrado" });
+      return;
+    }
+
+    const body = req.body as {
+      firstName?: string | null;
+      lastName?: string | null;
+      phone?: string | null;
+      birthDate?: string | null;
+      emergencyContact?:
+        | string
+        | { name?: string | null; phone?: string | null }
+        | null;
+    };
+
+    const allowedKeys = [
+      "firstName",
+      "lastName",
+      "phone",
+      "birthDate",
+      "emergencyContact",
+    ] as const;
+
+    const updateData: Record<string, unknown> = {};
+    for (const k of allowedKeys) {
+      const v = (body as any)[k];
+      if (v !== undefined) updateData[k] = v;
+    }
+
+    if (updateData.emergencyContact !== undefined) {
+      const emergency = updateData.emergencyContact as any;
+      if (emergency === null) {
+        updateData.emergencyContact = { name: null, phone: null };
+      } else if (typeof emergency === "string") {
+        updateData.emergencyContact = { name: emergency, phone: null };
+      } else if (typeof emergency === "object") {
+        updateData.emergencyContact = {
+          name: emergency.name ?? null,
+          phone: emergency.phone ?? null,
+        };
+      }
+    }
+
+    Object.keys(updateData).forEach((key) => {
+      const val = updateData[key];
+      if (val === undefined) delete updateData[key];
+    });
+
+    if (Object.keys(updateData).length === 0) {
+      res.status(200).json({ message: "No hay datos para actualizar" });
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    updateData.updatedAt = nowIso;
+    await userRef.set(updateData, { merge: true });
+
+    const fresh = await userRef.get();
+    res.status(200).json({ id: uid, uid, ...fresh.data() });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Error desconocido";
+    res.status(500).json({ error: "Error interno del servidor", details: msg });
+  }
+};
+
 export const deleteUserController = async (
   req: Request,
   res: Response

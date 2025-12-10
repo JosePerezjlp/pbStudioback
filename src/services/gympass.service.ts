@@ -11,26 +11,25 @@ dotenv.config();
 
 const baseURL = process.env.GYMPASS_BASE_URL ?? "";
 const token = process.env.GYMPASS_TOKEN ?? "";
+const gympassEnabled = Boolean(baseURL && token);
 
-if (!baseURL || !token) {
-  throw new Error(
-    "❌ Falta configurar GYMPASS_BASE_URL o GYMPASS_TOKEN en .env"
-  );
-}
-
-const api = axios.create({
-  baseURL,
-  headers: {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
-  },
-});
+const api = gympassEnabled
+  ? axios.create({
+      baseURL,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    })
+  : axios.create();
 export const GympassService = {
   async getProducts(gymId: number) {
+    if (!gympassEnabled) throw new Error("Gympass no configurado");
     const res = await api.get(`/setup/v1/gyms/${gymId}/products`);
     return res.data;
   },
   async getClass(gymId: number) {
+    if (!gympassEnabled) throw new Error("Gympass no configurado");
     const res = await api.get(`/gyms/${gymId}/classes`);
     return res.data;
   },
@@ -39,6 +38,7 @@ export const GympassService = {
     classId: number,
     classPlayload: CreateSlotRequest
   ) {
+    if (!gympassEnabled) throw new Error("Gympass no configurado");
     try{
         const res = await api.post(
       `/booking/v1/gyms/${gymId}/classes/${classId}/slots`,
@@ -53,6 +53,7 @@ export const GympassService = {
   
   },
   async createCategory(gymId: number, classPlayload: ClassRequest) {
+    if (!gympassEnabled) throw new Error("Gympass no configurado");
     try {
         const url = `${baseURL}/booking/v1/gyms/${gymId}/classes`;
       const res = await axios.post(url, classPlayload, {
@@ -69,6 +70,7 @@ export const GympassService = {
     }
   },
   async simulateChecking(cheking: Cheking, gymId: number) {
+    if (!gympassEnabled) throw new Error("Gympass no configurado");
     const res = await api.post(
       `/helper/v1/gyms/${gymId}/simulate/checkins`,
       cheking
@@ -82,6 +84,7 @@ export const GympassService = {
     slotId: number,
     bookingRequest: UpdateBookingRequest
   ) {
+    if (!gympassEnabled) throw new Error("Gympass no configurado");
     try {
       const url = `${baseURL}/booking/v1/gyms/${gymId}/classes/${clasId}/slots/${slotId}`;
       const res = await axios.patch(url, bookingRequest, {
