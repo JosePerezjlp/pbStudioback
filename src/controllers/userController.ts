@@ -1434,6 +1434,24 @@ export const searchUsersController = async (
       .limit(limit)
       .get();
     snap.docs.forEach(pushDoc);
+    if (results.length === 0) {
+      const snap2 = await col
+        .select(...selectFields)
+        .where("role", "==", "user")
+        .where("email", "==", qRaw)
+        .limit(limit)
+        .get();
+      snap2.docs.forEach(pushDoc);
+      if (results.length === 0 && qLower !== qRaw) {
+        const snap3 = await col
+          .select(...selectFields)
+          .where("role", "==", "user")
+          .where("email", "==", qLower)
+          .limit(limit)
+          .get();
+        snap3.docs.forEach(pushDoc);
+      }
+    }
     res.status(200).json({ users: results.slice(0, limit) });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
