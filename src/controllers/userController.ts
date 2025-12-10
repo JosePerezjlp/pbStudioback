@@ -1401,26 +1401,29 @@ export const searchUsersController = async (
 
       if (results.length < limit) {
         try {
-          const snap = await col
-            .where("role", "==", "user")
-            .where("firstName", "==", cap(fnTok))
-            .orderBy("lastName")
-            .startAt(lnTok)
-            .endAt(`${lnTok}\uf8ff`)
-            .limit(limit - results.length)
-            .get();
-          snap.docs.forEach(pushDoc);
+          for (const f of fnVariants) {
+            if (results.length >= limit) break;
+            const snap = await col
+              .where("role", "==", "user")
+              .where("firstName", "==", f)
+              .orderBy("lastName")
+              .startAt(lnTok)
+              .endAt(`${lnTok}\uf8ff`)
+              .limit(limit - results.length)
+              .get();
+            snap.docs.forEach(pushDoc);
+          }
         } catch (e) {
           const scan = await col
             .where("role", "==", "user")
             .orderBy("createdAt", "desc")
-            .limit(60)
+            .limit(200)
             .get();
           const list = scan.docs.filter((d) => {
             const data = d.data() as any;
             const f = String(data.firstName || "").toLowerCase();
             const l = String(data.lastName || "").toLowerCase();
-            return f.startsWith(fnTok) && l.startsWith(lnTok);
+            return f.includes(fnTok) && l.includes(lnTok);
           });
           list.slice(0, limit - results.length).forEach(pushDoc);
         }
@@ -1442,12 +1445,12 @@ export const searchUsersController = async (
           const scan = await col
             .where("role", "==", "user")
             .orderBy("createdAt", "desc")
-            .limit(60)
+            .limit(200)
             .get();
           const list = scan.docs.filter((d) =>
             String((d.data() as any).firstName || "")
               .toLowerCase()
-              .startsWith(t)
+              .includes(t)
           );
           list.slice(0, limit - results.length).forEach(pushDoc);
         }
@@ -1469,12 +1472,12 @@ export const searchUsersController = async (
             const scan2 = await col
               .where("role", "==", "user")
               .orderBy("createdAt", "desc")
-              .limit(60)
+              .limit(200)
               .get();
             const list2 = scan2.docs.filter((d) =>
               String((d.data() as any).lastName || "")
                 .toLowerCase()
-                .startsWith(t)
+                .includes(t)
             );
             list2.slice(0, limit - results.length).forEach(pushDoc);
           }
@@ -1492,7 +1495,19 @@ export const searchUsersController = async (
             .limit(limit - results.length)
             .get();
           snap3.docs.forEach(pushDoc);
-        } catch (_) {}
+        } catch (_) {
+          const scan3 = await col
+            .where("role", "==", "user")
+            .orderBy("createdAt", "desc")
+            .limit(200)
+            .get();
+          const list3 = scan3.docs.filter((d) =>
+            String((d.data() as any).email || "")
+              .toLowerCase()
+              .includes(qLower)
+          );
+          list3.slice(0, limit - results.length).forEach(pushDoc);
+        }
       }
     }
 
