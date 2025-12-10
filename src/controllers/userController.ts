@@ -1404,7 +1404,11 @@ export const searchUsersController = async (
     const col = db.collection("users");
     const selectFields = ["firstName", "lastName", "email"] as const;
     const qLower = qRaw.toLowerCase();
-    const tokens = qLower.split(/\s+/).filter(Boolean);
+    const isEmail = qLower.includes("@") && !qLower.includes(" ");
+    if (!isEmail) {
+      res.status(200).json({ users: [] });
+      return;
+    }
     const seen = new Set<string>();
     const results: Array<{
       id: string;
@@ -1423,65 +1427,14 @@ export const searchUsersController = async (
       });
       seen.add(doc.id);
     };
-    const run = async (
-      q: () => Promise<
-        FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>
-      >
-    ) => {
-      if (results.length >= limit) return;
-      const snap = await q();
-      snap.docs.forEach(pushDoc);
-    };
-    if (tokens.length >= 2) {
-      const [a, b] = tokens;
-      const full = `${a} ${b}`;
-      await run(() =>
-        col
-          .select(...selectFields)
-          .where("role", "==", "user")
-          .orderBy("fullNameLower")
-          .startAt(full)
-          .endAt(`${full}\uf8ff`)
-          .limit(Math.max(0, limit - results.length))
-          .get()
-      );
-    } else {
-      const t = tokens[0];
-      await run(() =>
-        col
-          .select(...selectFields)
-          .where("role", "==", "user")
-          .orderBy("firstNameLower")
-          .startAt(t)
-          .endAt(`${t}\uf8ff`)
-          .limit(Math.max(0, limit - results.length))
-          .get()
-      );
-      await run(() =>
-        col
-          .select(...selectFields)
-          .where("role", "==", "user")
-          .orderBy("lastNameLower")
-          .startAt(t)
-          .endAt(`${t}\uf8ff`)
-          .limit(Math.max(0, limit - results.length))
-          .get()
-      );
-      if (results.length < limit) {
-        await run(() =>
-          col
-            .select(...selectFields)
-            .where("role", "==", "user")
-            .orderBy("emailLower")
-            .startAt(qLower)
-            .endAt(`${qLower}\uf8ff`)
-            .limit(Math.max(0, limit - results.length))
-            .get()
-        );
-      }
-    }
-    const sliced = results.slice(0, limit);
-    res.status(200).json({ users: sliced });
+    const snap = await col
+      .select(...selectFields)
+      .where("role", "==", "user")
+      .where("emailLower", "==", qLower)
+      .limit(limit)
+      .get();
+    snap.docs.forEach(pushDoc);
+    res.status(200).json({ users: results.slice(0, limit) });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
     if (typeof msg === "string" && msg.includes("FAILED_PRECONDITION")) {
