@@ -14,6 +14,7 @@ import {
   getUsersStatsController,
   updateMyBirthDateController,
   searchUsersController,
+  searchUsersByFirstNameController,
 } from "../controllers/userController";
 import { userRegisterValidations } from "../validations/userValidations";
 import { verifyToken } from "../middleware/authMiddleware";
@@ -53,6 +54,12 @@ router.get(
   verifyToken,
   checkPermission("usuarios", "listado"),
   searchUsersController
+);
+router.get(
+  "/search-firstname",
+  verifyToken,
+  checkPermission("usuarios", "listado"),
+  searchUsersByFirstNameController
 );
 router.get(
   "/export",

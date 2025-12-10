@@ -1464,3 +1464,90 @@ export const searchUsersController = async (
     res.status(500).json({ error: "Error interno del servidor", details: msg });
   }
 };
+
+export const searchUsersByFirstNameController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const qRaw = String((req.query as any)?.q || "").trim();
+    const limitNum = Number((req.query as any)?.limit ?? 10);
+    const limit =
+      Number.isFinite(limitNum) && limitNum > 0 ? Math.min(limitNum, 20) : 10;
+    if (qRaw.length < 2) {
+      res.status(200).json({ users: [] });
+      return;
+    }
+    const db = admin.firestore();
+    const col = db.collection("users");
+    const selectFields = ["firstName", "lastName", "email"] as const;
+    const qLower = qRaw.toLowerCase();
+    const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+    const variants = [qRaw, qLower, cap(qLower)].filter(
+      (v, i, a) => v && a.indexOf(v) === i
+    );
+    const seen = new Set<string>();
+    const results: Array<{
+      id: string;
+      firstName?: string;
+      lastName?: string;
+      email?: string;
+    }> = [];
+    const pushDoc = (doc: FirebaseFirestore.QueryDocumentSnapshot) => {
+      if (seen.has(doc.id)) return;
+      const data = doc.data() as any;
+      results.push({
+        id: doc.id,
+        firstName: data.firstName ?? "",
+        lastName: data.lastName ?? "",
+        email: data.email ?? "",
+      });
+      seen.add(doc.id);
+    };
+    for (const v of variants) {
+      if (results.length >= limit) break;
+      try {
+        const snap = await col
+          .select(...selectFields)
+          .where("role", "==", "user")
+          .orderBy("firstName")
+          .startAt(v)
+          .endAt(`${v}\uf8ff`)
+          .limit(Math.max(0, limit - results.length))
+          .get();
+        snap.docs.forEach(pushDoc);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!String(msg).includes("FAILED_PRECONDITION")) throw e;
+      }
+    }
+    if (results.length === 0) {
+      const eqSnap = await col
+        .select(...selectFields)
+        .where("role", "==", "user")
+        .where("firstName", "==", qRaw)
+        .limit(limit)
+        .get();
+      eqSnap.docs.forEach(pushDoc);
+      if (results.length === 0) {
+        const eqSnap2 = await col
+          .select(...selectFields)
+          .where("role", "==", "user")
+          .where("firstName", "==", cap(qLower))
+          .limit(limit)
+          .get();
+        eqSnap2.docs.forEach(pushDoc);
+      }
+    }
+    res.status(200).json({ users: results.slice(0, limit) });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Error desconocido";
+    if (typeof msg === "string" && msg.includes("FAILED_PRECONDITION")) {
+      res
+        .status(422)
+        .json({ error: "index_required", indexRequired: true, details: msg });
+      return;
+    }
+    res.status(500).json({ error: "Error interno del servidor", details: msg });
+  }
+};
