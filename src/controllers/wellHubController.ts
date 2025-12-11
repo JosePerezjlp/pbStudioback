@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import admin from "../config/firebase";
-import { GympassService } from "../services/gympass.service";
+import { GympassService, gympassEnabled as gympassOn } from "../services/gympass.service";
 import { CreateSlotRequest } from "../models/CreateSlotRequest";
 import { ClassPayload } from "../models/ClassPayload";
 
@@ -14,6 +14,10 @@ export const getProductsController = async (
   const { gymId } = req.params;
 
   try {
+    if (!gympassOn) {
+      res.status(200).json({ disabled: true });
+      return;
+    }
     const products = await GympassService.getProducts(Number(gymId));
     res.status(200).json(products);
   } catch (error) {
@@ -33,6 +37,10 @@ export const getClassesController = async (
   const { gymId } = req.params;
 
   try {
+    if (!gympassOn) {
+      res.status(200).json({ disabled: true });
+      return;
+    }
     const classes = await GympassService.getClass(Number(gymId));
     res.status(200).json(classes);
   } catch (error) {
@@ -57,6 +65,10 @@ export const createSlotController = async (
   res: Response
 ): Promise<void> => {
   const { gymId, classId } = req.params;
+  if (!gympassOn) {
+    res.status(200).json({ disabled: true });
+    return;
+  }
   const branchData = await GympassService.getBranchData(gymId);
   const gympassGymId = branchData?.gympass_gym_id;
   const payload: CreateSlotRequest = req.body;
@@ -82,6 +94,10 @@ export const createCategoryController = async (
   res: Response
 ): Promise<void> => {
   try {
+    if (!gympassOn) {
+      res.status(200).json({ disabled: true });
+      return;
+    }
     const { gymId } = req.params;
     const branchData = await GympassService.getBranchData(gymId);
     const gympassGymId = branchData?.gympass_gym_id;
@@ -140,6 +156,10 @@ export const wellhubWebhookController = async (
   res: Response
 ): Promise<void> => {
   try {
+    if (!gympassOn) {
+      res.status(200).json({ disabled: true });
+      return;
+    }
     const signature = (req.headers["x-gympass-signature"] ||
       req.headers["X-Gympass-Signature"]) as string | undefined;
     const event = req.body;
@@ -281,6 +301,10 @@ export const updateBookingController = async (
   const payload = req.body;
 
   try {
+    if (!gympassOn) {
+      res.status(200).json({ disabled: true });
+      return;
+    }
     const { clasesDoc, gymId } =
       await GympassService.findClassAndBranch(classId);
 

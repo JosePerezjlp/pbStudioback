@@ -188,7 +188,12 @@ export const createClassController = async (
     slot.instructors = [];
     slot.product_id = 198;
     slot.booking_window = null;
-    GympassService.createClass(198, 5, slot);
+    const syncGympass = process.env.GYMPASS_SYNC_ON_CREATE === "true";
+    if (syncGympass) {
+      try {
+        await GympassService.createClass(198, 5, slot);
+      } catch {}
+    }
     res.status(201).json({ message: "Clase creada correctamente", id: newId });
   } catch (error) {
     console.error("Error al crear clase:", error);
@@ -835,12 +840,10 @@ export const getOpenClassesPublicController = async (
       page,
     });
   } catch (error) {
-    res
-      .status(500)
-      .json({
-        error: "Error al obtener clases abiertas",
-        details: String(error),
-      });
+    res.status(500).json({
+      error: "Error al obtener clases abiertas",
+      details: String(error),
+    });
   }
 };
 
@@ -1569,11 +1572,9 @@ export const getAvailableClassesByBranchController = async (
 
     res.status(200).json({ classes: enriched });
   } catch (error) {
-    res
-      .status(500)
-      .json({
-        error: "Error al obtener clases disponibles",
-        details: String(error),
-      });
+    res.status(500).json({
+      error: "Error al obtener clases disponibles",
+      details: String(error),
+    });
   }
 };

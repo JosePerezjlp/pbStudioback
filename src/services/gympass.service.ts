@@ -11,7 +11,8 @@ dotenv.config();
 
 const baseURL = process.env.GYMPASS_BASE_URL ?? "";
 const token = process.env.GYMPASS_TOKEN ?? "";
-const gympassEnabled = Boolean(baseURL && token);
+const gympassDisabledFlag = (process.env.GYMPASS_DISABLE ?? "").toLowerCase() === "true";
+export const gympassEnabled = Boolean(baseURL && token) && !gympassDisabledFlag;
 
 const api = gympassEnabled
   ? axios.create({
