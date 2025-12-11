@@ -76,7 +76,7 @@ export const createClassController = async (
       occupied,
       status = "abierta",
       enabled,
-      gympass
+      gympass,
     } = req.body as Record<string, unknown>;
 
     // Números válidos
@@ -107,11 +107,11 @@ export const createClassController = async (
       });
       return;
     }
-       // 👇 Añadir gympass solo si viene en body
-    if (!gympass && typeof gympass !== "object") {
-     res.status(409).json({
-        error: "No ha creado una clase en Wellhub",
-        code: "CONFLICTING_CLASS",
+    // Añadir gympass solo si viene en body
+    if (gympass !== undefined && typeof gympass !== "object") {
+      res.status(400).json({
+        error: "Formato inválido de 'gympass'",
+        code: "invalid-gympass",
       });
       return;
     }
@@ -177,18 +177,18 @@ export const createClassController = async (
       t.set(countersRef, { classNext: next + 1 }, { merge: true });
       return classRef.id;
     });
-  // Construir objeto para Gympass
+    // Construir objeto para Gympass
     const slot = new CreateSlotRequest();
-    slot.occur_date = `${day}T${hour}:00`; 
+    slot.occur_date = `${day}T${hour}:00`;
     slot.room = String(room);
     slot.total_capacity = parsedCapacity;
     slot.total_booked = parsedOccupied;
     slot.status = status === "abierta" ? 1 : 0;
-    slot.length_in_minutes = 60; 
-    slot.instructors =  [];
-    slot.product_id = 198; 
-    slot.booking_window = null; 
-    GympassService.createClass(198,5,slot)
+    slot.length_in_minutes = 60;
+    slot.instructors = [];
+    slot.product_id = 198;
+    slot.booking_window = null;
+    GympassService.createClass(198, 5, slot);
     res.status(201).json({ message: "Clase creada correctamente", id: newId });
   } catch (error) {
     console.error("Error al crear clase:", error);
@@ -367,7 +367,7 @@ export const getAllClassesController = async (
 ) => {
   try {
     const authReq = req as AuthRequest;
-    const {user} = authReq;
+    const { user } = authReq;
 
     const pageParam = Number(req.query.page ?? 1);
     const limitParam = Number(req.query.limit ?? 20);
@@ -528,7 +528,7 @@ export const getAllClassesController = async (
       throw e;
     }
 
-    const {docs} = snap;
+    const { docs } = snap;
     const hasMore = docs.length > limit;
     const pageDocs = hasMore ? docs.slice(0, limit) : docs;
     let pageItems = pageDocs.map((doc) => ({ id: doc.id, ...doc.data() }));
@@ -659,10 +659,12 @@ export const getOpenClassesPublicController = async (
     const pageParam = Number(req.query.page ?? 1);
     const limitParam = Number(req.query.limit ?? 20);
     const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
-    const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 20;
+    const limit =
+      Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 20;
     const cursorId = (req.query.cursor as string | undefined) || undefined;
 
-    const instructorId = (req.query.instructor as string | undefined) || undefined;
+    const instructorId =
+      (req.query.instructor as string | undefined) || undefined;
     const branchId = (req.query.branchId as string | undefined) || undefined;
     const roomId = (req.query.roomId as string | undefined) || undefined;
     const hourParam = (req.query.hour as string | undefined) || undefined;
@@ -724,7 +726,9 @@ export const getOpenClassesPublicController = async (
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("FAILED_PRECONDITION")) {
-        res.status(422).json({ error: "index_required", indexRequired: true, details: msg });
+        res
+          .status(422)
+          .json({ error: "index_required", indexRequired: true, details: msg });
         return;
       }
       throw e;
@@ -735,16 +739,28 @@ export const getOpenClassesPublicController = async (
     const pageDocs = hasMore ? docs.slice(0, limit) : docs;
     const pageItems = pageDocs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
-    const roomIds = Array.from(new Set(pageItems.map((c: any) => String(c.room || "")).filter((v) => v)));
-    const instructorIds = Array.from(
-      new Set(pageItems.map((c: any) => String(c.instructor || "")).filter((v) => v))
+    const roomIds = Array.from(
+      new Set(pageItems.map((c: any) => String(c.room || "")).filter((v) => v))
     );
-    const branchIds = Array.from(new Set(pageItems.map((c: any) => String(c.branch || "")).filter((v) => v)));
+    const instructorIds = Array.from(
+      new Set(
+        pageItems.map((c: any) => String(c.instructor || "")).filter((v) => v)
+      )
+    );
+    const branchIds = Array.from(
+      new Set(
+        pageItems.map((c: any) => String(c.branch || "")).filter((v) => v)
+      )
+    );
     const disciplineIds = Array.from(
-      new Set(pageItems.map((c: any) => String(c.discipline || "")).filter((v) => v))
+      new Set(
+        pageItems.map((c: any) => String(c.discipline || "")).filter((v) => v)
+      )
     );
 
-    const roomSnaps = await Promise.all(roomIds.map((id) => db.collection("classrooms").doc(id).get()));
+    const roomSnaps = await Promise.all(
+      roomIds.map((id) => db.collection("classrooms").doc(id).get())
+    );
     const roomsMap = new Map<string, string>();
     roomSnaps.forEach((s) => {
       if (s.exists) {
@@ -753,16 +769,23 @@ export const getOpenClassesPublicController = async (
       }
     });
 
-    const instrSnaps = await Promise.all(instructorIds.map((id) => db.collection("instructors").doc(id).get()));
+    const instrSnaps = await Promise.all(
+      instructorIds.map((id) => db.collection("instructors").doc(id).get())
+    );
     const instrMap = new Map<string, { firstName: string; lastName: string }>();
     instrSnaps.forEach((s) => {
       if (s.exists) {
         const d = s.data() as any;
-        instrMap.set(s.id, { firstName: String(d?.firstName ?? ""), lastName: String(d?.lastName ?? "") });
+        instrMap.set(s.id, {
+          firstName: String(d?.firstName ?? ""),
+          lastName: String(d?.lastName ?? ""),
+        });
       }
     });
 
-    const branchSnaps = await Promise.all(branchIds.map((id) => db.collection("branches").doc(id).get()));
+    const branchSnaps = await Promise.all(
+      branchIds.map((id) => db.collection("branches").doc(id).get())
+    );
     const branchesMap = new Map<string, string>();
     branchSnaps.forEach((s) => {
       if (s.exists) {
@@ -771,7 +794,9 @@ export const getOpenClassesPublicController = async (
       }
     });
 
-    const discSnaps = await Promise.all(disciplineIds.map((id) => db.collection("disciplines").doc(id).get()));
+    const discSnaps = await Promise.all(
+      disciplineIds.map((id) => db.collection("disciplines").doc(id).get())
+    );
     const disciplinesMap = new Map<string, string>();
     discSnaps.forEach((s) => {
       if (s.exists) {
@@ -799,7 +824,9 @@ export const getOpenClassesPublicController = async (
       };
     });
 
-    const nextCursor = hasMore ? String(pageDocs[pageDocs.length - 1].id) : null;
+    const nextCursor = hasMore
+      ? String(pageDocs[pageDocs.length - 1].id)
+      : null;
     res.status(200).json({
       classes: enriched,
       nextCursor,
@@ -808,7 +835,12 @@ export const getOpenClassesPublicController = async (
       page,
     });
   } catch (error) {
-    res.status(500).json({ error: "Error al obtener clases abiertas", details: String(error) });
+    res
+      .status(500)
+      .json({
+        error: "Error al obtener clases abiertas",
+        details: String(error),
+      });
   }
 };
 
@@ -1091,14 +1123,17 @@ export const createClassesBulkController = async (
     const db = admin.firestore();
     const nowIso = new Date().toISOString();
 
-    const uniqueRoomIds = Array.from(new Set(slots.map((s) => String(s.roomId))));
+    const uniqueRoomIds = Array.from(
+      new Set(slots.map((s) => String(s.roomId)))
+    );
     const roomTypeMap: Record<string, ClassType> = {};
     for (const r of uniqueRoomIds) {
       const t = (await getRoomTypeById(r)) ?? ClassType.INDIVIDUAL;
       roomTypeMap[r] = t;
     }
 
-    const toKey = (d: string, b: string, r: string, h: string) => `${d}|${b}|${r}|${h}`;
+    const toKey = (d: string, b: string, r: string, h: string) =>
+      `${d}|${b}|${r}|${h}`;
 
     const createPayloads: Array<{
       ref: FirebaseFirestore.DocumentReference;
@@ -1115,7 +1150,8 @@ export const createClassesBulkController = async (
       const roomId = String(slot.roomId || "");
       const disciplineId = String(slot.disciplineId || "");
       const instructorId = String(slot.instructorId || "");
-      const infoNormalized = slot.info && typeof slot.info === "string" ? slot.info.trim() : "";
+      const infoNormalized =
+        slot.info && typeof slot.info === "string" ? slot.info.trim() : "";
       const statusNorm = slot.isActive === false ? "cerrada" : "abierta";
 
       let parsedCapacity: number;
@@ -1124,7 +1160,10 @@ export const createClassesBulkController = async (
         parsedCapacity = parseNumberOrFail(slot.capacity);
         parsedOccupied = parseNumberOrFail(slot.occupied);
       } catch {
-        errors.push({ key: toKey(day, branchId, roomId, hour), message: "capacity u occupied inválida" });
+        errors.push({
+          key: toKey(day, branchId, roomId, hour),
+          message: "capacity u occupied inválida",
+        });
         continue;
       }
 
@@ -1143,48 +1182,60 @@ export const createClassesBulkController = async (
           const doc = existingSnap.docs[0];
           const cur = doc.data() as ClassDoc;
           const changes: Partial<ClassDoc> = {};
-          if (String(cur.discipline) !== disciplineId) changes.discipline = disciplineId;
-          if (String(cur.instructor) !== instructorId) changes.instructor = instructorId;
-          if ((cur.info || "") !== infoNormalized) changes.info = infoNormalized;
-          if (Number(cur.capacity) !== parsedCapacity) changes.capacity = parsedCapacity;
-          if (Number(cur.occupied) !== parsedOccupied) changes.occupied = parsedOccupied;
-          if (String(cur.status) !== statusNorm) changes.status = statusNorm as any;
+          if (String(cur.discipline) !== disciplineId)
+            changes.discipline = disciplineId;
+          if (String(cur.instructor) !== instructorId)
+            changes.instructor = instructorId;
+          if ((cur.info || "") !== infoNormalized)
+            changes.info = infoNormalized;
+          if (Number(cur.capacity) !== parsedCapacity)
+            changes.capacity = parsedCapacity;
+          if (Number(cur.occupied) !== parsedOccupied)
+            changes.occupied = parsedOccupied;
+          if (String(cur.status) !== statusNorm)
+            changes.status = statusNorm as any;
           const typeFromRoom = roomTypeMap[roomId] ?? ClassType.INDIVIDUAL;
-          if ((cur.type ?? ClassType.INDIVIDUAL) !== typeFromRoom) changes.type = typeFromRoom;
+          if ((cur.type ?? ClassType.INDIVIDUAL) !== typeFromRoom)
+            changes.type = typeFromRoom;
 
           if (Object.keys(changes).length === 0) {
             skipped.push({ key, reason: "sin cambios" });
           } else {
             const ref = db.collection("classes").doc(doc.id);
-            const updateData: FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData> = {
-              ...changes,
-              updatedAt: nowIso,
-            } as FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData>;
+            const updateData: FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData> =
+              {
+                ...changes,
+                updatedAt: nowIso,
+              } as FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData>;
             updatePayloads.push({ ref, data: updateData });
             updated.push(doc.id);
           }
         } else {
           const ref = db.collection("classes").doc();
           const typeFromRoom = roomTypeMap[roomId] ?? ClassType.INDIVIDUAL;
-          const data: FirebaseFirestore.WithFieldValue<FirebaseFirestore.DocumentData> = {
-            day,
-            hour,
-            branch: branchId,
-            room: roomId,
-            discipline: disciplineId,
-            instructor: instructorId,
-            capacity: parsedCapacity,
-            occupied: parsedOccupied,
-            status: statusNorm,
-            type: typeFromRoom,
-            createdAt: nowIso,
-          };
+          const data: FirebaseFirestore.WithFieldValue<FirebaseFirestore.DocumentData> =
+            {
+              day,
+              hour,
+              branch: branchId,
+              room: roomId,
+              discipline: disciplineId,
+              instructor: instructorId,
+              capacity: parsedCapacity,
+              occupied: parsedOccupied,
+              status: statusNorm,
+              type: typeFromRoom,
+              createdAt: nowIso,
+            };
           if (infoNormalized) data.info = infoNormalized;
           createPayloads.push({ ref, data });
           created.push(ref.id);
         }
       } catch (e) {
-        errors.push({ key: toKey(day, branchId, roomId, hour), message: String(e) });
+        errors.push({
+          key: toKey(day, branchId, roomId, hour),
+          message: String(e),
+        });
       }
     }
 
@@ -1224,9 +1275,13 @@ export const createClassesBulkController = async (
       await batch.commit();
     }
 
-    res.status(200).json({ message: "Procesado", created, updated, skipped, errors });
+    res
+      .status(200)
+      .json({ message: "Procesado", created, updated, skipped, errors });
   } catch (error) {
-    res.status(500).json({ error: "Error en procesamiento bulk", details: String(error) });
+    res
+      .status(500)
+      .json({ error: "Error en procesamiento bulk", details: String(error) });
   }
 };
 
@@ -1390,8 +1445,10 @@ export const getAvailableClassesByBranchController = async (
       return;
     }
 
-    const disciplineId = (req.query.disciplineId as string | undefined) || undefined;
-    const instructorId = (req.query.instructorId as string | undefined) || undefined;
+    const disciplineId =
+      (req.query.disciplineId as string | undefined) || undefined;
+    const instructorId =
+      (req.query.instructorId as string | undefined) || undefined;
     const typeRaw = (req.query.type as string | undefined) || undefined;
     const normalizedType = normalizeClassType(typeRaw ?? null) || undefined;
 
@@ -1410,7 +1467,10 @@ export const getAvailableClassesByBranchController = async (
       snap = await q.orderBy("day", "asc").orderBy("hour", "asc").get();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("FAILED_PRECONDITION") && msg.includes("requires an index")) {
+      if (
+        msg.includes("FAILED_PRECONDITION") &&
+        msg.includes("requires an index")
+      ) {
         snap = await q.get();
       } else {
         throw e;
@@ -1424,12 +1484,26 @@ export const getAvailableClassesByBranchController = async (
       return capacity > 0 && occupied < capacity;
     });
 
-    const roomIds = Array.from(new Set(items.map((c: any) => String(c.room || "")).filter((v) => v)));
-    const instructorIds = Array.from(new Set(items.map((c: any) => String(c.instructor || "")).filter((v) => v)));
-    const branchIds = Array.from(new Set(items.map((c: any) => String(c.branch || "")).filter((v) => v)));
-    const disciplineIds = Array.from(new Set(items.map((c: any) => String(c.discipline || "")).filter((v) => v)));
+    const roomIds = Array.from(
+      new Set(items.map((c: any) => String(c.room || "")).filter((v) => v))
+    );
+    const instructorIds = Array.from(
+      new Set(
+        items.map((c: any) => String(c.instructor || "")).filter((v) => v)
+      )
+    );
+    const branchIds = Array.from(
+      new Set(items.map((c: any) => String(c.branch || "")).filter((v) => v))
+    );
+    const disciplineIds = Array.from(
+      new Set(
+        items.map((c: any) => String(c.discipline || "")).filter((v) => v)
+      )
+    );
 
-    const roomSnaps = await Promise.all(roomIds.map((id) => db.collection("classrooms").doc(id).get()));
+    const roomSnaps = await Promise.all(
+      roomIds.map((id) => db.collection("classrooms").doc(id).get())
+    );
     const roomsMap = new Map<string, string>();
     roomSnaps.forEach((s) => {
       if (s.exists) {
@@ -1438,16 +1512,23 @@ export const getAvailableClassesByBranchController = async (
       }
     });
 
-    const instrSnaps = await Promise.all(instructorIds.map((id) => db.collection("instructors").doc(id).get()));
+    const instrSnaps = await Promise.all(
+      instructorIds.map((id) => db.collection("instructors").doc(id).get())
+    );
     const instrMap = new Map<string, { firstName: string; lastName: string }>();
     instrSnaps.forEach((s) => {
       if (s.exists) {
         const d = s.data() as any;
-        instrMap.set(s.id, { firstName: String(d?.firstName ?? ""), lastName: String(d?.lastName ?? "") });
+        instrMap.set(s.id, {
+          firstName: String(d?.firstName ?? ""),
+          lastName: String(d?.lastName ?? ""),
+        });
       }
     });
 
-    const branchSnaps = await Promise.all(branchIds.map((id) => db.collection("branches").doc(id).get()));
+    const branchSnaps = await Promise.all(
+      branchIds.map((id) => db.collection("branches").doc(id).get())
+    );
     const branchesMap = new Map<string, string>();
     branchSnaps.forEach((s) => {
       if (s.exists) {
@@ -1456,7 +1537,9 @@ export const getAvailableClassesByBranchController = async (
       }
     });
 
-    const discSnaps = await Promise.all(disciplineIds.map((id) => db.collection("disciplines").doc(id).get()));
+    const discSnaps = await Promise.all(
+      disciplineIds.map((id) => db.collection("disciplines").doc(id).get())
+    );
     const disciplinesMap = new Map<string, string>();
     discSnaps.forEach((s) => {
       if (s.exists) {
@@ -1486,6 +1569,11 @@ export const getAvailableClassesByBranchController = async (
 
     res.status(200).json({ classes: enriched });
   } catch (error) {
-    res.status(500).json({ error: "Error al obtener clases disponibles", details: String(error) });
+    res
+      .status(500)
+      .json({
+        error: "Error al obtener clases disponibles",
+        details: String(error),
+      });
   }
 };
