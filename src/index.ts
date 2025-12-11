@@ -16,7 +16,7 @@ import authRouter from "./routes/auth";
 import classesRouter from "./routes/classes";
 import dailyClassesRouter from "./routes/dailyClasses";
 import paypalRouter from "./routes/paypal";
-// import wellHubRouter from "./routes/wellhubRoutes";
+import wellHubRouter from "./routes/wellhubRoutes";
 import transactionsRouter from "./routes/transactions";
 import { initializeDefaultAdmin } from "./utils/adminInit";
 import contentRouter from "./routes/content";
@@ -186,7 +186,7 @@ app.use("/daily-classes", dailyClassesRouter);
 app.use("/paypal", paypalRouter);
 app.use("/transactions", verifyToken, transactionsRouter); // adminSessionGuard aplicado en router individual
 app.use("/reservations", verifyToken, reservationRoutes); // adminSessionGuard aplicado en router individual
-// app.use("/wellHub", wellHubRouter);
+app.use("/wellHub", wellHubRouter);
 app.use("/contact", contactRouter);
 app.use("/password-reset", passwordResetRouter);
 app.use("/config", configRouter);
