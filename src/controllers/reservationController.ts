@@ -1571,6 +1571,12 @@ export const changeReservationController = async (
       };
     }
 
+    let promotedFromWaitlist: {
+      userId: string;
+      classId: string;
+      seat?: number | null;
+    } | null = null;
+
     const result = await db.runTransaction(async (t) => {
       // 2. Obtener reserva actual
       const resSnap = await t.get(reservationRef);
@@ -1660,12 +1666,125 @@ export const changeReservationController = async (
         newReservationId: newReservationRef.id,
       });
 
-      // 9. Disminuir ocupación de clase actual
+      // 9. Disminuir ocupación de clase actual y promover desde waitlist si aplica
+      const currentCapacity = currentClass.capacity ?? 0;
       const currentOccupiedAfter = Math.max(
         0,
         (currentClass.occupied ?? 0) - 1
       );
-      t.update(currentClassRef, { occupied: currentOccupiedAfter });
+
+      const waitlistsRef = db.collection("waitlists");
+      const reservationsRef = db.collection("reservations");
+      const classDay = (currentClass.day ?? "").slice(0, 10);
+
+      let finalOccupied = currentOccupiedAfter;
+
+      if (currentOccupiedAfter < currentCapacity) {
+        const pendingSnapTx = await t.get(
+          waitlistsRef
+            .where("classId", "==", currentRes.classId)
+            .where("status", "==", "pending")
+            .orderBy("createdAt", "asc")
+            .limit(10)
+        );
+
+        if (!pendingSnapTx.empty) {
+          const docs = pendingSnapTx.docs;
+          const userIds = docs.map((d) => (d.data() as WaitlistDoc).userId);
+
+          let sameDayCount: Record<string, number> = {};
+          if (userIds.length > 0) {
+            const activeSameDaySnapTx = await t.get(
+              reservationsRef
+                .where("classDay", "==", classDay)
+                .where("status", "==", "active")
+                .where("userId", "in", userIds)
+            );
+
+            sameDayCount = {};
+            userIds.forEach((id) => {
+              sameDayCount[id] = 0;
+            });
+            activeSameDaySnapTx.docs.forEach((r) => {
+              const rData = r.data() as { userId: string };
+              sameDayCount[rData.userId] = (sameDayCount[rData.userId] ?? 0) + 1;
+            });
+          }
+
+          let picked: { wl: WaitlistDoc; waitlistDocId: string } | null = null;
+          for (let i = 0; i < docs.length && !picked; i += 1) {
+            const d = docs[i];
+            const wl = d.data() as WaitlistDoc;
+            const canAccept = Boolean(wl.consumedClass) || (sameDayCount[wl.userId] ?? 0) < 2;
+            if (canAccept) {
+              picked = { wl, waitlistDocId: d.id };
+            }
+          }
+
+          if (picked) {
+            let assignedSeatForPromotion: number | null = null;
+            const currentType: ClassType =
+              (currentClass.type === ClassType.GROUPS || currentClass.type === ClassType.INDIVIDUAL
+                ? (currentClass.type as ClassType)
+                : normalizeClassType(
+                    typeof currentClass.type === "string" ? currentClass.type : undefined
+                  )) ?? ClassType.INDIVIDUAL;
+
+            if (currentType === ClassType.GROUPS) {
+              const occupiedSeatsSnap = await reservationsRef
+                .where("classId", "==", picked.wl.classId)
+                .where("classDay", "==", String(currentClass.day || ""))
+                .where("classHour", "==", String(currentClass.hour || ""))
+                .where("status", "==", "active")
+                .get();
+
+              const occupiedSeats = occupiedSeatsSnap.docs
+                .map((doc) => {
+                  const data = doc.data() as ReservationDoc;
+                  if (doc.id === reservationId) return null;
+                  return data.seat;
+                })
+                .filter((seat): seat is number => seat !== null && typeof seat === "number")
+                .sort((a, b) => a - b);
+
+              const capacity = currentClass.capacity ?? 0;
+              for (let seatNum = 1; seatNum <= capacity; seatNum++) {
+                if (!occupiedSeats.includes(seatNum)) {
+                  assignedSeatForPromotion = seatNum;
+                  break;
+                }
+              }
+              if (assignedSeatForPromotion === null && capacity > 0) {
+                assignedSeatForPromotion = capacity;
+              }
+            }
+
+            const newResRef = reservationsRef.doc();
+            const payload: ReservationDoc = {
+              id: newResRef.id,
+              userId: picked.wl.userId,
+              classId: picked.wl.classId,
+              seat: assignedSeatForPromotion,
+              status: "active",
+              classDay,
+              createdAt: new Date().toISOString(),
+              consumedClass: Boolean(picked.wl.consumedClass),
+              packageId: picked.wl.consumedClass ? (picked.wl.packageId ?? null) : null,
+            };
+            t.set(newResRef, payload);
+            t.update(waitlistsRef.doc(picked.waitlistDocId), { status: "accepted" });
+
+            finalOccupied = currentOccupiedAfter + 1;
+            promotedFromWaitlist = {
+              userId: picked.wl.userId,
+              classId: picked.wl.classId,
+              seat: assignedSeatForPromotion,
+            };
+          }
+        }
+      }
+
+      t.update(currentClassRef, { occupied: finalOccupied });
 
       // 10. Aumentar ocupación de nueva clase
       t.update(newClassRef, {
@@ -1687,6 +1806,95 @@ export const changeReservationController = async (
         },
       };
     });
+
+    try {
+      const rSnap = await admin.firestore().collection("reservations").doc(reservationId).get();
+      const rData = rSnap.data() as { userId: string } | undefined;
+      if (rData) {
+        const [userSnap, newClassSnap] = await Promise.all([
+          admin.firestore().collection("users").doc(rData.userId).get(),
+          admin.firestore().collection("classes").doc(result.newReservation.classId).get(),
+        ]);
+        const user = userSnap.data() as UserDoc | undefined;
+        const newCls = newClassSnap.data() as ClassDoc | undefined;
+        if (user && newCls) {
+          const dateStr = formatDateVisibleMx(String(newCls.day));
+          let disciplineName = "";
+          if (typeof (newCls as any).discipline === "string") {
+            try {
+              const dSnap = await admin
+                .firestore()
+                .collection("disciplines")
+                .doc(String((newCls as any).discipline))
+                .get();
+              disciplineName = String((dSnap.data() as any)?.name || "");
+            } catch {}
+          } else {
+            disciplineName = String(((newCls as any).discipline?.name as string) || "");
+          }
+          const classInfo = `${disciplineName || "Clase"} el ${dateStr} a las ${newCls.hour}`;
+          const seatNum = typeof result.newReservation.seat === "number" ? result.newReservation.seat : null;
+          await sendReservationConfirmationEmail(
+            user.email,
+            user.firstName,
+            classInfo,
+            String(newCls.type || "individual"),
+            seatNum
+          );
+        }
+      }
+    } catch (e) {
+      console.error("Email cambio de clase falló:", e);
+    }
+
+    if (promotedFromWaitlist) {
+      const { userId: promotedUserId, classId: promotedClassId, seat: promotedSeat } = promotedFromWaitlist;
+      try {
+        const promotedUserSnapEmail = await admin
+          .firestore()
+          .collection("users")
+          .doc(promotedUserId)
+          .get();
+        const promotedUserEmail = promotedUserSnapEmail.data() as UserDoc | undefined;
+        if (promotedUserEmail) {
+          const promotedClassSnap = await admin
+            .firestore()
+            .collection("classes")
+            .doc(promotedClassId)
+            .get();
+          const promotedClassData = promotedClassSnap.data() as ClassDoc | undefined;
+          const promotedClassType = promotedClassData?.type || "individual";
+
+          let assignedSeat: number | null = promotedSeat ?? null;
+          if (assignedSeat === null || assignedSeat === undefined) {
+            const reservationSnap = await admin
+              .firestore()
+              .collection("reservations")
+              .where("userId", "==", promotedUserId)
+              .where("classId", "==", promotedClassId)
+              .where("status", "==", "active")
+              .orderBy("createdAt", "desc")
+              .limit(1)
+              .get();
+
+            if (!reservationSnap.empty) {
+              const reservationData = reservationSnap.docs[0].data() as ReservationDoc;
+              assignedSeat = reservationData.seat ?? null;
+            }
+          }
+
+          await sendWaitlistAcceptedEmail(
+            promotedUserEmail.email,
+            promotedUserEmail.firstName,
+            promotedClassId,
+            assignedSeat,
+            promotedClassType
+          );
+        }
+      } catch (e) {
+        console.error("Email de aceptación de waitlist falló:", e);
+      }
+    }
 
     res.status(200).json({
       message: "Clase cambiada exitosamente",
