@@ -774,11 +774,16 @@ export const getOpenClassesPublicController = async (
     const roomSnaps = await Promise.all(
       roomIds.map((id) => db.collection("classrooms").doc(id).get())
     );
-    const roomsMap = new Map<string, string>();
+    const roomsMap = new Map<
+      string,
+      { name: string | null; type: ClassType | null }
+    >();
     roomSnaps.forEach((s) => {
       if (s.exists) {
         const d = s.data() as any;
-        roomsMap.set(s.id, String(d?.name ?? ""));
+        const rawType = typeof d?.type === "string" ? d.type : undefined;
+        const normalized = normalizeClassType(rawType) ?? null;
+        roomsMap.set(s.id, { name: String(d?.name ?? ""), type: normalized });
       }
     });
 
@@ -823,13 +828,16 @@ export const getOpenClassesPublicController = async (
       const instructorIdLocal = String(c.instructor || "");
       const branchIdLocal = String(c.branch || "");
       const disciplineIdLocal = String(c.discipline || "");
-      const roomName = roomsMap.get(roomIdLocal) ?? null;
+      const roomMeta = roomsMap.get(roomIdLocal) ?? null;
+      const roomName = roomMeta?.name ?? null;
+      const typeFromRoom = roomMeta?.type ?? null;
       const instr = instrMap.get(instructorIdLocal) || null;
       const branchName = branchesMap.get(branchIdLocal) ?? null;
       const disciplineName = disciplinesMap.get(disciplineIdLocal) ?? null;
       return {
         ...c,
         roomName,
+        type: typeFromRoom ?? c.type ?? null,
         instructorFirstName: instr?.firstName ?? null,
         instructorLastName: instr?.lastName ?? null,
         branchName,
