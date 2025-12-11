@@ -546,10 +546,15 @@ export const createBulkReservationsController = async (
       const currentTime = DateTime.now().setZone(zone);
       const classDay = cls.day ?? "";
       const classHour = cls.hour ?? "";
-      if (!classDay || !classHour) throw new Error("La clase no tiene fecha u hora definida");
-      const normalizedHour = classHour.length === 5 ? `${classHour}:00` : classHour;
-      const classDateTime = DateTime.fromISO(`${classDay}T${normalizedHour}`, { zone });
-      if (!classDateTime.isValid) throw new Error("La fecha u hora de la clase no es válida");
+      if (!classDay || !classHour)
+        throw new Error("La clase no tiene fecha u hora definida");
+      const normalizedHour =
+        classHour.length === 5 ? `${classHour}:00` : classHour;
+      const classDateTime = DateTime.fromISO(`${classDay}T${normalizedHour}`, {
+        zone,
+      });
+      if (!classDateTime.isValid)
+        throw new Error("La fecha u hora de la clase no es válida");
       if (classDateTime.toMillis() <= currentTime.toMillis()) {
         throw new Error("No se puede reservar una clase que ya pasó");
       }
@@ -577,9 +582,16 @@ export const createBulkReservationsController = async (
       let pkgs: UserPackage[] = (user.packages ?? []) as any[] as UserPackage[];
       const normalizePkg = async (p: any): Promise<UserPackage | null> => {
         if (p && typeof p === "object" && typeof p.id === "string") {
-          const hasShape = "active" in p && "totalClasses" in p && "isUnlimited" in p && "type" in p;
+          const hasShape =
+            "active" in p &&
+            "totalClasses" in p &&
+            "isUnlimited" in p &&
+            "type" in p;
           if (hasShape) {
-            const classesUsed = typeof (p as any).classesUsed === "number" ? (p as any).classesUsed : 0;
+            const classesUsed =
+              typeof (p as any).classesUsed === "number"
+                ? (p as any).classesUsed
+                : 0;
             return { ...p, classesUsed } as UserPackage;
           }
           const ref = db.collection("packages").doc(String(p.id));
@@ -633,7 +645,8 @@ export const createBulkReservationsController = async (
         const exp = DateTime.fromISO(String(p.expiresAt)).setZone(zone);
         return exp.toMillis() > now.toMillis();
       };
-      const pkgType = (p: UserPackage) => normalizeClassType(p.type) ?? ClassType.INDIVIDUAL;
+      const pkgType = (p: UserPackage) =>
+        normalizeClassType(p.type) ?? ClassType.INDIVIDUAL;
       if (!pkgs.some(isActivePkg)) throw new Error(ERROR_CODES.NO_PACKAGES);
       if (!pkgs.some((p) => isActivePkg(p) && pkgType(p) === classType)) {
         throw new Error(ERROR_CODES.NO_COMPATIBLE_PACKAGE);
@@ -645,7 +658,8 @@ export const createBulkReservationsController = async (
         .where("classDay", "==", String((cls.day ?? "").slice(0, 10)))
         .get();
 
-      const assignments: { seat: number | null; packageId: string | null }[] = [];
+      const assignments: { seat: number | null; packageId: string | null }[] =
+        [];
       const capacity = Number(cls.capacity ?? 0);
 
       for (let i = 0; i < seats.length; i += 1) {
@@ -657,7 +671,10 @@ export const createBulkReservationsController = async (
               assignments.push({ seat: null, packageId: null });
               continue;
             }
-            if (occupiedSeats.includes(requested) || assignments.some((a) => a.seat === requested)) {
+            if (
+              occupiedSeats.includes(requested) ||
+              assignments.some((a) => a.seat === requested)
+            ) {
               assignments.push({ seat: null, packageId: null });
               continue;
             }
@@ -665,7 +682,10 @@ export const createBulkReservationsController = async (
           } else {
             let assigned: number | null = null;
             for (let seatNum = 1; seatNum <= capacity; seatNum += 1) {
-              if (!occupiedSeats.includes(seatNum) && !assignments.some((a) => a.seat === seatNum)) {
+              if (
+                !occupiedSeats.includes(seatNum) &&
+                !assignments.some((a) => a.seat === seatNum)
+              ) {
                 assigned = seatNum;
                 break;
               }
@@ -682,7 +702,9 @@ export const createBulkReservationsController = async (
 
         let packageId: string | null = null;
         let consumedClass = false;
-        const hasUnlimited = pkgs.some((p) => isActivePkg(p) && p.isUnlimited && pkgType(p) === classType);
+        const hasUnlimited = pkgs.some(
+          (p) => isActivePkg(p) && p.isUnlimited && pkgType(p) === classType
+        );
         if (!hasUnlimited) {
           const pick = selectPackageForClass(pkgs, classType);
           if (!pick) {
@@ -695,13 +717,22 @@ export const createBulkReservationsController = async (
           if (!pkg.isUnlimited) {
             pkgs[index] = { ...pkg, classesUsed: pkg.classesUsed + 1 };
           }
-          const agg: UserClassesAgg = user.classes ?? { total: 0, taken: 0, available: 0 };
+          const agg: UserClassesAgg = user.classes ?? {
+            total: 0,
+            taken: 0,
+            available: 0,
+          };
           const newTaken = (agg.taken ?? 0) + 1;
           const newAvailable = Math.max(0, (agg.total ?? 0) - newTaken);
-          user.classes = { total: agg.total ?? 0, taken: newTaken, available: newAvailable };
+          user.classes = {
+            total: agg.total ?? 0,
+            taken: newTaken,
+            available: newAvailable,
+          };
         } else {
           const limit = 2;
-          const currentCount = sameDay.size + assignments.filter((a) => a.seat != null).length;
+          const currentCount =
+            sameDay.size + assignments.filter((a) => a.seat != null).length;
           if (currentCount >= limit) {
             assignments.push({ seat: null, packageId: null });
             continue;
@@ -1627,57 +1658,46 @@ export const changeReservationController = async (
         throw new Error(ERROR_CODES.NO_SLOTS_AVAILABLE);
       }
 
-      // 6. Si es clase grupal, validar asiento
+      // 6. Si es clase grupal, validar asiento (LECTURA dentro de la transacción)
       if (newClass.type === "groups" && newSeat) {
-        const seatTaken = await db
-          .collection("reservations")
-          .where("classId", "==", newClassId)
-          .where("classDay", "==", String(newClass.day || ""))
-          .where("classHour", "==", String(newClass.hour || ""))
-          .where("seat", "==", newSeat)
-          .where("status", "==", "active")
-          .limit(1)
-          .get();
-
-        if (!seatTaken.empty) {
+        const seatTakenTx = await t.get(
+          db
+            .collection("reservations")
+            .where("classId", "==", newClassId)
+            .where("classDay", "==", String(newClass.day || ""))
+            .where("classHour", "==", String(newClass.hour || ""))
+            .where("seat", "==", newSeat)
+            .where("status", "==", "active")
+            .limit(1)
+        );
+        if (!seatTakenTx.empty) {
           throw new Error("El asiento seleccionado no está disponible");
         }
       }
 
-      // 7. Crear referencia para nueva reserva ANTES de usarla en la transacción
-      const newReservationRef = db.collection("reservations").doc();
-      const newReservationData = {
-        userId: currentRes.userId,
-        classId: newClassId,
-        seat: newSeat || null,
-        status: "active" as const,
-        classDay: newClass.day,
-        classHour: String(newClass.hour || ""),
-        createdAt: new Date().toISOString(),
-        consumedClass: false,
-        packageId: currentRes.packageId,
-      };
-      t.set(newReservationRef, newReservationData);
-
-      // 8. Actualizar reserva actual a "changed"
-      t.update(reservationRef, {
-        status: "changed",
-        changedAt: new Date().toISOString(),
-        newReservationId: newReservationRef.id,
-      });
-
-      // 9. Disminuir ocupación de clase actual y promover desde waitlist si aplica
+      // 7. Preparar lecturas para posible promoción desde waitlist (TODAS las lecturas ANTES de escribir)
       const currentCapacity = currentClass.capacity ?? 0;
       const currentOccupiedAfter = Math.max(
         0,
         (currentClass.occupied ?? 0) - 1
       );
-
       const waitlistsRef = db.collection("waitlists");
       const reservationsRef = db.collection("reservations");
       const classDay = (currentClass.day ?? "").slice(0, 10);
 
       let finalOccupied = currentOccupiedAfter;
+      // Lecturas para waitlist (si habría cupo al liberar)
+      let picked: { wl: WaitlistDoc; waitlistDocId: string } | null = null;
+      let assignedSeatForPromotion: number | null = null;
+      const currentType: ClassType =
+        (currentClass.type === ClassType.GROUPS ||
+        currentClass.type === ClassType.INDIVIDUAL
+          ? (currentClass.type as ClassType)
+          : normalizeClassType(
+              typeof currentClass.type === "string"
+                ? currentClass.type
+                : undefined
+            )) ?? ClassType.INDIVIDUAL;
 
       if (currentOccupiedAfter < currentCapacity) {
         const pendingSnapTx = await t.get(
@@ -1700,88 +1720,104 @@ export const changeReservationController = async (
                 .where("status", "==", "active")
                 .where("userId", "in", userIds)
             );
-
             sameDayCount = {};
             userIds.forEach((id) => {
               sameDayCount[id] = 0;
             });
             activeSameDaySnapTx.docs.forEach((r) => {
               const rData = r.data() as { userId: string };
-              sameDayCount[rData.userId] = (sameDayCount[rData.userId] ?? 0) + 1;
+              sameDayCount[rData.userId] =
+                (sameDayCount[rData.userId] ?? 0) + 1;
             });
           }
 
-          let picked: { wl: WaitlistDoc; waitlistDocId: string } | null = null;
           for (let i = 0; i < docs.length && !picked; i += 1) {
             const d = docs[i];
             const wl = d.data() as WaitlistDoc;
-            const canAccept = Boolean(wl.consumedClass) || (sameDayCount[wl.userId] ?? 0) < 2;
-            if (canAccept) {
-              picked = { wl, waitlistDocId: d.id };
-            }
+            const canAccept =
+              Boolean(wl.consumedClass) || (sameDayCount[wl.userId] ?? 0) < 2;
+            if (canAccept) picked = { wl, waitlistDocId: d.id };
           }
 
-          if (picked) {
-            let assignedSeatForPromotion: number | null = null;
-            const currentType: ClassType =
-              (currentClass.type === ClassType.GROUPS || currentClass.type === ClassType.INDIVIDUAL
-                ? (currentClass.type as ClassType)
-                : normalizeClassType(
-                    typeof currentClass.type === "string" ? currentClass.type : undefined
-                  )) ?? ClassType.INDIVIDUAL;
-
-            if (currentType === ClassType.GROUPS) {
-              const occupiedSeatsSnap = await reservationsRef
+          if (picked && currentType === ClassType.GROUPS) {
+            const occupiedSeatsSnapTx = await t.get(
+              reservationsRef
                 .where("classId", "==", picked.wl.classId)
                 .where("classDay", "==", String(currentClass.day || ""))
                 .where("classHour", "==", String(currentClass.hour || ""))
                 .where("status", "==", "active")
-                .get();
-
-              const occupiedSeats = occupiedSeatsSnap.docs
-                .map((doc) => {
-                  const data = doc.data() as ReservationDoc;
-                  if (doc.id === reservationId) return null;
-                  return data.seat;
-                })
-                .filter((seat): seat is number => seat !== null && typeof seat === "number")
-                .sort((a, b) => a - b);
-
-              const capacity = currentClass.capacity ?? 0;
-              for (let seatNum = 1; seatNum <= capacity; seatNum++) {
-                if (!occupiedSeats.includes(seatNum)) {
-                  assignedSeatForPromotion = seatNum;
-                  break;
-                }
-              }
-              if (assignedSeatForPromotion === null && capacity > 0) {
-                assignedSeatForPromotion = capacity;
+            );
+            const occupiedSeats = occupiedSeatsSnapTx.docs
+              .map((doc) => {
+                const data = doc.data() as ReservationDoc;
+                if (doc.id === reservationId) return null;
+                return data.seat;
+              })
+              .filter(
+                (seat): seat is number =>
+                  seat !== null && typeof seat === "number"
+              )
+              .sort((a, b) => a - b);
+            const capacity = currentClass.capacity ?? 0;
+            for (let seatNum = 1; seatNum <= capacity; seatNum++) {
+              if (!occupiedSeats.includes(seatNum)) {
+                assignedSeatForPromotion = seatNum;
+                break;
               }
             }
-
-            const newResRef = reservationsRef.doc();
-            const payload: ReservationDoc = {
-              id: newResRef.id,
-              userId: picked.wl.userId,
-              classId: picked.wl.classId,
-              seat: assignedSeatForPromotion,
-              status: "active",
-              classDay,
-              createdAt: new Date().toISOString(),
-              consumedClass: Boolean(picked.wl.consumedClass),
-              packageId: picked.wl.consumedClass ? (picked.wl.packageId ?? null) : null,
-            };
-            t.set(newResRef, payload);
-            t.update(waitlistsRef.doc(picked.waitlistDocId), { status: "accepted" });
-
-            finalOccupied = currentOccupiedAfter + 1;
-            promotedFromWaitlist = {
-              userId: picked.wl.userId,
-              classId: picked.wl.classId,
-              seat: assignedSeatForPromotion,
-            };
+            if (assignedSeatForPromotion === null && capacity > 0) {
+              assignedSeatForPromotion = capacity;
+            }
           }
         }
+      }
+
+      // 8. ESCRITURAS: crear nueva reserva, marcar anterior, promover y actualizar ocupaciones
+      const newReservationRef = db.collection("reservations").doc();
+      const newReservationData = {
+        userId: currentRes.userId,
+        classId: newClassId,
+        seat: newSeat || null,
+        status: "active" as const,
+        classDay: newClass.day,
+        classHour: String(newClass.hour || ""),
+        createdAt: new Date().toISOString(),
+        consumedClass: false,
+        packageId: currentRes.packageId,
+      };
+      t.set(newReservationRef, newReservationData);
+
+      t.update(reservationRef, {
+        status: "changed",
+        changedAt: new Date().toISOString(),
+        newReservationId: newReservationRef.id,
+      });
+
+      if (picked) {
+        const newResRef = reservationsRef.doc();
+        const payload: ReservationDoc = {
+          id: newResRef.id,
+          userId: picked.wl.userId,
+          classId: picked.wl.classId,
+          seat: assignedSeatForPromotion,
+          status: "active",
+          classDay,
+          createdAt: new Date().toISOString(),
+          consumedClass: Boolean(picked.wl.consumedClass),
+          packageId: picked.wl.consumedClass
+            ? (picked.wl.packageId ?? null)
+            : null,
+        };
+        t.set(newResRef, payload);
+        t.update(waitlistsRef.doc(picked.waitlistDocId), {
+          status: "accepted",
+        });
+        finalOccupied = currentOccupiedAfter + 1;
+        promotedFromWaitlist = {
+          userId: picked.wl.userId,
+          classId: picked.wl.classId,
+          seat: assignedSeatForPromotion,
+        };
       }
 
       t.update(currentClassRef, { occupied: finalOccupied });
@@ -1808,12 +1844,20 @@ export const changeReservationController = async (
     });
 
     try {
-      const rSnap = await admin.firestore().collection("reservations").doc(reservationId).get();
+      const rSnap = await admin
+        .firestore()
+        .collection("reservations")
+        .doc(reservationId)
+        .get();
       const rData = rSnap.data() as { userId: string } | undefined;
       if (rData) {
         const [userSnap, newClassSnap] = await Promise.all([
           admin.firestore().collection("users").doc(rData.userId).get(),
-          admin.firestore().collection("classes").doc(result.newReservation.classId).get(),
+          admin
+            .firestore()
+            .collection("classes")
+            .doc(result.newReservation.classId)
+            .get(),
         ]);
         const user = userSnap.data() as UserDoc | undefined;
         const newCls = newClassSnap.data() as ClassDoc | undefined;
@@ -1830,10 +1874,15 @@ export const changeReservationController = async (
               disciplineName = String((dSnap.data() as any)?.name || "");
             } catch {}
           } else {
-            disciplineName = String(((newCls as any).discipline?.name as string) || "");
+            disciplineName = String(
+              ((newCls as any).discipline?.name as string) || ""
+            );
           }
           const classInfo = `${disciplineName || "Clase"} el ${dateStr} a las ${newCls.hour}`;
-          const seatNum = typeof result.newReservation.seat === "number" ? result.newReservation.seat : null;
+          const seatNum =
+            typeof result.newReservation.seat === "number"
+              ? result.newReservation.seat
+              : null;
           await sendReservationConfirmationEmail(
             user.email,
             user.firstName,
@@ -1848,21 +1897,29 @@ export const changeReservationController = async (
     }
 
     if (promotedFromWaitlist) {
-      const { userId: promotedUserId, classId: promotedClassId, seat: promotedSeat } = promotedFromWaitlist;
+      const {
+        userId: promotedUserId,
+        classId: promotedClassId,
+        seat: promotedSeat,
+      } = promotedFromWaitlist;
       try {
         const promotedUserSnapEmail = await admin
           .firestore()
           .collection("users")
           .doc(promotedUserId)
           .get();
-        const promotedUserEmail = promotedUserSnapEmail.data() as UserDoc | undefined;
+        const promotedUserEmail = promotedUserSnapEmail.data() as
+          | UserDoc
+          | undefined;
         if (promotedUserEmail) {
           const promotedClassSnap = await admin
             .firestore()
             .collection("classes")
             .doc(promotedClassId)
             .get();
-          const promotedClassData = promotedClassSnap.data() as ClassDoc | undefined;
+          const promotedClassData = promotedClassSnap.data() as
+            | ClassDoc
+            | undefined;
           const promotedClassType = promotedClassData?.type || "individual";
 
           let assignedSeat: number | null = promotedSeat ?? null;
@@ -1878,7 +1935,8 @@ export const changeReservationController = async (
               .get();
 
             if (!reservationSnap.empty) {
-              const reservationData = reservationSnap.docs[0].data() as ReservationDoc;
+              const reservationData =
+                reservationSnap.docs[0].data() as ReservationDoc;
               assignedSeat = reservationData.seat ?? null;
             }
           }
