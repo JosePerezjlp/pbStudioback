@@ -1,6 +1,9 @@
 import { Request, Response } from "express";
 import admin from "../config/firebase";
-import { GympassService, gympassEnabled as gympassOn } from "../services/gympass.service";
+import {
+  GympassService,
+  gympassEnabled as gympassOn,
+} from "../services/gympass.service";
 import { CreateSlotRequest } from "../models/CreateSlotRequest";
 import { ClassPayload } from "../models/ClassPayload";
 
