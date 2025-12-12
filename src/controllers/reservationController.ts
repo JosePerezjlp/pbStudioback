@@ -695,7 +695,6 @@ export const createBulkReservationsController = async (
         } else {
           finalSeat = null;
           if (i > 0) {
-            assignments.push({ seat: null, packageId: null });
             continue;
           }
         }
@@ -708,8 +707,7 @@ export const createBulkReservationsController = async (
         if (!hasUnlimited) {
           const pick = selectPackageForClass(pkgs, classType);
           if (!pick) {
-            assignments.push({ seat: null, packageId: null });
-            continue;
+            throw new Error(ERROR_CODES.NO_CLASSES_AVAILABLE);
           }
           const { index, pkg } = pick;
           packageId = pkg.id;
@@ -734,8 +732,7 @@ export const createBulkReservationsController = async (
           const currentCount =
             sameDay.size + assignments.filter((a) => a.seat != null).length;
           if (currentCount >= limit) {
-            assignments.push({ seat: null, packageId: null });
-            continue;
+            throw new Error(ERROR_CODES.UNLIMITED_DAILY_LIMIT);
           }
         }
 

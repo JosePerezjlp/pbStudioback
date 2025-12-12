@@ -831,24 +831,59 @@ export const getAllUsersController = async (
       totalPages = null;
     }
 
-    let snap: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
+    let pageUsers: any[] = [];
+    let hasMore = false;
     try {
-      snap = await q.get();
+      const snap = await q.get();
+      const docs = snap.docs;
+      hasMore = docs.length > limit;
+      const pageDocs = hasMore ? docs.slice(0, limit) : docs;
+      pageUsers = pageDocs.map((d) => ({ id: d.id, ...(d.data() as any) }));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("FAILED_PRECONDITION")) {
-        res
-          .status(422)
-          .json({ error: "index_required", indexRequired: true, details: msg });
-        return;
+      if (!msg.includes("FAILED_PRECONDITION")) throw e;
+      const fields = [
+        "firstName",
+        "lastName",
+        "email",
+        "enabled",
+        "branch",
+        "registrationDate",
+        "createdAt",
+        "legacyId",
+        "role",
+      ] as const;
+      let fbSnap: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
+      try {
+        fbSnap = await col
+          .select(...(fields as unknown as string[]))
+          .where("role", "==", "user")
+          .orderBy("createdAt", "desc")
+          .limit(200)
+          .get();
+      } catch {
+        fbSnap = await col.select(...(fields as unknown as string[])).limit(200).get();
       }
-      throw e;
+      const candidates = fbSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+      let filtered = candidates;
+      if (statusFilter === "active") filtered = filtered.filter((u) => Boolean(u.enabled) === true);
+      if (statusFilter === "inactive") filtered = filtered.filter((u) => Boolean(u.enabled) === false);
+      if (firstNameFilter) filtered = filtered.filter((u) => String(u.firstName || "") === firstNameFilter);
+      if (lastNameFilter) filtered = filtered.filter((u) => String(u.lastName || "") === lastNameFilter);
+      if (emailFilter) filtered = filtered.filter((u) => String(u.email || "") === emailFilter);
+      if (startISO) filtered = filtered.filter((u) => String(u.registrationDate || "") >= String(startISO));
+      if (endISO) filtered = filtered.filter((u) => String(u.registrationDate || "") <= String(endISO));
+      filtered = filtered
+        .filter((u) => String((u.role || "")).toLowerCase() === "user")
+        .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+      const totalLocal = filtered.length;
+      const totalPagesLocal = Math.max(1, Math.ceil(totalLocal / limit));
+      const startIndex = (page - 1) * limit;
+      pageUsers = filtered.slice(startIndex, startIndex + limit);
+      hasMore = startIndex + limit < totalLocal;
+      total = total ?? totalLocal;
+      totalPages = totalPages ?? totalPagesLocal;
     }
-
-    const docs = snap.docs;
-    const hasMore = docs.length > limit;
-    const pageDocs = hasMore ? docs.slice(0, limit) : docs;
-    const pageUsers = pageDocs.map((d) => ({ id: d.id, ...(d.data() as any) }));
 
     const branchIds = Array.from(
       new Set(
@@ -882,9 +917,7 @@ export const getAllUsersController = async (
       return { ...u, branchName };
     });
 
-    const nextCursor = hasMore
-      ? String(pageDocs[pageDocs.length - 1].id)
-      : null;
+    const nextCursor = hasMore ? String(pageUsers[pageUsers.length - 1]?.id || "") || null : null;
     res.status(200).json({
       users: usersWithBranchName,
       total,
