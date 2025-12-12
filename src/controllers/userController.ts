@@ -1479,7 +1479,7 @@ export const searchUsersByFirstNameController = async (
     }
     const db = admin.firestore();
     const col = db.collection("users");
-    const selectFields = ["firstName", "lastName", "email"] as const;
+    const selectFields = ["firstName", "lastName", "email", "role"] as const;
     const qLower = qRaw.toLowerCase();
     const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
     const variants = [qRaw, qLower, cap(qLower)].filter(
@@ -1495,6 +1495,7 @@ export const searchUsersByFirstNameController = async (
     const pushDoc = (doc: FirebaseFirestore.QueryDocumentSnapshot) => {
       if (seen.has(doc.id)) return;
       const data = doc.data() as any;
+      if (String(data.role || "").toLowerCase() !== "user") return;
       results.push({
         id: doc.id,
         firstName: data.firstName ?? "",
@@ -1503,32 +1504,62 @@ export const searchUsersByFirstNameController = async (
       });
       seen.add(doc.id);
     };
-    for (const v of variants) {
-      if (results.length >= limit) break;
-      try {
-        const snap = await col
-          .select(...selectFields)
-          .where("role", "==", "user")
-          .orderBy("firstName")
-          .startAt(v)
-          .endAt(`${v}\uf8ff`)
-          .limit(Math.max(0, limit - results.length))
-          .get();
-        snap.docs.forEach(pushDoc);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (!String(msg).includes("FAILED_PRECONDITION")) throw e;
+    try {
+      const snapLower = await col
+        .select(...selectFields)
+        .where("role", "==", "user")
+        .orderBy("firstNameLower")
+        .startAt(qLower)
+        .endAt(`${qLower}\uf8ff`)
+        .limit(Math.max(0, limit - results.length))
+        .get();
+      snapLower.docs.forEach(pushDoc);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!String(msg).includes("FAILED_PRECONDITION")) throw e;
+      const snapLowerNoRole = await col
+        .select(...selectFields)
+        .orderBy("firstNameLower")
+        .startAt(qLower)
+        .endAt(`${qLower}\uf8ff`)
+        .limit(Math.max(0, limit - results.length))
+        .get();
+      snapLowerNoRole.docs.forEach(pushDoc);
+    }
+    if (results.length < limit) {
+      for (const v of variants) {
+        if (results.length >= limit) break;
+        try {
+          const snap = await col
+            .select(...selectFields)
+            .where("role", "==", "user")
+            .orderBy("firstName")
+            .startAt(v)
+            .endAt(`${v}\uf8ff`)
+            .limit(Math.max(0, limit - results.length))
+            .get();
+          snap.docs.forEach(pushDoc);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (!String(msg).includes("FAILED_PRECONDITION")) throw e;
+        }
       }
     }
     if (results.length === 0) {
       const eqSnap = await col
         .select(...selectFields)
-        .where("role", "==", "user")
-        .where("firstName", "==", qRaw)
+        .where("firstNameLower", "==", qLower)
         .limit(limit)
         .get();
       eqSnap.docs.forEach(pushDoc);
       if (results.length === 0) {
+        const eqSnap0 = await col
+          .select(...selectFields)
+          .where("role", "==", "user")
+          .where("firstName", "==", qRaw)
+          .limit(limit)
+          .get();
+        eqSnap0.docs.forEach(pushDoc);
         const eqSnap2 = await col
           .select(...selectFields)
           .where("role", "==", "user")
@@ -1537,6 +1568,33 @@ export const searchUsersByFirstNameController = async (
           .get();
         eqSnap2.docs.forEach(pushDoc);
       }
+    }
+    if (results.length === 0) {
+      const scan = await col
+        .select(...selectFields)
+        .orderBy("createdAt", "desc")
+        .limit(80)
+        .get();
+      scan.docs
+        .map((d) => ({ id: d.id, ...(d.data() as any) }))
+        .filter((u) => String(u.role || "").toLowerCase() === "user")
+        .filter((u) =>
+          String(u.firstName || "")
+            .toLowerCase()
+            .includes(qLower)
+        )
+        .slice(0, limit)
+        .forEach((u) => {
+          if (!seen.has(u.id)) {
+            results.push({
+              id: u.id,
+              firstName: u.firstName ?? "",
+              lastName: u.lastName ?? "",
+              email: u.email ?? "",
+            });
+            seen.add(u.id);
+          }
+        });
     }
     res.status(200).json({ users: results.slice(0, limit) });
   } catch (error) {

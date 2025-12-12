@@ -343,6 +343,17 @@ export const createReservationController = async (
         (p) => isActivePkg(p) && p.isUnlimited && pkgType(p) === classType
       );
 
+      if (hasUnlimited && classType === ClassType.GROUPS) {
+        const dupUnlimited = await reservationsRef
+          .where("userId", "==", userId)
+          .where("classId", "==", classId)
+          .where("status", "==", "active")
+          .limit(1)
+          .get();
+        if (!dupUnlimited.empty)
+          throw new Error(ERROR_CODES.DUPLICATE_RESERVATION);
+      }
+
       let packageId: string | null = null;
       let consumedClass = false;
 
@@ -657,6 +668,23 @@ export const createBulkReservationsController = async (
         .where("status", "==", "active")
         .where("classDay", "==", String((cls.day ?? "").slice(0, 10)))
         .get();
+
+      const hasUnlimitedPre = pkgs.some(
+        (p) => isActivePkg(p) && p.isUnlimited && pkgType(p) === classType
+      );
+      if (hasUnlimitedPre && classType === ClassType.GROUPS) {
+        if (seats.length > 1) {
+          throw new Error(ERROR_CODES.DUPLICATE_RESERVATION);
+        }
+        const dupUnlimited = await reservationsRef
+          .where("userId", "==", userId)
+          .where("classId", "==", classId)
+          .where("status", "==", "active")
+          .limit(1)
+          .get();
+        if (!dupUnlimited.empty)
+          throw new Error(ERROR_CODES.DUPLICATE_RESERVATION);
+      }
 
       const assignments: { seat: number | null; packageId: string | null }[] =
         [];

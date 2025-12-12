@@ -126,6 +126,16 @@ export const createWaitlistController = async (
 
       const hasUnlimited = pkgs.some(isActiveUnlimited);
 
+      if (hasUnlimited) {
+        const dayStr = String((cls.day ?? "").slice(0, 10));
+        const sameDay = await reservationsCol
+          .where("userId", "==", userId)
+          .where("status", "==", "active")
+          .where("classDay", "==", dayStr)
+          .get();
+        if (sameDay.size >= 2) throw new Error(ERROR_CODES.UNLIMITED_DAILY_LIMIT);
+      }
+
       let consumedClass = false;
       let packageId: string | null = null;
 
@@ -198,6 +208,7 @@ export const createWaitlistController = async (
       [ERROR_CODES.NO_SLOTS_AVAILABLE]: 400,
       [ERROR_CODES.DUPLICATE_RESERVATION]: 409,
       [ERROR_CODES.NO_CLASSES_AVAILABLE]: 409,
+      [ERROR_CODES.UNLIMITED_DAILY_LIMIT]: 400,
     };
     res.status(map[msg] ?? 500).json({ error: msg, code: msg });
   }
