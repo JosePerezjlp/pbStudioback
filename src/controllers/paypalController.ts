@@ -151,6 +151,79 @@ export const createPayPalOrderController = async (
 };
 
 /* ===============================================================
+   1.1) CREAR ORDEN (MOBILE)
+   =============================================================== */
+export const createPayPalOrderMobileController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const {
+      amount,
+      currency = "USD",
+      description = "Pago en p&B Studio",
+      packageId,
+      couponCode,
+      returnUrl,
+      cancelUrl,
+    } = req.body as {
+      amount: string | number;
+      currency?: string;
+      description?: string;
+      packageId?: string;
+      couponCode?: string;
+      returnUrl?: string;
+      cancelUrl?: string;
+    };
+
+    // Usar el monto recibido como final (ya descontado del lado cliente)
+    const finalAmount = Number(amount);
+
+    const accessToken = await getAccessToken();
+
+    const payload: any = {
+      intent: "CAPTURE",
+      purchase_units: [
+        {
+          amount: {
+            currency_code: currency,
+            value: finalAmount.toFixed(2),
+          },
+          description,
+        },
+      ],
+    };
+
+    if (returnUrl && cancelUrl) {
+      payload.application_context = {
+        return_url: returnUrl,
+        cancel_url: cancelUrl,
+      };
+    }
+
+    const { data } = await axios.post(
+      `${PAYPAL_API}/v2/checkout/orders`,
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    // Devolver la respuesta completa de PayPal (incluyendo links)
+    res.status(201).json(data);
+  } catch (err) {
+    console.error(
+      "❌ PayPal create-order-mobile error:",
+      axios.isAxiosError(err) ? err.response?.data : err
+    );
+    res.status(500).json({ error: "No se pudo crear la orden" });
+  }
+};
+
+/* ===============================================================
    2) CAPTURAR ORDEN
    =============================================================== */
 export const capturePayPalOrderController = async (

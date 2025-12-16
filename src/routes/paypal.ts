@@ -2,6 +2,7 @@ import express from "express";
 import { verifyToken } from "../middleware/authMiddleware";
 import {
   createPayPalOrderController,
+  createPayPalOrderMobileController,
   capturePayPalOrderController,
   getAllTransactionsController,
 } from "../controllers/paypalController";
@@ -10,6 +11,9 @@ const router = express.Router();
 
 // Crear orden de pago (requiere autenticación)
 router.post("/create-order", verifyToken, createPayPalOrderController);
+
+// Crear orden de pago para mobile (requiere autenticación)
+router.post("/create-order-mobile", verifyToken, createPayPalOrderMobileController);
 // router.post("/create-order", createPayPalOrderController);
 
 // Capturar pago aprobado por el cliente (requiere autenticación)
