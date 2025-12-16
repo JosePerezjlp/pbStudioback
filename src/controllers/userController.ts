@@ -1395,6 +1395,8 @@ export const searchUsersController = async (
     const limitNum = Number((req.query as any)?.limit ?? 10);
     const limit =
       Number.isFinite(limitNum) && limitNum > 0 ? Math.min(limitNum, 20) : 10;
+    const branchIdRaw = String((req.query as any)?.branch || "").trim();
+    const branchId = branchIdRaw ? branchIdRaw : undefined;
     if (qRaw.length < 2) {
       res.status(200).json({ users: [] });
       return;
@@ -1473,13 +1475,24 @@ export const searchUsersByFirstNameController = async (
     const limitNum = Number((req.query as any)?.limit ?? 10);
     const limit =
       Number.isFinite(limitNum) && limitNum > 0 ? Math.min(limitNum, 20) : 10;
+    const branchIdRaw = String((req.query as any)?.branch || "").trim();
+    const branchId = branchIdRaw ? branchIdRaw : undefined;
     if (qRaw.length < 2) {
       res.status(200).json({ users: [] });
       return;
     }
     const db = admin.firestore();
     const col = db.collection("users");
-    const selectFields = ["firstName", "lastName", "email", "role"] as const;
+    const selectFields = [
+      "firstName",
+      "lastName",
+      "email",
+      "role",
+      "createdAt",
+      "legacyId",
+      "branch",
+      "enabled",
+    ] as const;
     const qLower = qRaw.toLowerCase();
     const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
     const variants = [qRaw, qLower, cap(qLower)].filter(
@@ -1490,24 +1503,41 @@ export const searchUsersByFirstNameController = async (
       id: string;
       firstName?: string;
       lastName?: string;
+      createdAt?: string;
+      role?: string;
+      legacyId?: string | number;
+      branch?: string | null;
       email?: string;
+      enabled?: boolean | number;
+      branchName?: string | null;
     }> = [];
     const pushDoc = (doc: FirebaseFirestore.QueryDocumentSnapshot) => {
       if (seen.has(doc.id)) return;
       const data = doc.data() as any;
       if (String(data.role || "").toLowerCase() !== "user") return;
+      const docBranch =
+        typeof data.branch === "string"
+          ? data.branch
+          : String(data.branch || "") || null;
+      if (branchId && docBranch !== branchId) return;
       results.push({
         id: doc.id,
         firstName: data.firstName ?? "",
         lastName: data.lastName ?? "",
+        createdAt: data.createdAt ?? undefined,
+        role: String(data.role || ""),
+        legacyId: data.legacyId ?? undefined,
+        branch: docBranch,
         email: data.email ?? "",
+        enabled: data.enabled ?? undefined,
+        branchName: null,
       });
       seen.add(doc.id);
     };
     try {
-      const snapLower = await col
-        .select(...selectFields)
-        .where("role", "==", "user")
+      let q1 = col.select(...selectFields).where("role", "==", "user");
+      if (branchId) q1 = q1.where("branch", "==", branchId);
+      const snapLower = await q1
         .orderBy("firstNameLower")
         .startAt(qLower)
         .endAt(`${qLower}\uf8ff`)
@@ -1517,22 +1547,36 @@ export const searchUsersByFirstNameController = async (
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (!String(msg).includes("FAILED_PRECONDITION")) throw e;
-      const snapLowerNoRole = await col
-        .select(...selectFields)
-        .orderBy("firstNameLower")
-        .startAt(qLower)
-        .endAt(`${qLower}\uf8ff`)
-        .limit(Math.max(0, limit - results.length))
-        .get();
-      snapLowerNoRole.docs.forEach(pushDoc);
+      try {
+        let q2 = col.select(...selectFields);
+        if (branchId) q2 = q2.where("branch", "==", branchId);
+        const snapLowerNoRole = await q2
+          .orderBy("firstNameLower")
+          .startAt(qLower)
+          .endAt(`${qLower}\uf8ff`)
+          .limit(Math.max(0, limit - results.length))
+          .get();
+        snapLowerNoRole.docs.forEach(pushDoc);
+      } catch (e2) {
+        const m2 = e2 instanceof Error ? e2.message : String(e2);
+        if (!String(m2).includes("FAILED_PRECONDITION")) throw e2;
+        let q3 = col.select(...selectFields);
+        if (branchId) q3 = q3.where("branch", "==", branchId);
+        const snapNoIndex = await q3.limit(80).get();
+        snapNoIndex.docs.forEach((d) => {
+          const data = d.data() as any;
+          const nameLower = String(data.firstName || "").toLowerCase();
+          if (nameLower.startsWith(qLower)) pushDoc(d);
+        });
+      }
     }
     if (results.length < limit) {
       for (const v of variants) {
         if (results.length >= limit) break;
         try {
-          const snap = await col
-            .select(...selectFields)
-            .where("role", "==", "user")
+          let qv = col.select(...selectFields).where("role", "==", "user");
+          if (branchId) qv = qv.where("branch", "==", branchId);
+          const snap = await qv
             .orderBy("firstName")
             .startAt(v)
             .endAt(`${v}\uf8ff`)
@@ -1546,26 +1590,39 @@ export const searchUsersByFirstNameController = async (
       }
     }
     if (results.length === 0) {
-      const eqSnap = await col
-        .select(...selectFields)
-        .where("firstNameLower", "==", qLower)
-        .limit(limit)
-        .get();
-      eqSnap.docs.forEach(pushDoc);
+      try {
+        let qeLower = col
+          .select(...selectFields)
+          .where("firstNameLower", "==", qLower);
+        if (branchId) qeLower = qeLower.where("branch", "==", branchId);
+        const eqSnap = await qeLower.limit(limit).get();
+        eqSnap.docs.forEach(pushDoc);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!String(msg).includes("FAILED_PRECONDITION")) throw e;
+        let qb = col.select(...selectFields);
+        if (branchId) qb = qb.where("branch", "==", branchId);
+        const bsnap = await qb.limit(60).get();
+        bsnap.docs.forEach((d) => {
+          const data = d.data() as any;
+          const nameLower = String(data.firstName || "").toLowerCase();
+          if (nameLower === qLower) pushDoc(d);
+        });
+      }
       if (results.length === 0) {
-        const eqSnap0 = await col
+        let qe0 = col
           .select(...selectFields)
           .where("role", "==", "user")
-          .where("firstName", "==", qRaw)
-          .limit(limit)
-          .get();
+          .where("firstName", "==", qRaw);
+        if (branchId) qe0 = qe0.where("branch", "==", branchId);
+        const eqSnap0 = await qe0.limit(limit).get();
         eqSnap0.docs.forEach(pushDoc);
-        const eqSnap2 = await col
+        let qe2 = col
           .select(...selectFields)
           .where("role", "==", "user")
-          .where("firstName", "==", cap(qLower))
-          .limit(limit)
-          .get();
+          .where("firstName", "==", cap(qLower));
+        if (branchId) qe2 = qe2.where("branch", "==", branchId);
+        const eqSnap2 = await qe2.limit(limit).get();
         eqSnap2.docs.forEach(pushDoc);
       }
     }
@@ -1578,6 +1635,12 @@ export const searchUsersByFirstNameController = async (
       scan.docs
         .map((d) => ({ id: d.id, ...(d.data() as any) }))
         .filter((u) => String(u.role || "").toLowerCase() === "user")
+        .filter((u) => {
+          if (!branchId) return true;
+          const b =
+            typeof u.branch === "string" ? u.branch : String(u.branch || "");
+          return b === branchId;
+        })
         .filter((u) =>
           String(u.firstName || "")
             .toLowerCase()
@@ -1590,11 +1653,59 @@ export const searchUsersByFirstNameController = async (
               id: u.id,
               firstName: u.firstName ?? "",
               lastName: u.lastName ?? "",
+              createdAt: u.createdAt ?? undefined,
+              role: String(u.role || ""),
+              legacyId: u.legacyId ?? undefined,
+              branch:
+                typeof u.branch === "string"
+                  ? u.branch
+                  : String(u.branch || "") || null,
               email: u.email ?? "",
+              enabled: u.enabled ?? undefined,
+              branchName: null,
             });
             seen.add(u.id);
           }
         });
+    }
+    if (results.length > 0) {
+      const branchIds = Array.from(
+        new Set(
+          results
+            .map((u) =>
+              typeof u.branch === "string" ? u.branch : String(u.branch || "")
+            )
+            .filter((id) => !!id)
+        )
+      );
+      let branchNameMap: Record<string, string> = {};
+      if (branchIds.length > 0) {
+        const BATCH = 10;
+        for (let i = 0; i < branchIds.length; i += BATCH) {
+          const chunk = branchIds.slice(i, i + BATCH);
+          const bsnap = await db
+            .collection("branches")
+            .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+            .get();
+          bsnap.docs.forEach((bd) => {
+            const data = bd.data() as { name?: string };
+            branchNameMap[bd.id] = String(data?.name || "");
+          });
+        }
+      }
+      for (let i = 0; i < results.length; i += 1) {
+        const bid =
+          typeof results[i].branch === "string"
+            ? results[i].branch
+            : String(results[i].branch || "");
+        results[i].branchName = bid ? (branchNameMap[bid] ?? null) : null;
+        if (typeof results[i].enabled === "boolean") {
+          results[i].enabled = results[i].enabled ? 1 : 0;
+        }
+        if (results[i].legacyId !== undefined) {
+          results[i].legacyId = String(results[i].legacyId);
+        }
+      }
     }
     res.status(200).json({ users: results.slice(0, limit) });
   } catch (error) {
