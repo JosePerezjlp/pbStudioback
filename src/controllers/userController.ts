@@ -723,12 +723,26 @@ export const getAllUsersController = async (
         : typeof qp.name === "string"
           ? (qp.name as string).trim()
           : undefined;
+    const qLikeRaw =
+      typeof qp.q === "string" ? (qp.q as string).trim() : undefined;
+    const qLike =
+      qLikeRaw && qLikeRaw.length >= 2 ? qLikeRaw.toLowerCase() : undefined;
     const lastNameFilter =
       typeof qp.lastName === "string" ? qp.lastName.trim() : undefined;
     const emailFilter =
       typeof qp.email === "string" ? qp.email.trim() : undefined;
     const statusFilter =
       typeof qp.status === "string" ? qp.status.toLowerCase() : undefined;
+    const branchFilter =
+      typeof qp.branch === "string"
+        ? (qp.branch as string).trim()
+        : typeof qp.branchId === "string"
+          ? (qp.branchId as string).trim()
+          : typeof qp.branch_id === "string"
+            ? (qp.branch_id as string).trim()
+            : typeof qp.branchID === "string"
+              ? (qp.branchID as string).trim()
+              : undefined;
     const hasActivePackageFilterRaw =
       typeof qp.hasActivePackage === "string"
         ? qp.hasActivePackage.toLowerCase()
@@ -778,13 +792,19 @@ export const getAllUsersController = async (
       q = q.where("role", "==", "user");
       if (statusFilter === "active") q = q.where("enabled", "==", true);
       if (statusFilter === "inactive") q = q.where("enabled", "==", false);
+      if (branchFilter) q = q.where("branch", "==", branchFilter);
       if (firstNameFilter) q = q.where("firstName", "==", firstNameFilter);
       if (lastNameFilter) q = q.where("lastName", "==", lastNameFilter);
       if (emailFilter) q = q.where("email", "==", emailFilter);
       if (startISO) q = q.where("registrationDate", ">=", startISO);
       if (endISO) q = q.where("registrationDate", "<=", endISO);
-      if (startISO || endISO) q = q.orderBy("registrationDate", "desc");
-      else q = q.orderBy("createdAt", "desc");
+      if (qLike) {
+        q = q.orderBy("firstNameLower").startAt(qLike).endAt(`${qLike}\uf8ff`);
+      } else if (startISO || endISO) {
+        q = q.orderBy("registrationDate", "desc");
+      } else {
+        q = q.orderBy("createdAt", "desc");
+      }
       return q;
     };
 
@@ -816,11 +836,18 @@ export const getAllUsersController = async (
       let tq = col.where("role", "==", "user");
       if (statusFilter === "active") tq = tq.where("enabled", "==", true);
       if (statusFilter === "inactive") tq = tq.where("enabled", "==", false);
+      if (branchFilter) tq = tq.where("branch", "==", branchFilter);
       if (firstNameFilter) tq = tq.where("firstName", "==", firstNameFilter);
       if (lastNameFilter) tq = tq.where("lastName", "==", lastNameFilter);
       if (emailFilter) tq = tq.where("email", "==", emailFilter);
       if (startISO) tq = tq.where("registrationDate", ">=", startISO);
       if (endISO) tq = tq.where("registrationDate", "<=", endISO);
+      if (qLike) {
+        tq = tq
+          .orderBy("firstNameLower")
+          .startAt(qLike)
+          .endAt(`${qLike}\uf8ff`);
+      }
       const agg = await tq.count().get();
       total = agg.data().count;
       totalPages = Math.max(1, Math.ceil((total ?? 0) / limit));
@@ -837,9 +864,95 @@ export const getAllUsersController = async (
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("FAILED_PRECONDITION")) {
-        res
-          .status(422)
-          .json({ error: "index_required", indexRequired: true, details: msg });
+        const fbSnap = await col.orderBy("createdAt", "desc").limit(400).get();
+        const all = fbSnap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as any),
+        }));
+        const filtered = all.filter((u: any) => {
+          const roleOk = String(u.role || "").toLowerCase() === "user";
+          if (!roleOk) return false;
+          if (statusFilter === "active" && u.enabled !== true) return false;
+          if (statusFilter === "inactive" && u.enabled !== false) return false;
+          if (branchFilter) {
+            const b =
+              typeof u.branch === "string" ? u.branch : String(u.branch || "");
+            if (b !== branchFilter) return false;
+          }
+          if (firstNameFilter) {
+            if (String(u.firstName || "") !== firstNameFilter) return false;
+          }
+          if (lastNameFilter) {
+            if (String(u.lastName || "") !== lastNameFilter) return false;
+          }
+          if (emailFilter) {
+            if (String(u.email || "") !== emailFilter) return false;
+          }
+          if (startISO) {
+            const rd = String(u.registrationDate || "");
+            if (!rd || rd < startISO) return false;
+          }
+          if (endISO) {
+            const rd = String(u.registrationDate || "");
+            if (!rd || rd > endISO) return false;
+          }
+          if (qLike) {
+            const fnLower = String(
+              (u.firstNameLower as string | undefined) ??
+                String(u.firstName || "").toLowerCase()
+            );
+            if (!fnLower.startsWith(qLike)) return false;
+          }
+          return true;
+        });
+        const totalLocal = filtered.length;
+        const totalPagesLocal = Math.max(1, Math.ceil(totalLocal / limit));
+        const offset = page > 1 ? (page - 1) * limit : 0;
+        const pageSlice = filtered.slice(offset, offset + limit);
+        const branchIds = Array.from(
+          new Set(
+            pageSlice
+              .map((u: any) =>
+                typeof u.branch === "string" ? u.branch : String(u.branch || "")
+              )
+              .filter((id) => !!id)
+          )
+        );
+        let branchNameMap: Record<string, string> = {};
+        if (branchIds.length > 0) {
+          const BATCH = 10;
+          for (let i = 0; i < branchIds.length; i += BATCH) {
+            const chunk = branchIds.slice(i, i + BATCH);
+            const bsnap = await db
+              .collection("branches")
+              .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+              .get();
+            bsnap.docs.forEach((bd) => {
+              const data = bd.data() as { name?: string };
+              branchNameMap[bd.id] = String(data?.name || "");
+            });
+          }
+        }
+        const usersWithBranchName = pageSlice.map((u: any) => {
+          const bid =
+            typeof u.branch === "string" ? u.branch : String(u.branch || "");
+          const branchName = bid ? (branchNameMap[bid] ?? null) : null;
+          return { ...u, branchName };
+        });
+        const hasMoreLocal = offset + limit < totalLocal;
+        const nextCursorLocal = hasMoreLocal
+          ? String(pageSlice[pageSlice.length - 1].id)
+          : null;
+        res.status(200).json({
+          users: usersWithBranchName,
+          total: totalLocal,
+          totalPages: totalPagesLocal,
+          page,
+          hasMore: hasMoreLocal,
+          nextCursor: nextCursorLocal,
+          limit,
+          indexFallback: true,
+        });
         return;
       }
       throw e;
@@ -1395,7 +1508,10 @@ export const searchUsersController = async (
     const limitNum = Number((req.query as any)?.limit ?? 10);
     const limit =
       Number.isFinite(limitNum) && limitNum > 0 ? Math.min(limitNum, 20) : 10;
-    const branchIdRaw = String((req.query as any)?.branch || "").trim();
+    const qp: any = req.query || {};
+    const branchIdRaw = String(
+      qp.branch ?? qp.branchId ?? qp.branch_id ?? qp.branchID ?? ""
+    ).trim();
     const branchId = branchIdRaw ? branchIdRaw : undefined;
     if (qRaw.length < 2) {
       res.status(200).json({ users: [] });
