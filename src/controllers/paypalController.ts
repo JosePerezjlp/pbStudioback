@@ -514,8 +514,16 @@ export const capturePayPalOrderController = async (
     }
 
     /* ---------- Registro genérico (para /transactions) ---------- */
-    const genericStatus: TransactionStatus =
-      data.status === "COMPLETED" ? "paid" : "pending";
+    let genericStatus: TransactionStatus = "pending";
+    if (data.status === "COMPLETED") {
+      genericStatus = "paid";
+    } else if (
+      data.status === "DENIED" ||
+      data.status === "VOIDED" ||
+      data.status === "FAILED"
+    ) {
+      genericStatus = "rejected";
+    }
 
     await saveTransaction({
       userId: uid,
