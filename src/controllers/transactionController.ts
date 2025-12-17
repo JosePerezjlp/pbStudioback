@@ -104,7 +104,7 @@ export function cleanUndefined<T>(obj: T): T {
 /* ---------- Tipos ---------- */
 export type PaymentMethod = "paypal" | "cash" | "terminal";
 
-export type TransactionStatus = "paid" | "pending" | "rejected";
+export type TransactionStatus = "paid" | "pending" | "rejected" | "cancelled";
 
 export interface PackageInfo {
   id: string;
@@ -1534,7 +1534,12 @@ export const updateTransactionStatusController = async (
     const { status } = req.body as { status: TransactionStatus };
 
     // 1) Validar status
-    const validStatuses: TransactionStatus[] = ["paid", "pending", "rejected"];
+    const validStatuses: TransactionStatus[] = [
+      "paid",
+      "pending",
+      "rejected",
+      "cancelled",
+    ];
     if (!validStatuses.includes(status)) {
       res.status(400).json({ error: "Estado inválido" });
       return;
@@ -1586,13 +1591,13 @@ export const cancelTransactionController = async (
     const txData = txSnap.data()!;
 
     // Solo se pueden cancelar transacciones pendientes o pagadas
-    if (txData.status === "rejected") {
+    if (txData.status === "rejected" || txData.status === "cancelled") {
       res.status(400).json({ error: "La transacción ya está cancelada" });
       return;
     }
 
     await txRef.update({
-      status: "rejected",
+      status: "cancelled",
       cancelledAt: new Date().toISOString(),
       cancelledBy: req.user?.uid,
     });
@@ -1687,6 +1692,9 @@ export const getCajaTransactionsController = async (
     const rejectedTransactions = transactions.filter(
       (tx) => tx.status === "rejected"
     ).length;
+    const cancelledTransactions = transactions.filter(
+      (tx) => tx.status === "cancelled"
+    ).length;
 
     res.status(200).json({
       transactions,
@@ -1696,6 +1704,7 @@ export const getCajaTransactionsController = async (
         paidTransactions,
         pendingTransactions,
         rejectedTransactions,
+        cancelledTransactions,
         date,
       },
     });
