@@ -12,7 +12,7 @@ import { ClassType } from "../types/enums";
 import { normalizeClassType } from "../utils/packageSelection";
 import { getRoomTypeById } from "../utils/getRoomType";
 import { AuthRequest } from "../middleware/authMiddleware";
-import { GympassService } from "../services/gympass.service";
+import { GympassService, gympassEnabled } from "../services/gympass.service";
 import { CreateSlotRequest } from "../models/CreateSlotRequest";
 
 interface ClassDoc {
@@ -178,21 +178,33 @@ export const createClassController = async (
       return classRef.id;
     });
     // Construir objeto para Gympass
-    const slot = new CreateSlotRequest();
-    slot.occur_date = `${day}T${hour}:00`;
-    slot.room = String(room);
-    slot.total_capacity = parsedCapacity;
-    slot.total_booked = parsedOccupied;
-    slot.status = status === "abierta" ? 1 : 0;
-    slot.length_in_minutes = 60;
-    slot.instructors = [];
-    slot.product_id = 198;
-    slot.booking_window = null;
-    const syncGympass = process.env.GYMPASS_SYNC_ON_CREATE === "true";
-    if (syncGympass) {
+    if (gympassEnabled) {
       try {
-        await GympassService.createClass(198, 5, slot);
-      } catch {}
+        const branchData = await GympassService.getBranchData(String(branch));
+        const gympassGymId = branchData?.gympass_gym_id;
+
+        if (gympassGymId) {
+          const slot = new CreateSlotRequest();
+          slot.occur_date = `${day}T${hour}:00`;
+          slot.room = String(room);
+          slot.total_capacity = parsedCapacity;
+          slot.total_booked = parsedOccupied;
+          slot.status = status === "abierta" ? 1 : 0;
+          slot.length_in_minutes = 60;
+          slot.instructors = [];
+          slot.product_id = Number(gympassGymId);
+          slot.booking_window = null;
+
+          // TODO: Verify classId (currently hardcoded as 5)
+          await GympassService.createClass(Number(gympassGymId), 5, slot);
+        } else {
+          console.warn(
+            `Gympass sync skipped: No gympass_gym_id found for branch ${branch}`
+          );
+        }
+      } catch (error) {
+        console.error("Error creating Gympass slot:", error);
+      }
     }
     res.status(201).json({ message: "Clase creada correctamente", id: newId });
   } catch (error) {
