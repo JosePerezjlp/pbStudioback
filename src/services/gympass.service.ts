@@ -14,6 +14,19 @@ const token = process.env.GYMPASS_TOKEN ?? "";
 const gympassDisabledFlag = (process.env.GYMPASS_DISABLE ?? "").toLowerCase() === "true";
 export const gympassEnabled = Boolean(baseURL && token) && !gympassDisabledFlag;
 
+const handleAxiosError = (error: unknown, context: string) => {
+  if (axios.isAxiosError(error)) {
+    const status = error.response?.status;
+    const data = JSON.stringify(error.response?.data);
+    const message = `Error en ${context}: ${status} - ${data}`;
+    console.error(message);
+    throw new Error(message);
+  }
+  const msg = error instanceof Error ? error.message : "Error desconocido";
+  console.error(`Error en ${context}:`, msg);
+  throw new Error(msg);
+};
+
 const api = gympassEnabled
   ? axios.create({
       baseURL,
@@ -26,13 +39,21 @@ const api = gympassEnabled
 export const GympassService = {
   async getProducts(gymId: number) {
     if (!gympassEnabled) throw new Error("Gympass no configurado");
-    const res = await api.get(`/setup/v1/gyms/${gymId}/products`);
-    return res.data;
+    try {
+      const res = await api.get(`/setup/v1/gyms/${gymId}/products`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, "getProducts");
+    }
   },
   async getClass(gymId: number) {
     if (!gympassEnabled) throw new Error("Gympass no configurado");
-    const res = await api.get(`/gyms/${gymId}/classes`);
-    return res.data;
+    try {
+      const res = await api.get(`/gyms/${gymId}/classes`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, "getClass");
+    }
   },
   async createClass(
     gymId: number,
@@ -47,9 +68,7 @@ export const GympassService = {
     );
     return res.data;
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "Error desconocido";
-      console.log('error',error);
-       throw new Error(msg);
+      handleAxiosError(error, "createClass");
     }
   
   },
@@ -65,18 +84,20 @@ export const GympassService = {
       });     
       return { success: true, data: res.data };
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "Error desconocido";
-      console.log('error',error);
-       throw new Error(msg);
+      handleAxiosError(error, "createCategory");
     }
   },
   async simulateChecking(cheking: Cheking, gymId: number) {
     if (!gympassEnabled) throw new Error("Gympass no configurado");
-    const res = await api.post(
-      `/helper/v1/gyms/${gymId}/simulate/checkins`,
-      cheking
-    );
-    return res.data;
+    try {
+      const res = await api.post(
+        `/helper/v1/gyms/${gymId}/simulate/checkins`,
+        cheking
+      );
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, "simulateChecking");
+    }
   },
   // eslint-disable-next-line consistent-return
   async updateBooking(
@@ -96,10 +117,7 @@ export const GympassService = {
       });
       return { success: true, data: res.data };
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "Error desconocido";
-      console.log(msg);
-
-      throw new Error(msg);
+      handleAxiosError(error, "updateBooking");
     }
   },
   async findClassAndBranch(classOrReservationId: string) {
