@@ -75,13 +75,10 @@ export const GympassService = {
   async createCategory(gymId: number, classPlayload: ClassRequest) {
     if (!gympassEnabled) throw new Error("Gympass no configurado");
     try {
-        const url = `${baseURL}/booking/v1/gyms/${gymId}/classes`;
-      const res = await axios.post(url, classPlayload, {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-      });     
+      const res = await api.post(
+        `/booking/v1/gyms/${gymId}/classes`,
+        classPlayload
+      );
       return { success: true, data: res.data };
     } catch (error) {
       handleAxiosError(error, "createCategory");

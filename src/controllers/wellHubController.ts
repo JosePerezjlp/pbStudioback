@@ -104,6 +104,12 @@ export const createCategoryController = async (
     const { gymId } = req.params;
     const branchData = await GympassService.getBranchData(gymId);
     const gympassGymId = branchData?.gympass_gym_id;
+
+    if (!gympassGymId) {
+      res.status(400).json({ error: "La sucursal no tiene configurado un ID de Gympass" });
+      return;
+    }
+
     const payload = {
       classes: [req.body],
     };
