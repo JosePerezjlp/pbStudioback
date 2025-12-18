@@ -180,28 +180,20 @@ export const createClassController = async (
     // Construir objeto para Gympass
     if (gympassEnabled) {
       try {
-        const branchData = await GympassService.getBranchData(String(branch));
-        const gympassGymId = branchData?.gympass_gym_id;
+        const gympassGymId = 198; // Hardcoded for now as requested
+        const slot = new CreateSlotRequest();
+        slot.occur_date = `${day}T${hour}:00`;
+        slot.room = String(room);
+        slot.total_capacity = parsedCapacity;
+        slot.total_booked = parsedOccupied;
+        slot.status = status === "abierta" ? 1 : 0;
+        slot.length_in_minutes = 60;
+        slot.instructors = [];
+        slot.product_id = gympassGymId;
+        slot.booking_window = null;
 
-        if (gympassGymId) {
-          const slot = new CreateSlotRequest();
-          slot.occur_date = `${day}T${hour}:00`;
-          slot.room = String(room);
-          slot.total_capacity = parsedCapacity;
-          slot.total_booked = parsedOccupied;
-          slot.status = status === "abierta" ? 1 : 0;
-          slot.length_in_minutes = 60;
-          slot.instructors = [];
-          slot.product_id = Number(gympassGymId);
-          slot.booking_window = null;
-
-          // TODO: Verify classId (currently hardcoded as 5)
-          await GympassService.createClass(Number(gympassGymId), 5, slot);
-        } else {
-          console.warn(
-            `Gympass sync skipped: No gympass_gym_id found for branch ${branch}`
-          );
-        }
+        // TODO: Verify classId (currently hardcoded as 5)
+        await GympassService.createClass(gympassGymId, 5, slot);
       } catch (error) {
         console.error("Error creating Gympass slot:", error);
       }
