@@ -49,7 +49,7 @@ export const getAllBranchesController = async (
   try {
     const authReq = req as AuthRequest;
     const user = authReq.user;
-    
+
     let query = admin
       .firestore()
       .collection("branches")
@@ -57,7 +57,12 @@ export const getAllBranchesController = async (
 
     // Si el usuario es employee (no admin) y tiene branches limitadas, filtrar
     let branches = [];
-    if (user && (user.role === "collaborator" || user.role === "instructor") && user.branches && user.branches.length > 0) {
+    if (
+      user &&
+      (user.role === "collaborator" || user.role === "instructor") &&
+      user.branches &&
+      user.branches.length > 0
+    ) {
       // Obtener todas y filtrar en memoria (Firestore no soporta "in" con orderBy fácilmente)
       const snapshot = await query.get();
       const allBranches = snapshot.docs.map((doc) => ({
@@ -65,14 +70,16 @@ export const getAllBranchesController = async (
         ...doc.data(),
       }));
       // Filtrar solo las branches permitidas
-      branches = allBranches.filter((branch) => user.branches!.includes(branch.id));
+      branches = allBranches.filter((branch) =>
+        user.branches!.includes(branch.id)
+      );
     } else {
       // Admin o sin autenticación: devolver todas
       const snapshot = await query.get();
       branches = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+        id: doc.id,
+        ...doc.data(),
+      }));
     }
 
     res.status(200).json({ branches });
@@ -129,6 +136,7 @@ export const updateBranchController = async (
       area?: string;
       address?: string;
       phone?: string;
+      gympass_gym_id?: number;
     } = {};
 
     if (req.body.name) updateData.name = String(req.body.name);
@@ -138,6 +146,8 @@ export const updateBranchController = async (
     if (req.body.area) updateData.area = String(req.body.area);
     if (req.body.address) updateData.address = String(req.body.address);
     if (req.body.phone) updateData.phone = String(req.body.phone);
+    if (req.body.gympass_gym_id)
+      updateData.gympass_gym_id = Number(req.body.gympass_gym_id);
 
     await ref.update(updateData);
 
