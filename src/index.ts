@@ -29,6 +29,7 @@ import { validateCouponController } from "./controllers/couponController";
 import staffRouter from "./routes/staffRoutes";
 import attendanceRouter from "./routes/attendances";
 import waitListRouter from "./routes/waitlist";
+import notificationsRouter from "./routes/notifications";
 import { initializePersonalAdmin } from "./utils/devadminit";
 import {
   sendClassReminderEmail,
@@ -192,6 +193,7 @@ app.use("/coupons", verifyToken, adminSessionGuard, couponsRouter);
 app.use("/staff", verifyToken, adminSessionGuard, staffRouter);
 app.use("/attendance", verifyToken, adminSessionGuard, attendanceRouter);
 app.use("/waitlist", verifyToken, waitListRouter); // adminSessionGuard aplicado en router individual
+app.use("/notifications", notificationsRouter);
 
 const PERF_ENABLE =
   String(process.env.PERF_LOG_ENABLED ?? "true").toLowerCase() !== "false";
