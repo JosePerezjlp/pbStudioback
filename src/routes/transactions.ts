@@ -14,6 +14,7 @@ import {
   getTransactionSummaryController,
   getRankingsController,
   getRecentTransactionsController,
+  deleteOldTransactionsController,
 } from "../controllers/transactionController";
 // Resumen de transacciones (solo admins)
 
@@ -85,6 +86,14 @@ router.patch(
   adminSessionGuard,
   checkPermission("transacciones", "editar_fecha_expiracion"),
   updateTransactionExpirationController
+);
+
+router.delete(
+  "/cleanup",
+  verifyToken,
+  adminSessionGuard,
+  checkPermission("transacciones", "eliminar"), // Asumiendo que existe este permiso o similar, sino usar uno general de admin
+  deleteOldTransactionsController
 );
 
 export default router;

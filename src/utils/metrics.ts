@@ -11,18 +11,22 @@ export const incrementMetrics = async (amount: number, createdAtIso?: string): P
   await db.runTransaction(async (t) => {
     t.set(db.doc("metrics/summary"), {
       totalAmountPaid: admin.firestore.FieldValue.increment(amount),
+      totalTransactions: admin.firestore.FieldValue.increment(1),
       updatedAt: nowIso,
     }, { merge: true });
     t.set(db.doc(`metrics_yearly/${y}`), {
       amountPaid: admin.firestore.FieldValue.increment(amount),
+      count: admin.firestore.FieldValue.increment(1),
       updatedAt: nowIso,
     }, { merge: true });
     t.set(db.doc(`metrics_monthly/${ym}`), {
       amountPaid: admin.firestore.FieldValue.increment(amount),
+      count: admin.firestore.FieldValue.increment(1),
       updatedAt: nowIso,
     }, { merge: true });
     t.set(db.doc(`metrics_daily/${ymd}`), {
       amountPaid: admin.firestore.FieldValue.increment(amount),
+      count: admin.firestore.FieldValue.increment(1),
       updatedAt: nowIso,
     }, { merge: true });
   });
