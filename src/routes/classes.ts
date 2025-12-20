@@ -12,6 +12,7 @@ import {
   createClassesBulkController,
   getOpenClassesPublicController,
   getAvailableClassesByBranchController,
+  deleteOldClassesController,
 } from "../controllers/classController";
 import { adminSessionGuard } from "../middleware/adminSessionGuard";
 
@@ -26,7 +27,13 @@ router.get("/available", getAvailableClassesByBranchController);
 router.get("/:classId", verifyToken, getClassByIdController);
 
 // Protegidas con permisos específicos y sesión única (solo para administradores/staff)
-router.post("/", verifyToken, adminSessionGuard, checkPermission("clases", "crear"), createClassController);
+router.post(
+  "/",
+  verifyToken,
+  adminSessionGuard,
+  checkPermission("clases", "crear"),
+  createClassController
+);
 router.post(
   "/bulk",
   verifyToken,
@@ -34,7 +41,27 @@ router.post(
   checkPermission("clases", "crear"),
   createClassesBulkController
 );
-router.put("/:classId", verifyToken, adminSessionGuard, checkPermission("clases", "editar"), updateClassController);
-router.delete("/:classId", verifyToken, adminSessionGuard, checkPermission("clases", "cancelar"), deleteClassController);
+router.put(
+  "/:classId",
+  verifyToken,
+  adminSessionGuard,
+  checkPermission("clases", "editar"),
+  updateClassController
+);
+router.delete(
+  "/:classId",
+  verifyToken,
+  adminSessionGuard,
+  checkPermission("clases", "cancelar"),
+  deleteClassController
+);
+
+router.delete(
+  "/cleanup/old",
+  verifyToken,
+  adminSessionGuard,
+  checkPermission("clases", "cancelar"),
+  deleteOldClassesController
+);
 
 export default router;

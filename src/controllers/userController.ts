@@ -543,6 +543,83 @@ export const updateUserController = async (
   }
 };
 
+export const deleteOldUsersController = async (
+  _req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const db = admin.firestore();
+    const MAX_DELETE = 10000;
+    const BATCH_SIZE = 500;
+
+    // Calcular fecha de corte (hace 1 mes)
+    // Para usuarios usamos "createdAt" (ISO string o Timestamp)
+    const now = new Date();
+    const cutoffDate = new Date(now);
+    cutoffDate.setMonth(now.getMonth() - 1);
+    const cutoffIso = cutoffDate.toISOString();
+
+    console.log(
+      `🗑️ Iniciando borrado de hasta ${MAX_DELETE} usuarios inactivos/antiguos creados antes de ${cutoffIso}`
+    );
+
+    let totalDeleted = 0;
+    let iterations = 0;
+    const MAX_ITERATIONS = Math.ceil(MAX_DELETE / BATCH_SIZE) + 5;
+
+    while (totalDeleted < MAX_DELETE && iterations < MAX_ITERATIONS) {
+      const remaining = MAX_DELETE - totalDeleted;
+      const limit = remaining > BATCH_SIZE ? BATCH_SIZE : remaining;
+
+      // Buscar documentos candidatos
+      // NOTA: Borrar usuarios es delicado. Aquí asumimos que quieres borrar usuarios creados hace >1 mes
+      // que NO tengan actividad reciente o que estén marcados como inactivos.
+      // Si solo quieres borrar por fecha de creación, usa solo createdAt.
+      // Aquí uso createdAt < cutoffIso para seguir tu instrucción de "10000 datos que no sean del ultimo mes".
+      const snapshot = await db
+        .collection("users")
+        .where("createdAt", "<", cutoffIso)
+        // Opcional: filtrar solo inactivos si fuera necesario: .where("enabled", "==", false)
+        .limit(limit)
+        .select()
+        .get();
+
+      if (snapshot.empty) {
+        console.log("✅ No se encontraron más usuarios antiguos para borrar.");
+        break;
+      }
+
+      const batch = db.batch();
+      // También debemos borrar sus datos de Auth para que no queden "huérfanos" en Firebase Auth
+      const deleteAuthPromises: Promise<any>[] = [];
+
+      snapshot.docs.forEach((doc) => {
+        batch.delete(doc.ref);
+        deleteAuthPromises.push(admin.auth().deleteUser(doc.id).catch(() => null)); // Ignorar error si no existe en Auth
+      });
+
+      await Promise.all(deleteAuthPromises);
+      await batch.commit();
+      totalDeleted += snapshot.size;
+      iterations++;
+
+      console.log(`🗑️ Lote ${iterations}: Borrados ${snapshot.size} usuarios. Total: ${totalDeleted}`);
+
+      if (snapshot.size < limit) break;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Se eliminaron ${totalDeleted} usuarios antiguos.`,
+      deletedCount: totalDeleted,
+      cutoffDate: cutoffIso,
+    });
+  } catch (err) {
+    console.error("❌ Error eliminando usuarios antiguos:", err);
+    res.status(500).json({ error: "Error interno al eliminar usuarios" });
+  }
+};
+
 export const updateMyBirthDateController = async (
   req: Request,
   res: Response

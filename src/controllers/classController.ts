@@ -1109,6 +1109,75 @@ export const deleteClassController = async (
   }
 };
 
+export const deleteOldClassesController = async (
+  _req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const db = admin.firestore();
+    const MAX_DELETE = 10000;
+    const BATCH_SIZE = 500;
+
+    // Calcular fecha de corte (hace 1 mes)
+    // Para clases usamos "day" que es YYYY-MM-DD
+    const now = new Date();
+    const cutoffDate = new Date(now);
+    cutoffDate.setMonth(now.getMonth() - 1);
+    
+    // Formato YYYY-MM-DD
+    const cutoffStr = cutoffDate.toISOString().split("T")[0];
+
+    console.log(
+      `🗑️ Iniciando borrado de hasta ${MAX_DELETE} clases anteriores al día ${cutoffStr}`
+    );
+
+    let totalDeleted = 0;
+    let iterations = 0;
+    const MAX_ITERATIONS = Math.ceil(MAX_DELETE / BATCH_SIZE) + 5;
+
+    while (totalDeleted < MAX_DELETE && iterations < MAX_ITERATIONS) {
+      const remaining = MAX_DELETE - totalDeleted;
+      const limit = remaining > BATCH_SIZE ? BATCH_SIZE : remaining;
+
+      // Buscar documentos candidatos
+      const snapshot = await db
+        .collection("classes")
+        .where("day", "<", cutoffStr)
+        .limit(limit)
+        .select()
+        .get();
+
+      if (snapshot.empty) {
+        console.log("✅ No se encontraron más clases antiguas para borrar.");
+        break;
+      }
+
+      const batch = db.batch();
+      snapshot.docs.forEach((doc) => {
+        batch.delete(doc.ref);
+      });
+
+      await batch.commit();
+      totalDeleted += snapshot.size;
+      iterations++;
+
+      console.log(`🗑️ Lote ${iterations}: Borrados ${snapshot.size} clases. Total: ${totalDeleted}`);
+
+      if (snapshot.size < limit) break;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Se eliminaron ${totalDeleted} clases antiguas.`,
+      deletedCount: totalDeleted,
+      cutoffDate: cutoffStr,
+    });
+  } catch (err) {
+    console.error("❌ Error eliminando clases antiguas:", err);
+    res.status(500).json({ error: "Error interno al eliminar clases" });
+  }
+};
+
 export const createClassesBulkController = async (
   req: Request,
   res: Response

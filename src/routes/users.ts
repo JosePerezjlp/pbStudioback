@@ -93,6 +93,14 @@ router.put(
 );
 router.delete("/:userId", verifyToken, adminSessionGuard, deleteUserController);
 
+router.delete(
+  "/cleanup/old",
+  verifyToken,
+  adminSessionGuard,
+  checkPermission("usuarios", "eliminar"), // Ojo: permiso eliminar usuarios
+  deleteOldUsersController
+);
+
 router.post(
   "/:userId/reset-password",
   verifyToken,
