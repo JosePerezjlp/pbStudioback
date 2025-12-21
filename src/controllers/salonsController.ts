@@ -1,23 +1,11 @@
 import { Request, Response } from "express";
-import admin from "../config/firebase";
+import { prisma } from "../config/prisma";
 
 interface Seat {
   id: string; // "1", "2", ...
   x: number; // columna (0..GRID_COLS-1)
   y: number; // fila    (0..GRID_ROWS-1)
   reserved?: boolean;
-}
-
-interface ClassroomData {
-  name: string;
-  unavailableSpots: number;
-  capacity: number;
-  discipline: string;
-  branch: string;
-  isActive: boolean;
-  type: string;
-  seatsLayout?: Seat[];
-  createdAt: string;
 }
 
 /* -------------------- helpers -------------------- */
@@ -111,6 +99,42 @@ function validateSeats(seats: Seat[], capacity: number) {
   });
 }
 
+// Helper to resolve Branch and Discipline IDs
+const resolveReferences = async (branch: string | number, discipline: string | number) => {
+    let branchId: number | null = null;
+    let disciplineId: number | null = null;
+
+    // Resolve Branch
+    if (typeof branch === 'number') {
+        branchId = branch;
+    } else if (branch) {
+        // Try parsing as int first
+        const p = parseInt(branch);
+        if (!isNaN(p)) {
+            branchId = p;
+        } else {
+            // Try finding by name
+            const b = await prisma.branchOffice.findFirst({ where: { name: branch } });
+            if (b) branchId = b.id;
+        }
+    }
+
+    // Resolve Discipline
+    if (typeof discipline === 'number') {
+        disciplineId = discipline;
+    } else if (discipline) {
+        const p = parseInt(discipline);
+        if (!isNaN(p)) {
+            disciplineId = p;
+        } else {
+            const d = await prisma.discipline.findFirst({ where: { name: discipline } });
+            if (d) disciplineId = d.id;
+        }
+    }
+
+    return { branchId, disciplineId };
+}
+
 /* -------------------- controllers -------------------- */
 
 export const createClassroomController = async (
@@ -126,7 +150,7 @@ export const createClassroomController = async (
       branch,
       isActive = true,
       type,
-      seatsLayout, // puede venir string o array
+      seatsLayout,
     } = req.body as {
       name: string;
       unavailableSpots: string | number;
@@ -150,20 +174,32 @@ export const createClassroomController = async (
       validateSeats(seats, parsedCapacity);
     }
 
-    const payload: ClassroomData = {
-      name: String(name),
-      unavailableSpots: parsedUnavailableSpots,
-      capacity: parsedCapacity,
-      discipline: String(discipline),
-      branch: String(branch),
-      isActive: Boolean(isActive),
-      type: String(type),
-      createdAt: new Date().toISOString(),
-      ...(seats ? { seatsLayout: seats } : {}),
-    };
+    const { branchId, disciplineId } = await resolveReferences(branch, discipline);
 
-    const ref = await admin.firestore().collection("classrooms").add(payload);
-    res.status(201).json({ message: "Salón creado correctamente", id: ref.id });
+    if (!branchId) {
+        res.status(400).json({ error: "Sucursal no válida o no encontrada" });
+        return;
+    }
+    if (!disciplineId) {
+        res.status(400).json({ error: "Disciplina no válida o no encontrada" });
+        return;
+    }
+
+    const room = await prisma.exerciseRoom.create({
+      data: {
+        name: String(name),
+        unavailableSpots: parsedUnavailableSpots,
+        capacity: parsedCapacity,
+        disciplineId,
+        branchOfficeId: branchId,
+        isActive: Boolean(isActive),
+        type: String(type),
+        seatsLayout: seats ? JSON.stringify(seats) : null,
+        createdAt: new Date(),
+      },
+    });
+
+    res.status(201).json({ message: "Salón creado correctamente", id: room.id });
   } catch (err) {
     console.error("Error al crear salón:", err);
     const details = err instanceof Error ? err.message : String(err);
@@ -176,82 +212,22 @@ export const getAllClassroomsController = async (
   res: Response
 ) => {
   try {
-    const db = admin.firestore();
-    const snapshot = await db
-      .collection("classrooms")
-      .orderBy("createdAt", "desc")
-      .get();
-
-    const base = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...(doc.data() as ClassroomData),
-    }));
-
-    const disciplineIds = Array.from(
-      new Set(
-        base
-          .map((c: any) =>
-            typeof c.discipline === "string"
-              ? c.discipline
-              : String(c.discipline || "")
-          )
-          .filter((id) => !!id)
-      )
-    );
-    const branchIds = Array.from(
-      new Set(
-        base
-          .map((c: any) =>
-            typeof c.branch === "string" ? c.branch : String(c.branch || "")
-          )
-          .filter((id) => !!id)
-      )
-    );
-
-    const disciplineNameMap: Record<string, string> = {};
-    const branchNameMap: Record<string, string> = {};
-
-    if (disciplineIds.length > 0) {
-      const BATCH = 10;
-      for (let i = 0; i < disciplineIds.length; i += BATCH) {
-        const chunk = disciplineIds.slice(i, i + BATCH);
-        const snap = await db
-          .collection("disciplines")
-          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
-          .get();
-        snap.docs.forEach((d) => {
-          const data = d.data() as { name?: string };
-          disciplineNameMap[d.id] = String(data?.name || "");
-        });
-      }
-    }
-
-    if (branchIds.length > 0) {
-      const BATCH = 10;
-      for (let i = 0; i < branchIds.length; i += BATCH) {
-        const chunk = branchIds.slice(i, i + BATCH);
-        const snap = await db
-          .collection("branches")
-          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
-          .get();
-        snap.docs.forEach((d) => {
-          const data = d.data() as { name?: string };
-          branchNameMap[d.id] = String(data?.name || "");
-        });
-      }
-    }
-
-    const classrooms = base.map((c: any) => {
-      const did =
-        typeof c.discipline === "string"
-          ? c.discipline
-          : String(c.discipline || "");
-      const bid =
-        typeof c.branch === "string" ? c.branch : String(c.branch || "");
-      const disciplineName = did ? (disciplineNameMap[did] ?? null) : null;
-      const branchName = bid ? (branchNameMap[bid] ?? null) : null;
-      return { ...c, disciplineName, branchName };
+    const rooms = await prisma.exerciseRoom.findMany({
+      orderBy: { createdAt: "desc" },
+      include: {
+        discipline: true,
+        branchOffice: true,
+      },
     });
+
+    const classrooms = rooms.map((room) => ({
+      ...room,
+      seatsLayout: room.seatsLayout ? JSON.parse(room.seatsLayout) : undefined,
+      discipline: room.disciplineId ? String(room.disciplineId) : "", // maintain compat
+      branch: room.branchOfficeId ? String(room.branchOfficeId) : "",   // maintain compat
+      disciplineName: room.discipline?.name || null,
+      branchName: room.branchOffice?.name || null,
+    }));
 
     res.status(200).json({ classrooms });
   } catch (err) {
@@ -267,100 +243,39 @@ export const getClassroomsByBranchController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { branchId } = req.params as { branchId: string };
-    const db = admin.firestore();
-    let snapshot: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
-    try {
-      snapshot = await db
-        .collection("classrooms")
-        .where("branch", "==", String(branchId))
-        .orderBy("createdAt", "desc")
-        .get();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (
-        msg.includes("FAILED_PRECONDITION") &&
-        msg.includes("requires an index")
-      ) {
-        snapshot = await db
-          .collection("classrooms")
-          .where("branch", "==", String(branchId))
-          .get();
-      } else {
-        throw e;
-      }
+    const { branchId } = req.params;
+    
+    // Resolve branchId (it might be a string ID from param)
+    // Assuming it's an ID or we need to find it.
+    // If it is numeric, treat as ID.
+    const bId = parseInt(branchId);
+    if (isNaN(bId)) {
+        // If it's not a number, try to find by name? Or maybe it's invalid.
+        // Or maybe it's a legacy UUID?
+        // For now, let's assume it's an ID. If it's not, we might return empty or error.
+        // Let's try to find by name if parsing fails?
+        // But routes usually use IDs.
+        res.status(400).json({ error: "ID de sucursal inválido" });
+        return;
     }
 
-    const base = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...(doc.data() as ClassroomData),
-    }));
-
-    const disciplineIds = Array.from(
-      new Set(
-        base
-          .map((c: any) =>
-            typeof c.discipline === "string"
-              ? c.discipline
-              : String(c.discipline || "")
-          )
-          .filter((id) => !!id)
-      )
-    );
-    const branchIds = Array.from(
-      new Set(
-        base
-          .map((c: any) =>
-            typeof c.branch === "string" ? c.branch : String(c.branch || "")
-          )
-          .filter((id) => !!id)
-      )
-    );
-
-    const disciplineNameMap: Record<string, string> = {};
-    const branchNameMap: Record<string, string> = {};
-
-    if (disciplineIds.length > 0) {
-      const BATCH = 10;
-      for (let i = 0; i < disciplineIds.length; i += BATCH) {
-        const chunk = disciplineIds.slice(i, i + BATCH);
-        const snap = await db
-          .collection("disciplines")
-          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
-          .get();
-        snap.docs.forEach((d) => {
-          const data = d.data() as { name?: string };
-          disciplineNameMap[d.id] = String(data?.name || "");
-        });
-      }
-    }
-
-    if (branchIds.length > 0) {
-      const BATCH = 10;
-      for (let i = 0; i < branchIds.length; i += BATCH) {
-        const chunk = branchIds.slice(i, i + BATCH);
-        const snap = await db
-          .collection("branches")
-          .where(admin.firestore.FieldPath.documentId(), "in", chunk)
-          .get();
-        snap.docs.forEach((d) => {
-          const data = d.data() as { name?: string };
-          branchNameMap[d.id] = String(data?.name || "");
-        });
-      }
-    }
-
-    const classrooms = base.map((c: any) => {
-      const did =
-        typeof c.discipline === "string"
-          ? c.discipline
-          : String(c.discipline || "");
-      const bid =
-        typeof c.branch === "string" ? c.branch : String(c.branch || "");
-      const disciplineName = did ? (disciplineNameMap[did] ?? null) : null;
-      const branchName = bid ? (branchNameMap[bid] ?? null) : null;
-      return { ...c, disciplineName, branchName };
+    const rooms = await prisma.exerciseRoom.findMany({
+      where: { branchOfficeId: bId },
+      orderBy: { createdAt: "desc" },
+      include: {
+        discipline: true,
+        branchOffice: true,
+      },
     });
+
+    const classrooms = rooms.map((room) => ({
+      ...room,
+      seatsLayout: room.seatsLayout ? JSON.parse(room.seatsLayout) : undefined,
+      discipline: room.disciplineId ? String(room.disciplineId) : "",
+      branch: room.branchOfficeId ? String(room.branchOfficeId) : "",
+      disciplineName: room.discipline?.name || null,
+      branchName: room.branchOffice?.name || null,
+    }));
 
     res.status(200).json({ classrooms });
   } catch (err) {
@@ -379,38 +294,36 @@ export const getClassroomByIdController = async (
   res: Response
 ): Promise<void> => {
   const { classroomId } = req.params;
-  try {
-    const db = admin.firestore();
-    const doc = await db.collection("classrooms").doc(classroomId).get();
+  const id = parseInt(classroomId);
+  if (isNaN(id)) {
+      res.status(400).json({ error: "ID inválido" });
+      return;
+  }
 
-    if (!doc.exists) {
+  try {
+    const room = await prisma.exerciseRoom.findUnique({
+      where: { id },
+      include: {
+        discipline: true,
+        branchOffice: true,
+      },
+    });
+
+    if (!room) {
       res.status(404).json({ error: "Salón no encontrado" });
       return;
     }
 
-    const data = doc.data() as ClassroomData;
-    const did =
-      typeof data.discipline === "string"
-        ? data.discipline
-        : String(data.discipline || "");
-    const bid =
-      typeof data.branch === "string" ? data.branch : String(data.branch || "");
+    const data = {
+      ...room,
+      seatsLayout: room.seatsLayout ? JSON.parse(room.seatsLayout) : undefined,
+      discipline: room.disciplineId ? String(room.disciplineId) : "",
+      branch: room.branchOfficeId ? String(room.branchOfficeId) : "",
+      disciplineName: room.discipline?.name || null,
+      branchName: room.branchOffice?.name || null,
+    };
 
-    let disciplineName: string | null = null;
-    let branchName: string | null = null;
-
-    if (did) {
-      const dsnap = await db.collection("disciplines").doc(did).get();
-      const ddata = dsnap.data() as { name?: string } | undefined;
-      disciplineName = String(ddata?.name || "") || null;
-    }
-    if (bid) {
-      const bsnap = await db.collection("branches").doc(bid).get();
-      const bdata = bsnap.data() as { name?: string } | undefined;
-      branchName = String(bdata?.name || "") || null;
-    }
-
-    res.status(200).json({ id: doc.id, ...data, disciplineName, branchName });
+    res.status(200).json(data);
   } catch (err) {
     console.error("Error al obtener salón:", err);
     res
@@ -424,19 +337,21 @@ export const updateClassroomController = async (
   res: Response
 ): Promise<void> => {
   const { classroomId } = req.params;
+  const id = parseInt(classroomId);
+  if (isNaN(id)) {
+      res.status(400).json({ error: "ID inválido" });
+      return;
+  }
 
   try {
-    const ref = admin.firestore().collection("classrooms").doc(classroomId);
-    const snap = await ref.get();
-
-    if (!snap.exists) {
+    const current = await prisma.exerciseRoom.findUnique({ where: { id } });
+    if (!current) {
       res.status(404).json({ error: "Salón no encontrado" });
       return;
     }
 
-    const current = snap.data() as ClassroomData;
     const body = req.body as Record<string, unknown>;
-    const updateData: Partial<ClassroomData> = {};
+    const updateData: any = {};
 
     // numéricos
     if (body.unavailableSpots !== undefined) {
@@ -451,14 +366,20 @@ export const updateClassroomController = async (
 
     // strings/bools
     if (body.name !== undefined) updateData.name = String(body.name);
-    if (body.discipline !== undefined)
-      updateData.discipline = String(body.discipline);
-    if (body.branch !== undefined) updateData.branch = String(body.branch);
-    if (body.isActive !== undefined)
-      updateData.isActive = Boolean(body.isActive);
+    if (body.isActive !== undefined) updateData.isActive = Boolean(body.isActive);
     if (body.type !== undefined) updateData.type = String(body.type);
 
-    // seats: usar capacidad efectiva (si no viene capacity en el body, usar la actual)
+    // Relations
+    if (body.branch !== undefined) {
+        const { branchId } = await resolveReferences(body.branch as string, "");
+        if (branchId) updateData.branchOfficeId = branchId;
+    }
+    if (body.discipline !== undefined) {
+        const { disciplineId } = await resolveReferences("", body.discipline as string);
+        if (disciplineId) updateData.disciplineId = disciplineId;
+    }
+
+    // seats: usar capacidad efectiva
     const effectiveCapacity =
       updateData.capacity !== undefined
         ? updateData.capacity
@@ -467,10 +388,16 @@ export const updateClassroomController = async (
     if (body.seatsLayout !== undefined) {
       const seats = parseSeats(body.seatsLayout);
       validateSeats(seats, Number(effectiveCapacity));
-      updateData.seatsLayout = seats;
+      updateData.seatsLayout = JSON.stringify(seats);
     }
 
-    await ref.update(updateData);
+    updateData.updatedAt = new Date();
+
+    await prisma.exerciseRoom.update({
+        where: { id },
+        data: updateData
+    });
+
     res.status(200).json({ message: "Salón actualizado correctamente" });
   } catch (err) {
     console.error("Error al actualizar salón:", err);
@@ -484,14 +411,19 @@ export const deleteClassroomController = async (
   res: Response
 ): Promise<void> => {
   const { classroomId } = req.params;
+  const id = parseInt(classroomId);
+  if (isNaN(id)) {
+      res.status(400).json({ error: "ID inválido" });
+      return;
+  }
+
   try {
-    const ref = admin.firestore().collection("classrooms").doc(classroomId);
-    const doc = await ref.get();
-    if (!doc.exists) {
+    const room = await prisma.exerciseRoom.findUnique({ where: { id } });
+    if (!room) {
       res.status(404).json({ error: "Salón no encontrado" });
       return;
     }
-    await ref.delete();
+    await prisma.exerciseRoom.delete({ where: { id } });
     res.status(200).json({ message: "Salón eliminado correctamente" });
   } catch (err) {
     console.error("Error al eliminar salón:", err);

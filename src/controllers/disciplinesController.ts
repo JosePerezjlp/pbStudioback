@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import admin from "../config/firebase";
+import prisma from "../config/prisma";
 
 export const createDisciplineController = async (
   req: Request,
@@ -13,21 +13,18 @@ export const createDisciplineController = async (
       return;
     }
 
-    const newDiscipline = {
-      name,
-      description: description || "",
-      enabled: Boolean(enabled),
-      createdAt: new Date().toISOString(),
-    };
+    const newDiscipline = await prisma.discipline.create({
+      data: {
+        name,
+        description: description || "",
+        isActive: Boolean(enabled),
+      },
+    });
 
-    const ref = await admin
-      .firestore()
-      .collection("disciplines")
-      .add(newDiscipline);
-
-    res
-      .status(201)
-      .json({ message: "Disciplina creada correctamente", id: ref.id });
+    res.status(201).json({
+      message: "Disciplina creada correctamente",
+      id: newDiscipline.id,
+    });
   } catch (error) {
     console.error("Error al crear disciplina:", error);
     res.status(500).json({ error: "Error al crear disciplina" });
@@ -39,16 +36,21 @@ export const getAllDisciplinesController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const snapshot = await admin
-      .firestore()
-      .collection("disciplines")
-      .orderBy("createdAt", "desc")
-      .get();
-    const disciplines = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
+    const disciplines = await prisma.discipline.findMany({
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    // Map to match previous response structure if needed,
+    // but Prisma objects are already JSON compatible.
+    // We might want to map 'isActive' back to 'enabled' if the frontend expects it.
+    const mappedDisciplines = disciplines.map((d) => ({
+      ...d,
+      enabled: d.isActive, // Backward compatibility
     }));
-    res.status(200).json({ disciplines });
+
+    res.status(200).json({ disciplines: mappedDisciplines });
   } catch (error) {
     res.status(500).json({
       error: "Error al obtener disciplinas",
@@ -62,19 +64,27 @@ export const getDisciplineByIdController = async (
   res: Response
 ): Promise<void> => {
   const { disciplineId } = req.params;
-  try {
-    const doc = await admin
-      .firestore()
-      .collection("disciplines")
-      .doc(disciplineId)
-      .get();
+  const id = Number(disciplineId);
 
-    if (!doc.exists) {
+  if (isNaN(id)) {
+    res.status(400).json({ error: "ID inválido" });
+    return;
+  }
+
+  try {
+    const discipline = await prisma.discipline.findUnique({
+      where: { id },
+    });
+
+    if (!discipline) {
       res.status(404).json({ error: "Disciplina no encontrada" });
       return;
     }
 
-    res.status(200).json({ id: doc.id, ...doc.data() });
+    res.status(200).json({
+      ...discipline,
+      enabled: discipline.isActive,
+    });
   } catch (error) {
     res
       .status(500)
@@ -87,11 +97,19 @@ export const updateDisciplineController = async (
   res: Response
 ): Promise<void> => {
   const { disciplineId } = req.params;
-  try {
-    const ref = admin.firestore().collection("disciplines").doc(disciplineId);
-    const doc = await ref.get();
+  const id = Number(disciplineId);
 
-    if (!doc.exists) {
+  if (isNaN(id)) {
+    res.status(400).json({ error: "ID inválido" });
+    return;
+  }
+
+  try {
+    const existingDiscipline = await prisma.discipline.findUnique({
+      where: { id },
+    });
+
+    if (!existingDiscipline) {
       res.status(404).json({ error: "Disciplina no encontrada" });
       return;
     }
@@ -99,15 +117,21 @@ export const updateDisciplineController = async (
     const updateData: {
       name?: string;
       description?: string;
-      enabled?: boolean;
-    } = {};
+      is_active?: boolean;
+      updated_at?: Date;
+    } = {
+      updated_at: new Date(),
+    };
 
     if (req.body.name) updateData.name = String(req.body.name);
     if (req.body.description)
       updateData.description = String(req.body.description);
-    if ("enabled" in req.body) updateData.enabled = Boolean(req.body.enabled);
+    if ("enabled" in req.body) updateData.is_active = Boolean(req.body.enabled);
 
-    await ref.update(updateData);
+    await prisma.discipline.update({
+      where: { id },
+      data: updateData,
+    });
 
     res.status(200).json({ message: "Disciplina actualizada correctamente" });
   } catch (error) {
@@ -122,16 +146,26 @@ export const deleteDisciplineController = async (
   res: Response
 ): Promise<void> => {
   const { disciplineId } = req.params;
-  try {
-    const ref = admin.firestore().collection("disciplines").doc(disciplineId);
-    const doc = await ref.get();
+  const id = Number(disciplineId);
 
-    if (!doc.exists) {
+  if (isNaN(id)) {
+    res.status(400).json({ error: "ID inválido" });
+    return;
+  }
+
+  try {
+    const existingDiscipline = await prisma.discipline.findUnique({
+      where: { id },
+    });
+
+    if (!existingDiscipline) {
       res.status(404).json({ error: "Disciplina no encontrada" });
       return;
     }
 
-    await ref.delete();
+    await prisma.discipline.delete({
+      where: { id },
+    });
     res.status(200).json({ message: "Disciplina eliminada correctamente" });
   } catch (error) {
     res

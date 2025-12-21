@@ -7,7 +7,7 @@ import {
   getAllTransactionsController,
   exportTransactionsController,
   getUserTransactionsController,
-  updateTransactionStatusController,
+  // updateTransactionStatusController, // Removed unused import
   cancelTransactionController,
   updateTransactionExpirationController,
   getCajaTransactionsController,

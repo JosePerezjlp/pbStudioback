@@ -1,0 +1,454 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model BranchOffice {
+  id        Int       @id @default(autoincrement())
+  name      String    @db.VarChar(255)
+  address   String?   @db.VarChar(255)
+  lat       String?   @db.VarChar(45)
+  lng       String?   @db.VarChar(45)
+  phone     String?   @db.VarChar(15)
+  status    Int       @default(1)
+  
+  isActive  Boolean   @default(true) @map("is_active")
+  isPublic  Boolean   @default(true) @map("public")
+  location  String?   @map("place") @db.VarChar(255)
+  slug      String?   @db.VarChar(255)
+  area      String?   @db.VarChar(100)
+
+  createdAt DateTime? @map("created_at")
+  updatedAt DateTime? @map("updated_at")
+
+  exerciseRooms      ExerciseRoom[]
+  sessions           Session[]
+  staffBranchOffices StaffBranchOffice[]
+  transactions       Transaction[]
+  users              User[]
+
+  @@map("branch_office")
+}
+
+model Configuration {
+  id     Int    @id @default(autoincrement())
+  module String @db.VarChar(100)
+  data   String @db.LongText
+
+  @@map("configuration")
+}
+
+model Instructor {
+  id          Int      @id @default(autoincrement())
+  email       String?  @db.VarChar(100)
+  firstName   String   @map("first_name") @db.VarChar(100)
+  lastName    String?  @map("last_name") @db.VarChar(100)
+  phone       String?  @db.VarChar(20)
+  address     String?  @db.Text
+  description String?  @db.Text
+  joinDate    DateTime? @map("join_date")
+  disciplines String?  @db.Text // JSON string
+  enabled     Boolean  @default(true)
+  branch      String?  @db.VarChar(100)
+  image       String?  @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("instructor")
+}
+
+model Coupon {
+  id                Int       @id @default(autoincrement())
+  name              String    @db.VarChar(100)
+  code              String    @unique @db.VarChar(20)
+  dateStart         DateTime? @map("date_start") @db.Date
+  dateEnd           DateTime? @map("date_end") @db.Date
+  discount          Decimal   @db.Decimal(4, 2)
+  usesTotal         Int       @map("uses_total")
+  applySpecialPrice Boolean   @default(false) @map("apply_special_price")
+  used              Int       @default(0)
+  createdAt         DateTime? @map("created_at")
+  updatedAt         DateTime? @map("updated_at")
+
+  couponHistories CouponHistory[]
+  couponPackages  CouponPackage[]
+  transactions    Transaction[]
+
+  @@map("coupon")
+}
+
+model CouponHistory {
+  id            Int       @id @default(autoincrement())
+  couponId      Int       @map("coupon_id")
+  transactionId Int       @map("transaction_id")
+  userId        Int       @map("user_id")
+  discount      Decimal   @db.Decimal(4, 2)
+  createdAt     DateTime? @map("created_at")
+  updatedAt     DateTime? @map("updated_at")
+
+  coupon      Coupon      @relation(fields: [couponId], references: [id])
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+  user        User        @relation(fields: [userId], references: [id])
+
+  @@map("coupon_history")
+  @@index([couponId])
+  @@index([transactionId])
+  @@index([userId])
+}
+
+model CouponPackage {
+  couponId  Int @map("coupon_id")
+  packageId Int @map("package_id")
+
+  coupon  Coupon  @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, packageId])
+  @@map("coupon_package")
+  @@index([couponId])
+  @@index([packageId])
+}
+
+model Discipline {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique @db.VarChar(100)
+  description String?   @db.LongText
+  isActive    Boolean   @map("is_active")
+  createdAt   DateTime? @map("created_at")
+  updatedAt   DateTime? @map("updated_at")
+
+  exerciseRooms          ExerciseRoom[]
+  instructorsDisciplines InstructorsDisciplines[]
+  sessions               Session[]
+
+  @@map("discipline")
+}
+
+model ExerciseRoom {
+  id                 Int       @id @default(autoincrement())
+  name               String    @db.VarChar(100)
+  type               String    @db.VarChar(25)
+  capacity           Int
+  isActive           Boolean   @map("is_active")
+  createdAt          DateTime? @map("created_at")
+  disciplineId       Int?      @map("discipline_id")
+  branchOfficeId     Int?      @map("branch_office_id")
+  updatedAt          DateTime? @map("updated_at")
+  placesNotAvailable String?   @map("places_not_available") @db.LongText
+  seatsLayout        String?   @map("seats_layout") @db.LongText
+  unavailableSpots   Int       @default(0) @map("unavailable_spots")
+
+  discipline   Discipline?   @relation(fields: [disciplineId], references: [id])
+  branchOffice BranchOffice? @relation(fields: [branchOfficeId], references: [id])
+  sessions     Session[]
+
+  @@map("exercise_room")
+  @@index([disciplineId])
+  @@index([branchOfficeId])
+}
+
+model InstructorsDisciplines {
+  staffId      Int @map("staff_id")
+  disciplineId Int @map("discipline_id")
+
+  staff      Staff      @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  discipline Discipline @relation(fields: [disciplineId], references: [id], onDelete: Cascade)
+
+  @@id([staffId, disciplineId])
+  @@map("instructors_disciplines")
+  @@index([staffId])
+  @@index([disciplineId])
+}
+
+model Package {
+  id             Int       @id @default(autoincrement())
+  totalClasses   Int       @map("total_classes")
+  amount         Decimal   @db.Decimal(10, 2)
+  type           String    @db.VarChar(25)
+  daysExpiry     Int       @map("days_expiry") @db.SmallInt
+  isActive       Boolean   @map("is_active")
+  createdAt      DateTime? @map("created_at")
+  updatedAt      DateTime? @map("updated_at")
+  isUnlimited    Boolean   @map("is_unlimited")
+  altText        String?   @map("alt_text") @db.VarChar(150)
+  newUser        Int       @default(0) @map("new_user") @db.TinyInt
+  public         Boolean   @default(false)
+  specialPrice   Decimal?  @map("special_price") @db.Decimal(10, 2)
+  discountInfo   String?   @map("discount_info") @db.VarChar(50)
+
+  couponPackages CouponPackage[]
+  transactions   Transaction[]
+
+  @@map("package")
+}
+
+model Post {
+  id        Int       @id @default(autoincrement())
+  type      String    @db.VarChar(50)
+  title     String    @db.VarChar(255)
+  slug      String    @unique @db.VarChar(255)
+  content   String    @db.LongText
+  isActive  Boolean   @map("is_active")
+  createdAt DateTime? @map("created_at")
+  updatedAt DateTime? @map("updated_at")
+
+  @@map("post")
+}
+
+model Reservation {
+  id             Int       @id @default(autoincrement())
+  userId         Int?      @map("user_id")
+  transactionId  Int?      @map("transaction_id")
+  sessionId      Int?      @map("session_id")
+  isAvailable    Boolean   @map("is_available")
+  placeNumber    Int       @map("place_number") @db.SmallInt
+  cancellationAt DateTime? @map("cancellation_at")
+  createdAt      DateTime? @map("created_at")
+  updatedAt      DateTime? @map("updated_at")
+  attended       Boolean   @default(false)
+  emailReminderSent Boolean @default(false) @map("email_reminder_sent")
+  changedAt      DateTime? @map("changed_at")
+
+  user        User?        @relation(fields: [userId], references: [id])
+  transaction Transaction? @relation(fields: [transactionId], references: [id])
+  session     Session?     @relation(fields: [sessionId], references: [id])
+
+  @@map("reservation")
+  @@index([userId])
+  @@index([transactionId])
+  @@index([sessionId])
+  @@index([placeNumber], name: "place_number_idx")
+}
+
+model Session {
+  id                   Int       @id @default(autoincrement())
+  exerciseRoomId       Int?      @map("exercise_room_id")
+  disciplineId         Int?      @map("discipline_id")
+  instructorId         Int?      @map("instructor_id")
+  dateStart            DateTime  @map("date_start") @db.Date
+  timeStart            DateTime  @map("time_start") @db.Time
+  type                 String    @db.VarChar(25)
+  status               Int       @db.SmallInt
+  createdAt            DateTime? @map("created_at")
+  updatedAt            DateTime? @map("updated_at")
+  exerciseRoomCapacity Int       @map("exercise_room_capacity")
+  information          String?   @db.VarChar(150)
+  branchOfficeId       Int?      @map("branch_office_id")
+  placesNotAvailable   String?   @map("places_not_available") @db.LongText
+  availableCapacity    Int       @map("available_capacity")
+  gympassClassId       String?   @map("gympass_class_id") @db.VarChar(100)
+  gympassSlotId        String?   @map("gympass_slot_id") @db.VarChar(100)
+
+  exerciseRoom ExerciseRoom? @relation(fields: [exerciseRoomId], references: [id])
+  discipline   Discipline?   @relation(fields: [disciplineId], references: [id])
+  instructor   Staff?        @relation(fields: [instructorId], references: [id])
+  branchOffice BranchOffice? @relation(fields: [branchOfficeId], references: [id])
+  reservations Reservation[]
+  waitingList  WaitingList[]
+
+  @@map("session")
+  @@index([exerciseRoomId])
+  @@index([disciplineId])
+  @@index([instructorId])
+  @@index([branchOfficeId])
+}
+
+model Staff {
+  id          Int       @id @default(autoincrement())
+  firebaseUid String?   @unique @map("firebase_uid") @db.VarChar(128)
+  username    String    @unique @db.VarChar(25)
+  password    String    @db.VarChar(64)
+  email       String?   @unique @db.VarChar(60)
+  lastLogin   DateTime? @map("last_login")
+  roles       String    @db.LongText
+  isActive    Boolean?  @map("is_active")
+  permissions String    @db.LongText
+  deleted     Boolean   @default(false)
+  sessionId   String?   @map("session_id") @db.VarChar(128)
+
+  staffBranchOffices     StaffBranchOffice[]
+  instructorsDisciplines InstructorsDisciplines[]
+  sessions               Session[]
+  profile                StaffProfile?
+
+  @@map("staff")
+}
+
+model StaffBranchOffice {
+  staffId        Int @map("staff_id")
+  branchOfficeId Int @map("branch_office_id")
+
+  staff        Staff        @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  branchOffice BranchOffice @relation(fields: [branchOfficeId], references: [id], onDelete: Cascade)
+
+  @@id([staffId, branchOfficeId])
+  @@map("staff_branch_office")
+  @@index([staffId])
+  @@index([branchOfficeId])
+}
+
+model StaffProfile {
+  id              Int       @id @default(autoincrement())
+  staffId         Int?      @unique @map("staff_id")
+  firstname       String?   @db.VarChar(100)
+  paternalSurname String?   @map("paternal_surname") @db.VarChar(100)
+  maternalSurname String?   @map("maternal_surname") @db.VarChar(100)
+  photo           String?   @db.VarChar(100)
+  telephone       String?   @db.VarChar(50)
+  address         String?   @db.LongText
+  description     String?   @db.LongText
+  admissionAt     DateTime? @map("admission_at") @db.Date
+  createdAt       DateTime? @map("created_at")
+  updatedAt       DateTime? @map("updated_at")
+
+  staff Staff? @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@map("staff_profile")
+}
+
+model Transaction {
+  id                    Int       @id @default(autoincrement())
+  userId                Int?      @map("user_id")
+  packageId             Int?      @map("package_id")
+  packageTotalClasses   Int       @map("package_total_classes")
+  packageAmount         Decimal   @map("package_amount") @db.Decimal(10, 2)
+  packageType           String    @map("package_type") @db.VarChar(25)
+  packageDaysExpiry     Int       @map("package_days_expiry") @db.SmallInt
+  chargeId              String?   @map("charge_id") @db.VarChar(25)
+  chargeAuthCode        String?   @map("charge_auth_code") @db.VarChar(10)
+  cardName              String?   @map("card_name") @db.VarChar(255)
+  cardType              String?   @map("card_type") @db.VarChar(25)
+  cardBrand             String?   @map("card_brand") @db.VarChar(25)
+  cardIssuer            String?   @map("card_issuer") @db.VarChar(25)
+  cardLast4             String?   @map("card_last4") @db.VarChar(5)
+  isCompleted           Boolean   @map("is_completed")
+  errorCode             String?   @map("error_code") @db.VarChar(255)
+  errorMessage          String?   @map("error_message") @db.VarChar(255)
+  haveSessionsAvailable Boolean   @map("have_sessions_available")
+  createdAt             DateTime? @map("created_at")
+  chargeMethod          String    @map("charge_method") @db.VarChar(25)
+  isExpired             Boolean   @map("is_expired")
+  expirationAt          DateTime? @map("expiration_at")
+  status                Int
+  refundedAt            DateTime? @map("refunded_at")
+  packageIsUnlimited    Boolean   @map("package_is_unlimited")
+  branchOfficeId        Int?      @map("branch_office_id")
+  discount              Int       @default(0) @db.SmallInt
+  updatedAt             DateTime? @map("updated_at")
+  packageSpecialPrice   Decimal?  @map("package_special_price") @db.Decimal(10, 2)
+  total                 Decimal   @default(0.00) @db.Decimal(10, 2)
+  couponId              Int?      @map("coupon_id")
+  couponDiscount        Decimal?  @map("coupon_discount") @db.Decimal(4, 2)
+  expiredAt             DateTime? @map("expired_at")
+  notifiedLowClasses    Boolean   @default(false) @map("notified_low_classes")
+  notifiedExpiry        Boolean   @default(false) @map("notified_expiry")
+
+  user            User?           @relation(fields: [userId], references: [id])
+  package         Package?        @relation(fields: [packageId], references: [id])
+  branchOffice    BranchOffice?   @relation(fields: [branchOfficeId], references: [id])
+  coupon          Coupon?         @relation(fields: [couponId], references: [id])
+  reservations    Reservation[]
+  couponHistories CouponHistory[]
+  waitingList     WaitingList[]
+
+  @@map("transaction")
+  @@index([userId])
+  @@index([packageId])
+  @@index([branchOfficeId])
+  @@index([couponId])
+}
+
+model User {
+  id                    Int       @id @default(autoincrement())
+  firebaseUid           String?   @unique @map("firebase_uid") @db.VarChar(128)
+  email                 String    @unique @db.VarChar(180)
+  enabled               Boolean
+  password              String    @db.VarChar(255)
+  lastLogin             DateTime? @map("last_login")
+  confirmationToken     String?   @unique @map("confirmation_token") @db.VarChar(180)
+  passwordRequestedAt   DateTime? @map("password_requested_at")
+  roles                 String    @db.LongText
+  name                  String    @db.VarChar(100)
+  phone                 String?   @db.VarChar(15)
+  emergencyContactName  String?   @map("emergency_contact_name") @db.VarChar(255)
+  emergencyContactPhone String?   @map("emergency_contact_phone") @db.VarChar(15)
+  conektaId             String?   @map("conekta_id") @db.VarChar(25)
+  createdAt             DateTime? @map("created_at")
+  updatedAt             DateTime? @map("updated_at")
+  birthday              DateTime? @db.Date
+  freeSession           Boolean   @map("free_session")
+  lastname              String?   @db.VarChar(100)
+  branchOfficeId        Int?      @map("branch_office_id")
+  permissions           String?   @db.LongText
+  sessionId       String?   @map("session_id") @db.VarChar(128)
+  classesAvailable Int       @default(0) @map("classes_available")
+  classesTaken     Int       @default(0) @map("classes_taken")
+
+  gympassId        String?   @unique @map("gympass_id") @db.VarChar(100)
+  gympassGymId     Int?      @map("gympass_gym_id")
+  gympassProductId Int?      @map("gympass_product_id")
+
+  branchOffice    BranchOffice?   @relation(fields: [branchOfficeId], references: [id])
+  reservations    Reservation[]
+  transactions    Transaction[]
+  couponHistories CouponHistory[]
+  waitingList     WaitingList[]
+  notifications   Notification[]
+
+  @@map("user")
+  @@index([branchOfficeId])
+}
+
+model PasswordReset {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique @db.VarChar(180)
+  code      String   @db.VarChar(10)
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("password_reset")
+}
+
+model WaitingList {
+  userId      Int       @map("user_id")
+  sessionId   Int       @map("session_id")
+  isAvailable Boolean   @map("is_available")
+  createdAt         DateTime? @map("created_at")
+  error             String?   @db.VarChar(255)
+  updatedAt         DateTime? @map("updated_at")
+  status            String    @default("pending") @db.VarChar(20)
+  rejectedEmailSent Boolean   @default(false) @map("rejected_email_sent")
+  consumedClass     Boolean   @default(false) @map("consumed_class")
+  packageId         Int?      @map("package_id")
+
+  user    User    @relation(fields: [userId], references: [id])
+  session Session @relation(fields: [sessionId], references: [id])
+  package Transaction? @relation(fields: [packageId], references: [id])
+
+  @@id([userId, sessionId])
+  @@map("waiting_list")
+  @@index([userId])
+  @@index([sessionId])
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int?     @map("user_id")
+  title     String?  @db.VarChar(255)
+  message   String   @db.LongText
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+  type      String?  @db.VarChar(50)
+  data      String?  @db.LongText
+
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@map("notification")
+  @@index([userId])
+}

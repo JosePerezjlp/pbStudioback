@@ -1,54 +1,11 @@
 import { Request, Response } from "express";
 import { validationResult } from "express-validator";
-import admin from "../config/firebase";
-import { DateTime } from "luxon";
+import { prisma } from "../config/prisma";
+import { Prisma } from "../generated/prisma/client";
 
-/**
- * Normaliza una fecha de inicio al inicio del día (00:00:00) en horario mexicano
- */
-const normalizeStartDate = (dateInput: string | Date | any): Date => {
-  let date: Date;
-  if (typeof dateInput === "string") {
-    date = new Date(dateInput);
-  } else if (dateInput?.toDate && typeof dateInput.toDate === "function") {
-    date = dateInput.toDate();
-  } else {
-    date = dateInput as Date;
-  }
-  // Convertir a horario mexicano y normalizar al inicio del día
-  const mexicanDate = DateTime.fromJSDate(date).setZone("America/Mexico_City");
-  const normalized = mexicanDate.startOf("day").toJSDate();
-  return normalized;
-};
-
-/**
- * Normaliza una fecha de fin al final del día (23:59:59.999) en horario mexicano
- */
-const normalizeEndDate = (dateInput: string | Date | any): Date => {
-  let date: Date;
-  if (typeof dateInput === "string") {
-    date = new Date(dateInput);
-  } else if (dateInput?.toDate && typeof dateInput.toDate === "function") {
-    date = dateInput.toDate();
-  } else {
-    date = dateInput as Date;
-  }
-  // Convertir a horario mexicano y normalizar al final del día
-  const mexicanDate = DateTime.fromJSDate(date).setZone("America/Mexico_City");
-  const normalized = mexicanDate.endOf("day").toJSDate();
-  return normalized;
-};
-
-/**
- * Normaliza la fecha actual al inicio del día (00:00:00) en horario mexicano para comparación
- */
-const normalizeToday = (): Date => {
-  const nowMexico = DateTime.now().setZone("America/Mexico_City");
-  return nowMexico.startOf("day").toJSDate();
-};
-
-const collection = admin.firestore().collection("packages");
-
+/* ============================================================
+   CREATE
+   ============================================================ */
 export const createPackageController = async (
   req: Request,
   res: Response
@@ -61,21 +18,36 @@ export const createPackageController = async (
   }
 
   try {
-    const { startDate, endDate, ...rest } = req.body;
-    const norm = (v: any) => {
-      if (v === undefined || v === null) return null;
-      if (typeof v === "string") {
-        const t = v.trim();
-        return t.length > 0 ? t : null;
-      }
-      return null;
-    };
-    const newPackage = await collection.add({
-      ...rest,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      startDate: norm(startDate),
-      endDate: norm(endDate),
+    const {
+      totalClasses,
+      amount,
+      type,
+      daysExpiry,
+      isActive,
+      isUnlimited,
+      altText,
+      newUser,
+      public: isPublic,
+      specialPrice,
+      discountInfo,
+    } = req.body;
+
+    const newPackage = await prisma.package.create({
+      data: {
+        totalClasses: Number(totalClasses || 0),
+        amount: Number(amount || 0),
+        type: String(type || "individual"),
+        daysExpiry: Number(daysExpiry || 0),
+        isActive: isActive !== undefined ? Boolean(isActive) : true,
+        isUnlimited: Boolean(isUnlimited),
+        altText: altText ? String(altText) : null,
+        newUser: newUser ? 1 : 0,
+        public: isPublic !== undefined ? Boolean(isPublic) : false,
+        specialPrice: specialPrice ? Number(specialPrice) : null,
+        discountInfo: discountInfo ? String(discountInfo) : null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
     });
 
     res
@@ -88,48 +60,33 @@ export const createPackageController = async (
   }
 };
 
+/* ============================================================
+   GET ALL
+   ============================================================ */
 export const getAllPackagesController = async (
   _req: Request,
   res: Response
 ): Promise<void> => {
   try {
-    const snapshot = await collection.orderBy("createdAt", "desc").get();
+    const packages = await prisma.package.findMany({
+      orderBy: { createdAt: "desc" },
+    });
 
-    // Normalizar fecha actual para comparación por día (sin hora)
-    const today = normalizeToday();
+    // Mapear a formato respuesta (incluyendo conversión de IDs a string si es necesario)
+    const mappedPackages = packages.map((pkg) => ({
+      ...pkg,
+      id: String(pkg.id),
+      newUser: pkg.newUser === 1, // Convertir a boolean para frontend
+      createdAt: pkg.createdAt?.toISOString(),
+      updatedAt: pkg.updatedAt?.toISOString(),
+      // startDate/endDate ya no existen en SQL, se omiten o se envían null si frontend los requiere
+      startDate: null,
+      endDate: null,
+    }));
 
-    // Filtrar paquetes por fechas de publicación
-    const packages = snapshot.docs
-      .map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }))
-      .filter((pkg: any) => {
-        // Si no tiene fechas de publicación, mostrarlo (compatibilidad)
-        if (!pkg.startDate && !pkg.endDate) {
-          return true;
-        }
-
-        // Normalizar fechas del paquete para comparación por día
-        const startDate = pkg.startDate
-          ? normalizeStartDate(pkg.startDate)
-          : null;
-        const endDate = pkg.endDate ? normalizeEndDate(pkg.endDate) : null;
-
-        // Verificar fecha de inicio: startDate <= hoy
-        if (startDate && today < startDate) {
-          return false; // Aún no se publica
-        }
-
-        // Verificar fecha de fin: hoy <= endDate
-        if (endDate && today > endDate) {
-          return false; // Ya expiró
-        }
-
-        return true; // Está en el rango de publicación
-      });
-
-    res.status(200).json({ packages, total: packages.length });
+    res
+      .status(200)
+      .json({ packages: mappedPackages, total: mappedPackages.length });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
     console.error("Error al obtener paquetes:", msg);
@@ -137,32 +94,37 @@ export const getAllPackagesController = async (
   }
 };
 
+/* ============================================================
+   GET ACTIVE
+   ============================================================ */
 export const getActivePackagesController = async (
   _req: Request,
   res: Response
 ): Promise<void> => {
   try {
-    const snapshot = await collection.where("isActive", "==", true).get();
+    // En SQL filtramos directamente por isActive y public (opcionalmente)
+    // El código original filtraba por fechas startDate/endDate en memoria.
+    // Como SQL no tiene esas fechas, confiamos en isActive.
+    const packages = await prisma.package.findMany({
+      where: {
+        isActive: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
 
-    const today = normalizeToday();
+    const mappedPackages = packages.map((pkg) => ({
+      ...pkg,
+      id: String(pkg.id),
+      newUser: pkg.newUser === 1,
+      createdAt: pkg.createdAt?.toISOString(),
+      updatedAt: pkg.updatedAt?.toISOString(),
+      startDate: null,
+      endDate: null,
+    }));
 
-    const packages = snapshot.docs
-      .map((doc) => ({ id: doc.id, ...doc.data() }))
-      .filter((pkg: any) => {
-        const hasStart = Boolean(pkg.startDate);
-        const hasEnd = Boolean(pkg.endDate);
-        if (!hasStart && !hasEnd) return true;
-        const startDate = hasStart ? normalizeStartDate(pkg.startDate) : null;
-        const endDate = hasEnd ? normalizeEndDate(pkg.endDate) : null;
-        if (startDate && today < startDate) return false;
-        if (endDate && today > endDate) return false;
-        return true;
-      })
-      .sort((a: any, b: any) =>
-        String(b.createdAt || "").localeCompare(String(a.createdAt || ""))
-      );
-
-    res.status(200).json({ packages, total: packages.length });
+    res
+      .status(200)
+      .json({ packages: mappedPackages, total: mappedPackages.length });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
     console.error("Error al obtener paquetes activos:", msg);
@@ -170,21 +132,40 @@ export const getActivePackagesController = async (
   }
 };
 
+/* ============================================================
+   GET BY ID
+   ============================================================ */
 export const getPackageByIdController = async (
   req: Request,
   res: Response
 ): Promise<void> => {
   const { packageId } = req.params;
+  const id = Number(packageId);
+
+  if (isNaN(id)) {
+    res.status(400).json({ error: "ID de paquete inválido" });
+    return;
+  }
 
   try {
-    const doc = await collection.doc(packageId).get();
+    const pkg = await prisma.package.findUnique({
+      where: { id },
+    });
 
-    if (!doc.exists) {
+    if (!pkg) {
       res.status(404).json({ error: "Paquete no encontrado" });
       return;
     }
 
-    res.status(200).json({ id: doc.id, ...doc.data() });
+    res.status(200).json({
+      ...pkg,
+      id: String(pkg.id),
+      newUser: pkg.newUser === 1,
+      createdAt: pkg.createdAt?.toISOString(),
+      updatedAt: pkg.updatedAt?.toISOString(),
+      startDate: null,
+      endDate: null,
+    });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
     console.error("Error al obtener paquete:", msg);
@@ -192,100 +173,132 @@ export const getPackageByIdController = async (
   }
 };
 
+/* ============================================================
+   UPDATE
+   ============================================================ */
 export const updatePackageController = async (
   req: Request,
   res: Response
 ): Promise<void> => {
   const { packageId } = req.params;
-  const updateData = { ...req.body };
-  if ("startDate" in updateData) {
-    const v = updateData.startDate;
-    if (typeof v === "string") {
-      const t = v.trim();
-      updateData.startDate = t.length > 0 ? t : null;
-    } else if (v === null) {
-      updateData.startDate = null;
-    } else {
-      delete updateData.startDate;
-    }
+  const id = Number(packageId);
+
+  if (isNaN(id)) {
+    res.status(400).json({ error: "ID de paquete inválido" });
+    return;
   }
-  if ("endDate" in updateData) {
-    const v = updateData.endDate;
-    if (typeof v === "string") {
-      const t = v.trim();
-      updateData.endDate = t.length > 0 ? t : null;
-    } else if (v === null) {
-      updateData.endDate = null;
-    } else {
-      delete updateData.endDate;
-    }
-  }
+
+  // Filtrar campos no editables y undefined
+  const updateDataRaw = { ...req.body };
+
+  // Campos prohibidos según controlador original
+  const nonEditableFields = [
+    "specialPrice",
+    "discountInfo",
+    "couponId",
+    "discount",
+    "applyToSpecialPrice",
+  ];
+  nonEditableFields.forEach((field) => delete updateDataRaw[field]);
+
+  // Limpiar undefined/null (excepto null explícitos permitidos si los hubiera, pero Prisma maneja null)
+  // En original: delete updateData[key] if undefined or null (except startDate/endDate)
+  // Aquí mapeamos a campos de Prisma
+
+  const dataToUpdate: Prisma.PackageUpdateInput = {};
+
+  if (updateDataRaw.totalClasses !== undefined)
+    dataToUpdate.totalClasses = Number(updateDataRaw.totalClasses);
+  if (updateDataRaw.amount !== undefined)
+    dataToUpdate.amount = Number(updateDataRaw.amount);
+  if (updateDataRaw.type !== undefined)
+    dataToUpdate.type = String(updateDataRaw.type);
+  if (updateDataRaw.daysExpiry !== undefined)
+    dataToUpdate.daysExpiry = Number(updateDataRaw.daysExpiry);
+  if (updateDataRaw.isActive !== undefined)
+    dataToUpdate.isActive = Boolean(updateDataRaw.isActive);
+  if (updateDataRaw.isUnlimited !== undefined)
+    dataToUpdate.isUnlimited = Boolean(updateDataRaw.isUnlimited);
+  if (updateDataRaw.altText !== undefined)
+    dataToUpdate.altText = String(updateDataRaw.altText);
+  if (updateDataRaw.newUser !== undefined)
+    dataToUpdate.newUser = updateDataRaw.newUser ? 1 : 0;
+  if (updateDataRaw.public !== undefined)
+    dataToUpdate.public = Boolean(updateDataRaw.public);
+
+  // Ignoramos startDate / endDate ya que no existen en modelo
+
+  dataToUpdate.updatedAt = new Date();
 
   try {
-    const docRef = collection.doc(packageId);
-    const doc = await docRef.get();
-
-    if (!doc.exists) {
-      res.status(404).json({ error: "Paquete no encontrado" });
-      return;
-    }
-
-    // 🧠 ⚠️ Bloquear campos que NO deben ser actualizados por el frontend
-    const nonEditableFields = [
-      "specialPrice",
-      "discountInfo",
-      "couponId",
-      "discount",
-      "applyToSpecialPrice",
-    ];
-    nonEditableFields.forEach((field) => delete updateData[field]);
-
-    Object.keys(updateData).forEach((key) => {
-      if (
-        updateData[key] === undefined ||
-        (updateData[key] === null && key !== "startDate" && key !== "endDate")
-      ) {
-        delete updateData[key];
-      }
+    const updated = await prisma.package.update({
+      where: { id },
+      data: dataToUpdate,
     });
-
-    updateData.updatedAt = new Date().toISOString();
-
-    await docRef.update(updateData);
 
     res.status(200).json({
       message: "Paquete actualizado correctamente",
-      updatedFields: Object.keys(updateData),
+      updatedFields: Object.keys(dataToUpdate),
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
+    // Prisma error P2025: Record to update not found
+    if (msg.includes("Record to update not found") || msg.includes("P2025")) {
+      res.status(404).json({ error: "Paquete no encontrado" });
+      return;
+    }
     console.error("Error al actualizar paquete:", msg);
     res.status(500).json({ error: "Error interno del servidor", details: msg });
   }
 };
 
+/* ============================================================
+   DELETE
+   ============================================================ */
 export const deletePackageController = async (
   req: Request,
   res: Response
 ): Promise<void> => {
   const { packageId } = req.params;
+  const id = Number(packageId);
+
+  if (isNaN(id)) {
+    res.status(400).json({ error: "ID de paquete inválido" });
+    return;
+  }
 
   try {
-    const docRef = collection.doc(packageId);
-    const doc = await docRef.get();
+    await prisma.package.delete({
+      where: { id },
+    });
 
-    if (!doc.exists) {
-      res.status(404).json({ error: "Paquete no encontrado" });
-      return;
-    }
-
-    await docRef.delete();
     res.status(200).json({
       message: "Paquete eliminado correctamente",
       deletedPackageId: packageId,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
+    if (
+      msg.includes("Record to delete does not exist") ||
+      msg.includes("P2025")
+    ) {
+      res.status(404).json({ error: "Paquete no encontrado" });
+      return;
+    }
+    // Foreign key violation P2003
+    if (
+      msg.includes("Foreign key constraint failed") ||
+      msg.includes("P2003")
+    ) {
+      res
+        .status(409)
+        .json({
+          error:
+            "No se puede eliminar el paquete porque tiene transacciones asociadas.",
+        });
+      return;
+    }
+
     console.error("Error al eliminar paquete:", msg);
     res.status(500).json({ error: "Error interno del servidor", details: msg });
   }

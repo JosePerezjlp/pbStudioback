@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
-import admin from "../config/firebase";
 import { AuthRequest } from "../middleware/authMiddleware";
+import { branchService } from "../services/branch.service";
 
 export const createBranchController = async (
   req: Request,
@@ -21,21 +21,20 @@ export const createBranchController = async (
       return;
     }
 
-    const newBranch = {
+    // Adaptación para Prisma: status es obligatorio en SQL (Int). Asumimos 1 (Activo)
+    const newBranch = await branchService.createBranch({
       name,
-      location: location || "",
-      isPublic: Boolean(isPublic),
-      area: area || "",
       address: address || "",
       phone: phone || "",
-      createdAt: new Date().toISOString(),
-    };
-
-    const ref = await admin.firestore().collection("branches").add(newBranch);
+      status: 1, // Default active
+      isPublic: Boolean(isPublic),
+      location: location || "",
+      area: area || "",
+    });
 
     res
       .status(201)
-      .json({ message: "Sucursal creada correctamente", id: ref.id });
+      .json({ message: "Sucursal creada correctamente", id: newBranch.id });
   } catch (error) {
     console.error("Error al crear sucursal:", error);
     res.status(500).json({ error: "Error al crear sucursal" });
@@ -50,37 +49,30 @@ export const getAllBranchesController = async (
     const authReq = req as AuthRequest;
     const user = authReq.user;
 
-    let query = admin
-      .firestore()
-      .collection("branches")
-      .orderBy("createdAt", "desc");
+    let filterIds: number[] | undefined = undefined;
 
     // Si el usuario es employee (no admin) y tiene branches limitadas, filtrar
-    let branches = [];
     if (
       user &&
       (user.role === "collaborator" || user.role === "instructor") &&
       user.branches &&
       user.branches.length > 0
     ) {
-      // Obtener todas y filtrar en memoria (Firestore no soporta "in" con orderBy fácilmente)
-      const snapshot = await query.get();
-      const allBranches = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      // Filtrar solo las branches permitidas
-      branches = allBranches.filter((branch) =>
-        user.branches!.includes(branch.id)
-      );
-    } else {
-      // Admin o sin autenticación: devolver todas
-      const snapshot = await query.get();
-      branches = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+      // Intentar convertir los IDs de Firestore (String) a SQL (Int)
+      // Nota: Esto solo funcionará si los usuarios ya han sido migrados o sus IDs de branch actualizados
+      filterIds = user.branches
+        .map((id) => Number(id))
+        .filter((id) => !isNaN(id));
+
+      // Si el usuario tiene branches asignadas pero ninguna es numérica,
+      // significa que sigue usando IDs viejos. Devolvemos array vacío por seguridad.
+      if (filterIds.length === 0 && user.branches.length > 0) {
+        res.status(200).json({ branches: [] });
+        return;
+      }
     }
+
+    const branches = await branchService.getAllBranches(filterIds);
 
     res.status(200).json({ branches });
   } catch (error) {
@@ -95,19 +87,22 @@ export const getBranchByIdController = async (
   res: Response
 ): Promise<void> => {
   const { branchId } = req.params;
-  try {
-    const doc = await admin
-      .firestore()
-      .collection("branches")
-      .doc(branchId)
-      .get();
+  const id = Number(branchId);
 
-    if (!doc.exists) {
+  if (isNaN(id)) {
+    res.status(400).json({ error: "ID de sucursal inválido" });
+    return;
+  }
+
+  try {
+    const branch = await branchService.getBranchById(id);
+
+    if (!branch) {
       res.status(404).json({ error: "Sucursal no encontrada" });
       return;
     }
 
-    res.status(200).json({ id: doc.id, ...doc.data() });
+    res.status(200).json(branch);
   } catch (error) {
     res
       .status(500)
@@ -120,36 +115,32 @@ export const updateBranchController = async (
   res: Response
 ): Promise<void> => {
   const { branchId } = req.params;
-  try {
-    const ref = admin.firestore().collection("branches").doc(branchId);
-    const doc = await ref.get();
+  const id = Number(branchId);
 
-    if (!doc.exists) {
+  if (isNaN(id)) {
+    res.status(400).json({ error: "ID de sucursal inválido" });
+    return;
+  }
+
+  try {
+    // Verificar existencia primero
+    const existing = await branchService.getBranchById(id);
+    if (!existing) {
       res.status(404).json({ error: "Sucursal no encontrada" });
       return;
     }
 
-    const updateData: {
-      name?: string;
-      location?: string;
-      isPublic?: boolean;
-      area?: string;
-      address?: string;
-      phone?: string;
-      gympass_gym_id?: number;
-    } = {};
+    const updateData: any = {};
 
     if (req.body.name) updateData.name = String(req.body.name);
+    if (req.body.address) updateData.address = String(req.body.address);
+    if (req.body.phone) updateData.phone = String(req.body.phone);
     if (req.body.location) updateData.location = String(req.body.location);
     if ("isPublic" in req.body)
       updateData.isPublic = Boolean(req.body.isPublic);
     if (req.body.area) updateData.area = String(req.body.area);
-    if (req.body.address) updateData.address = String(req.body.address);
-    if (req.body.phone) updateData.phone = String(req.body.phone);
-    if (req.body.gympass_gym_id)
-      updateData.gympass_gym_id = Number(req.body.gympass_gym_id);
 
-    await ref.update(updateData);
+    await branchService.updateBranch(id, updateData);
 
     res.status(200).json({ message: "Sucursal actualizada correctamente" });
   } catch (error) {
@@ -164,16 +155,22 @@ export const deleteBranchController = async (
   res: Response
 ): Promise<void> => {
   const { branchId } = req.params;
-  try {
-    const ref = admin.firestore().collection("branches").doc(branchId);
-    const doc = await ref.get();
+  const id = Number(branchId);
 
-    if (!doc.exists) {
+  if (isNaN(id)) {
+    res.status(400).json({ error: "ID de sucursal inválido" });
+    return;
+  }
+
+  try {
+    // Verificar existencia primero
+    const existing = await branchService.getBranchById(id);
+    if (!existing) {
       res.status(404).json({ error: "Sucursal no encontrada" });
       return;
     }
 
-    await ref.delete();
+    await branchService.deleteBranch(id);
     res.status(200).json({ message: "Sucursal eliminada correctamente" });
   } catch (error) {
     res

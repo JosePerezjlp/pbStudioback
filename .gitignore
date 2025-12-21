@@ -28,6 +28,7 @@ build/
 .vscode/
 *.swp
 *.swo
+.trae/
 
 # Logs
 logs/
@@ -36,3 +37,4 @@ logs/
 # System Files
 .DS_Store
 Thumbs.db 
+/src/generated/prisma

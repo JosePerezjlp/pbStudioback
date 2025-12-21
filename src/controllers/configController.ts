@@ -1,7 +1,38 @@
 import { Request, Response } from "express";
 import multer from "multer";
-import admin from "../config/firebase";
-import { uploadToFirebase } from "../utils/uploadToFirebase";
+import prisma from "../config/prisma";
+import { uploadLocal, deleteLocalFile } from "../utils/uploadLocal";
+
+// Helper to save configuration
+const saveConfiguration = async (moduleName: string, data: any) => {
+  const existing = await prisma.configuration.findFirst({
+    where: { module: moduleName },
+  });
+
+  if (existing) {
+    return prisma.configuration.update({
+      where: { id: existing.id },
+      data: { data: JSON.stringify(data) },
+    });
+  } else {
+    return prisma.configuration.create({
+      data: {
+        module: moduleName,
+        data: JSON.stringify(data),
+      },
+    });
+  }
+};
+
+// Helper to get configuration
+const getConfiguration = async (moduleName: string) => {
+  const config = await prisma.configuration.findFirst({
+    where: { module: moduleName },
+  });
+
+  if (!config) return null;
+  return JSON.parse(config.data);
+};
 
 // Crea o reemplaza el tiempo de cancelación
 export const setCancellationTimesController = async (
@@ -40,11 +71,7 @@ export const setCancellationTimesController = async (
       configData.changeGroups = parsedChangeGroups;
     }
 
-    await admin
-      .firestore()
-      .collection("configurations")
-      .doc("cancellation_times")
-      .set(configData, { merge: true });
+    await saveConfiguration("cancellation_times", configData);
 
     res.status(200).json({ message: "Configuración guardada correctamente" });
   } catch (error) {
@@ -59,18 +86,14 @@ export const getCancellationTimesController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const doc = await admin
-      .firestore()
-      .collection("configurations")
-      .doc("cancellation_times")
-      .get();
+    const data = await getConfiguration("cancellation_times");
 
-    if (!doc.exists) {
+    if (!data) {
       res.status(404).json({ error: "No hay configuración guardada" });
       return;
     }
 
-    res.status(200).json({ id: doc.id, ...doc.data() });
+    res.status(200).json(data);
   } catch (error) {
     console.error("Error al obtener configuración:", error);
     res.status(500).json({ error: "Error interno", details: String(error) });
@@ -91,20 +114,13 @@ export const setGeneralSettingsController = async (
       return;
     }
 
-    await admin
-      .firestore()
-      .collection("configurations")
-      .doc("general_settings")
-      .set(
-        {
-          email,
-          package: pkg,
-          header,
-          footer,
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
+    await saveConfiguration("general_settings", {
+      email,
+      package: pkg,
+      header,
+      footer,
+      updatedAt: new Date().toISOString(),
+    });
 
     res
       .status(200)
@@ -120,18 +136,14 @@ export const getGeneralSettingsController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const doc = await admin
-      .firestore()
-      .collection("configurations")
-      .doc("general_settings")
-      .get();
+    const data = await getConfiguration("general_settings");
 
-    if (!doc.exists) {
+    if (!data) {
       res.status(404).json({ error: "No hay configuración general guardada" });
       return;
     }
 
-    res.status(200).json({ id: doc.id, ...doc.data() });
+    res.status(200).json(data);
   } catch (error) {
     console.error("Error al obtener configuración general:", error);
     res.status(500).json({ error: "Error interno", details: String(error) });
@@ -153,17 +165,10 @@ export const setStatisticsConfigController = async (
       return;
     }
 
-    await admin
-      .firestore()
-      .collection("configurations")
-      .doc("statistics_settings")
-      .set(
-        {
-          startDate,
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
+    await saveConfiguration("statistics_settings", {
+      startDate,
+      updatedAt: new Date().toISOString(),
+    });
 
     res.status(200).json({ message: "Configuración guardada correctamente" });
   } catch (error) {
@@ -178,20 +183,16 @@ export const getStatisticsConfigController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const doc = await admin
-      .firestore()
-      .collection("configurations")
-      .doc("statistics_settings")
-      .get();
+    const data = await getConfiguration("statistics_settings");
 
-    if (!doc.exists) {
+    if (!data) {
       res
         .status(404)
         .json({ error: "No hay configuración de estadísticas guardada" });
       return;
     }
 
-    res.status(200).json({ id: doc.id, ...doc.data() });
+    res.status(200).json(data);
   } catch (error) {
     console.error("Error al obtener configuración de estadísticas:", error);
     res.status(500).json({ error: "Error interno", details: String(error) });
@@ -199,19 +200,6 @@ export const getStatisticsConfigController = async (
 };
 
 // notice
-
-const bucket = admin.storage().bucket();
-
-const deleteFromFirebase = async (url: string) => {
-  try {
-    const storageDomain = "https://storage.googleapis.com/";
-    const filePath = url.replace(`${storageDomain}${bucket.name}/`, "");
-    await bucket.file(filePath).delete();
-    console.log("✅ Imagen eliminada:", filePath);
-  } catch (error) {
-    console.warn("⚠️ No se pudo eliminar la imagen:", url, error);
-  }
-};
 
 // Middleware de subida de imagen
 export const uploadNoticeMiddleware = multer({
@@ -226,41 +214,33 @@ export const setNoticeConfigController = async (
   try {
     const { url, active } = req.body;
 
-    const docRef = admin.firestore().collection("configurations").doc("notice");
-
-    const existingDoc = await docRef.get();
-    const existingData = existingDoc.exists ? existingDoc.data() || {} : {};
+    const existingData = (await getConfiguration("notice")) || {};
     const oldImageUrl = existingData.image || "";
 
     let newImageUrl = oldImageUrl;
 
     // Si hay nueva imagen, la subimos
     if (req.file) {
-      newImageUrl = await uploadToFirebase(req.file, "notices");
+      newImageUrl = await uploadLocal(req.file, "notices");
 
       // si la imagen anterior existe y es distinta, la borramos
       if (oldImageUrl && oldImageUrl !== newImageUrl) {
-        await deleteFromFirebase(oldImageUrl);
+        await deleteLocalFile(oldImageUrl);
       }
     }
 
-    await docRef.set(
-      {
-        image: newImageUrl,
-        url,
-        active: active === "true" || active === true,
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
+    const newData = {
+      image: newImageUrl,
+      url,
+      active: active === "true" || active === true,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await saveConfiguration("notice", newData);
 
     res.status(200).json({
       message: "Aviso guardado correctamente",
-      data: {
-        image: newImageUrl,
-        url,
-        active: active === "true" || active === true,
-      },
+      data: newData,
     });
   } catch (error) {
     console.error("Error al guardar aviso:", error);
@@ -268,25 +248,20 @@ export const setNoticeConfigController = async (
   }
 };
 
-
 // GET: obtiene aviso actual
 export const getNoticeConfigController = async (
   _req: Request,
   res: Response
 ): Promise<void> => {
   try {
-    const doc = await admin
-      .firestore()
-      .collection("configurations")
-      .doc("notice")
-      .get();
+    const data = await getConfiguration("notice");
 
-    if (!doc.exists) {
+    if (!data) {
       res.status(404).json({ error: "No hay aviso configurado" });
       return;
     }
 
-    res.status(200).json({ id: doc.id, ...doc.data() });
+    res.status(200).json(data);
   } catch (error) {
     console.error("Error al obtener aviso:", error);
     res.status(500).json({ error: "Error interno del servidor" });

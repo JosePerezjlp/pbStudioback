@@ -1,23 +1,26 @@
-import admin from "../config/firebase";
+import prisma from "../config/prisma";
 import { ClassType } from "../types/enums";
 import { normalizeClassType } from "./packageSelection";
 
-interface ClassroomDoc {
-  type?: unknown;
-  branch?: unknown;
-}
-
 export const getRoomTypeById = async (
-  roomId: string
+  roomId: string | number
 ): Promise<ClassType | null> => {
-  const ref = admin.firestore().collection("classrooms").doc(roomId);
-  const snap = await ref.get();
-  if (!snap.exists) return null;
+  const id = typeof roomId === "string" ? parseInt(roomId, 10) : roomId;
+  
+  if (isNaN(id)) {
+    return null;
+  }
 
-  const data = snap.data() as ClassroomDoc | undefined;
-  const raw = typeof data?.type === "string" ? data.type : null;
-  const normalized = normalizeClassType(raw);
+  const room = await prisma.exerciseRoom.findUnique({
+    where: { id },
+  });
+
+  if (!room) return null;
+
+  const normalized = normalizeClassType(room.type);
+  
   if (normalized === ClassType.GROUPS) return ClassType.GROUPS;
   if (normalized === ClassType.INDIVIDUAL) return ClassType.INDIVIDUAL;
+  
   return null;
 };

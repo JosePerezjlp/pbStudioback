@@ -1,6 +1,5 @@
-// controllers/attendanceController.ts
 import { Request, Response } from "express";
-import admin from "../config/firebase";
+import prisma from "../config/prisma";
 
 // ✅ CREA o ACTUALIZA asistencia para un usuario en una clase
 export const upsertAttendanceController = async (req: Request, res: Response): Promise<void> => {
@@ -12,17 +11,37 @@ export const upsertAttendanceController = async (req: Request, res: Response): P
       return;
     }
 
-    const attendanceRef = admin.firestore().collection("attendances").doc(`${classId}_${userId}`);
+    const uId = parseInt(userId);
+    const sId = parseInt(classId);
 
-    await attendanceRef.set(
-      {
-        userId,
-        classId,
-        attended,
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
+    if (isNaN(uId) || isNaN(sId)) {
+         res.status(400).json({ error: "IDs inválidos", code: "invalid-input" });
+         return;
+    }
+
+    // Buscar la reservación
+    const reservation = await prisma.reservation.findFirst({
+        where: {
+            userId: uId,
+            sessionId: sId,
+            isAvailable: true // Assuming active reservation
+        }
+    });
+
+    if (!reservation) {
+        // En SQL no podemos crear asistencia sin reservación previa fácilmente (requiere transacción, paquete, etc.)
+        // Asumiremos que debe existir reservación.
+        res.status(404).json({ error: "Reservación no encontrada para este usuario y clase", code: "not-found" });
+        return;
+    }
+
+    await prisma.reservation.update({
+        where: { id: reservation.id },
+        data: {
+            attended: attended,
+            updatedAt: new Date()
+        }
+    });
 
     res.status(200).json({ message: "Asistencia registrada correctamente" });
   } catch (error) {
@@ -38,14 +57,34 @@ export const upsertAttendanceController = async (req: Request, res: Response): P
 export const getAttendanceByUserClass = async (req: Request, res: Response): Promise<void> => {
   const { classId, userId } = req.params;
   try {
-    const doc = await admin.firestore().collection("attendances").doc(`${classId}_${userId}`).get();
+    const uId = parseInt(userId);
+    const sId = parseInt(classId);
 
-    if (!doc.exists) {
+    if (isNaN(uId) || isNaN(sId)) {
+        res.status(400).json({ error: "IDs inválidos", code: "invalid-input" });
+        return;
+    }
+
+    const reservation = await prisma.reservation.findFirst({
+        where: {
+            userId: uId,
+            sessionId: sId
+        }
+    });
+
+    if (!reservation) {
       res.status(404).json({ error: "Asistencia no encontrada", code: "not-found" });
       return;
     }
 
-    res.status(200).json({ id: doc.id, ...doc.data() });
+    // Simular estructura de respuesta anterior si es necesario, o devolver objeto
+    res.status(200).json({
+        id: `${sId}_${uId}`, // Fake ID compatible
+        userId: userId,
+        classId: classId,
+        attended: reservation.attended,
+        updatedAt: reservation.updatedAt
+    });
   } catch (error) {
     console.error("Error al obtener asistencia:", error);
     res.status(500).json({
@@ -59,13 +98,30 @@ export const getAttendanceByUserClass = async (req: Request, res: Response): Pro
 export const listAttendancesByClass = async (req: Request, res: Response): Promise<void> => {
   const { classId } = req.params;
   try {
-    const snapshot = await admin
-      .firestore()
-      .collection("attendances")
-      .where("classId", "==", classId)
-      .get();
+    const sId = parseInt(classId);
+     if (isNaN(sId)) {
+        res.status(400).json({ error: "ID inválido", code: "invalid-input" });
+        return;
+    }
 
-    const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const reservations = await prisma.reservation.findMany({
+        where: { sessionId: sId },
+        select: {
+            userId: true,
+            sessionId: true,
+            attended: true,
+            updatedAt: true
+        }
+    });
+
+    const data = reservations.map(r => ({
+        id: `${r.sessionId}_${r.userId}`,
+        userId: r.userId,
+        classId: r.sessionId,
+        attended: r.attended,
+        updatedAt: r.updatedAt
+    }));
+
     res.status(200).json({ attendances: data });
   } catch (error) {
     console.error("Error al listar asistencias:", error);
@@ -80,15 +136,29 @@ export const listAttendancesByClass = async (req: Request, res: Response): Promi
 export const deleteAttendanceController = async (req: Request, res: Response): Promise<void> => {
   const { classId, userId } = req.params;
   try {
-    const ref = admin.firestore().collection("attendances").doc(`${classId}_${userId}`);
-    const doc = await ref.get();
+    const uId = parseInt(userId);
+    const sId = parseInt(classId);
+    
+     if (isNaN(uId) || isNaN(sId)) {
+        res.status(400).json({ error: "IDs inválidos", code: "invalid-input" });
+        return;
+    }
 
-    if (!doc.exists) {
+    const reservation = await prisma.reservation.findFirst({
+        where: { userId: uId, sessionId: sId }
+    });
+
+    if (!reservation) {
       res.status(404).json({ error: "Asistencia no encontrada", code: "not-found" });
       return;
     }
 
-    await ref.delete();
+    // "Eliminar" asistencia en SQL significa poner attended = false
+    await prisma.reservation.update({
+        where: { id: reservation.id },
+        data: { attended: false }
+    });
+
     res.status(200).json({ message: "Asistencia eliminada correctamente" });
   } catch (error) {
     console.error("Error al eliminar asistencia:", error);

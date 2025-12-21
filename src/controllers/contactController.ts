@@ -27,13 +27,16 @@ export const sendContactMessageController = async (
       return;
     }
 
-    /** ---------- (Opcional) Guardar en Firestore ---------- */
-    // await admin.firestore().collection("contacts").add({
-    //   name,
-    //   phone,
-    //   email,
-    //   message,
-    //   createdAt: new Date().toISOString(),
+    /** ---------- (Opcional) Guardar en Base de Datos ---------- */
+    // Si se desea guardar historial de contactos, descomentar y adaptar modelo Contact
+    // await prisma.contact.create({
+    //   data: {
+    //     name,
+    //     phone,
+    //     email,
+    //     message,
+    //     createdAt: new Date(),
+    //   }
     // });
 
     /** ---------- Envío de correos ---------- */

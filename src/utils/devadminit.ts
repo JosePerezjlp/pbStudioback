@@ -1,6 +1,5 @@
-// initializePersonalAdmin.ts
 import bcrypt from "bcrypt";
-import admin from "../config/firebase";
+import { prisma } from "../config/prisma";
 
 const PERSONAL_ADMIN = {
   email: "johandevadmin@pbstudioapp.com",
@@ -16,39 +15,50 @@ const PERSONAL_ADMIN = {
 
 export const initializePersonalAdmin = async () => {
   try {
-    console.log("Verificando/creando administrador personal en Auth y Firestore...");
+    console.log("Verificando/creando administrador personal (SQL)...");
 
-    let userRecord;
-    try {
-      userRecord = await admin.auth().getUserByEmail(PERSONAL_ADMIN.email);
-      console.log("Administrador personal encontrado en Firebase Auth.");
-    } catch {
-      userRecord = await admin.auth().createUser({
-        email: PERSONAL_ADMIN.email,
-        password: PERSONAL_ADMIN.password,
-      });
-      console.log("Administrador personal creado en Firebase Auth.");
-    }
-
-    await admin.auth().updateUser(userRecord.uid, {
-      password: PERSONAL_ADMIN.password,
-      emailVerified: true,
+    const existingUser = await prisma.user.findUnique({
+      where: { email: PERSONAL_ADMIN.email },
     });
 
     const hashedPassword = await bcrypt.hash(PERSONAL_ADMIN.password, 10);
-    const userRef = admin.firestore().collection("users").doc(userRecord.uid);
-    const snap = await userRef.get();
-    const now = new Date().toISOString();
-    const data = {
-      ...PERSONAL_ADMIN,
-      password: hashedPassword,
-      createdAt: snap.exists ? snap.data()?.createdAt ?? now : now,
-      updatedAt: now,
-    };
-    await userRef.set(data, { merge: true });
-    console.log("✅ Administrador personal verificado/creado.");
+    const branch = await prisma.branchOffice.findFirst({
+        where: { name: PERSONAL_ADMIN.branch }
+    });
+
+    if (existingUser) {
+        // Update password if exists
+        await prisma.user.update({
+            where: { email: PERSONAL_ADMIN.email },
+            data: {
+                password: hashedPassword,
+                roles: JSON.stringify(["admin"]),
+                permissions: JSON.stringify(PERSONAL_ADMIN.permissions),
+            }
+        });
+        console.log("Administrador personal actualizado en SQL.");
+        return;
+    }
+
+    await prisma.user.create({
+      data: {
+        email: PERSONAL_ADMIN.email,
+        password: hashedPassword,
+        name: PERSONAL_ADMIN.firstName,
+        lastname: PERSONAL_ADMIN.lastName,
+        phone: PERSONAL_ADMIN.phone,
+        enabled: true,
+        roles: JSON.stringify(["admin"]),
+        permissions: JSON.stringify(PERSONAL_ADMIN.permissions),
+        branchOfficeId: branch?.id ?? null,
+        freeSession: false,
+        classesAvailable: 0,
+        classesTaken: 0,
+      },
+    });
+
+    console.log("✅ Administrador personal creado exitosamente en SQL.");
   } catch (error) {
     console.error("❌ Error al crear administrador personal:", error);
-    throw error;
   }
 };

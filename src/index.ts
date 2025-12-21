@@ -1,10 +1,10 @@
 import express from "express";
+import path from "path";
 import dotenv from "dotenv";
 import cron from "node-cron";
 import { DateTime } from "luxon";
 import cors from "cors";
-import type { WriteResult } from "firebase-admin/firestore";
-import admin from "./config/firebase";
+import { prisma } from "./config/prisma";
 import homeRouter from "./routes/home";
 import usersRouter from "./routes/users";
 import packageRouter from "./routes/package";
@@ -41,12 +41,6 @@ import { verifyToken } from "./middleware/authMiddleware";
 // import { verifyToken } from "./middleware/authMiddleware";
 // import { adminSessionGuard } from "./middleware/adminSessionGuard";
 
-const db = admin.firestore();
-const { increment } = admin.firestore.FieldValue;
-const waitlistsCol = db.collection("waitlists");
-const classesCol = db.collection("classes");
-const usersCol = db.collection("users");
-
 dotenv.config();
 
 const app = express();
@@ -82,6 +76,10 @@ app.use(
 );
 
 app.use(express.json());
+app.use(
+  "/uploads",
+  express.static(path.join(process.cwd(), "public", "uploads"))
+);
 app.use((req, res, next) => {
   // @ts-ignore
   (global as any).__activeRequests =
@@ -257,9 +255,8 @@ startServer();
 ──────────────────────────────────────────────────────────────── */
 cron.schedule("*/10 * * * *", async () => {
   try {
-    // Hora de México
     const nowMexico = DateTime.now().setZone("America/Mexico_City");
-    const todayStr = nowMexico.toISODate() ?? ""; // fallback para evitar null
+    const todayStr = nowMexico.toISODate() ?? "";
     const currentTime = nowMexico.toFormat("HH:mm");
 
     if (!todayStr) {
@@ -267,33 +264,34 @@ cron.schedule("*/10 * * * *", async () => {
       return;
     }
 
-    const snapshot = await admin
-      .firestore()
-      .collection("classes")
-      .where("status", "==", "abierta")
-      .get();
-
-    const updatePromises: Promise<WriteResult>[] = [];
-    let updates = 0;
-
-    snapshot.docs.forEach((doc) => {
-      const data = doc.data();
-      if (
-        data.day < todayStr ||
-        (data.day === todayStr &&
-          data.hour <= currentTime &&
-          data.hour >= "06:00" &&
-          data.hour <= "22:00")
-      ) {
-        updatePromises.push(doc.ref.update({ status: "cerrada" }));
-        updates += 1;
-      }
+    const sessions = await prisma.session.findMany({
+      where: { status: 1 },
+      select: { id: true, dateStart: true, timeStart: true },
     });
 
-    await Promise.all(updatePromises);
+    const expiredIds: number[] = [];
 
-    if (updates > 0) {
-      console.log(`🟢 Cerradas automáticamente: ${updates} clases.`);
+    for (const session of sessions) {
+      const day = session.dateStart.toISOString().slice(0, 10);
+      const hour = session.timeStart.toISOString().slice(11, 16);
+
+      if (
+        day < todayStr ||
+        (day === todayStr &&
+          hour <= currentTime &&
+          hour >= "06:00" &&
+          hour <= "22:00")
+      ) {
+        expiredIds.push(session.id);
+      }
+    }
+
+    if (expiredIds.length > 0) {
+      await prisma.session.updateMany({
+        where: { id: { in: expiredIds } },
+        data: { status: 0 },
+      });
+      console.log(`🟢 Cerradas automáticamente: ${expiredIds.length} clases.`);
     }
   } catch (err) {
     console.error("❌ Error en el CRON de cierre automático de clases:", err);
@@ -311,95 +309,75 @@ cron.schedule("*/10 * * * *", async () => {
     const dayStr = inTwoHours.toISODate();
     const hourStr = inTwoHours.toFormat("HH:mm");
 
-    const classSnap = await admin
-      .firestore()
-      .collection("classes")
-      .where("day", "==", dayStr)
-      .where("hour", "==", hourStr)
-      .get();
+    if (!dayStr) return;
 
-    const sendPromises: Promise<unknown>[] = [];
-
-    classSnap.docs.forEach((classDoc) => {
-      const classData = classDoc.data();
-      const classId = classDoc.id;
-
-      sendPromises.push(
-        (async () => {
-          const reservationsSnap = await admin
-            .firestore()
-            .collection("reservations")
-            .where("classId", "==", classId)
-            .where("status", "==", "active")
-            .get();
-
-          reservationsSnap.docs.forEach((reservationDoc) => {
-            const reservationData = reservationDoc.data();
-
-            if (!reservationData.emailReminderSent) {
-              sendPromises.push(
-                (async () => {
-                  const userSnap = await admin
-                    .firestore()
-                    .doc(`users/${reservationData.userId}`)
-                    .get();
-
-                  if (!userSnap.exists) return;
-
-                  const { email, firstName: name } = userSnap.data()!;
-
-                  try {
-                    let disciplineName = String(
-                      (classData as any)?.discipline?.name || ""
-                    );
-                    if (
-                      !disciplineName &&
-                      typeof (classData as any)?.discipline === "string"
-                    ) {
-                      try {
-                        const dSnap = await admin
-                          .firestore()
-                          .collection("disciplines")
-                          .doc(String((classData as any).discipline))
-                          .get();
-                        disciplineName = String(
-                          (dSnap.data() as any)?.name || "Clase"
-                        );
-                      } catch {
-                        disciplineName = "Clase";
-                      }
-                    }
-                    await sendClassReminderEmail(
-                      email,
-                      name ?? "Usuario",
-                      {
-                        day: classData.day,
-                        hour: classData.hour,
-                        discipline: disciplineName,
-                        branch: classData.branch?.name ?? "Sucursal",
-                      },
-                      classData.type
-                    );
-
-                    await reservationDoc.ref.update({
-                      emailReminderSent: true,
-                    });
-                    console.log(`📧 Recordatorio enviado a ${email}`);
-                  } catch (err) {
-                    console.error(
-                      `❌ Error enviando recordatorio a ${email}:`,
-                      err
-                    );
-                  }
-                })()
-              );
-            }
-          });
-        })()
-      );
+    const sessions = await prisma.session.findMany({
+      where: {
+        status: 1,
+        dateStart: {
+          gte: new Date(`${dayStr}T00:00:00.000Z`),
+          lte: new Date(`${dayStr}T23:59:59.999Z`),
+        },
+      },
+      include: {
+        discipline: true,
+        branchOffice: true,
+        reservations: {
+          where: {
+            isAvailable: true,
+            emailReminderSent: false,
+          },
+          include: { user: true },
+        },
+      },
     });
 
-    await Promise.all(sendPromises);
+    const targetSessions = sessions.filter((s) => {
+      const sHour = s.timeStart.toISOString().slice(11, 16);
+      return sHour === hourStr;
+    });
+
+    const emailPromises: Promise<void>[] = [];
+
+    for (const session of targetSessions) {
+      const disciplineName = session.discipline?.name || "Clase";
+      const branchName = session.branchOffice?.name || "Sucursal";
+
+      for (const res of session.reservations) {
+        if (!res.user || !res.user.email) continue;
+
+        const { email, name } = res.user;
+
+        emailPromises.push(
+          (async () => {
+            try {
+              await sendClassReminderEmail(
+                email,
+                name ?? "Usuario",
+                {
+                  day: dayStr,
+                  hour: hourStr,
+                  discipline: disciplineName,
+                  branch: branchName,
+                },
+                "individual"
+              );
+
+              await prisma.reservation.update({
+                where: { id: res.id },
+                data: { emailReminderSent: true },
+              });
+
+              console.log(`📧 Recordatorio enviado a ${email}`);
+            } catch (err) {
+              console.error(`❌ Error enviando recordatorio a ${email}:`, err);
+            }
+          })()
+        );
+      }
+    }
+
+    await Promise.all(emailPromises);
   } catch (err) {
     console.error("❌ Error en el CRON de recordatorios de clases:", err);
   }
@@ -410,59 +388,55 @@ cron.schedule("*/10 * * * *", async () => {
 ──────────────────────────────────────────────────────────────── */
 cron.schedule("0 8 * * *", async () => {
   try {
-    const usersSnap = await admin.firestore().collection("users").get();
-    const updatePromises: Promise<unknown>[] = [];
-
-    usersSnap.docs.forEach((doc) => {
-      const { email, firstName, packages } = doc.data();
-
-      if (!Array.isArray(packages)) return;
-
-      packages.forEach((pkg, i) => {
-        const {
-          totalClasses = 0,
-          classesUsed = 0,
-          isUnlimited = false,
-          active = false,
-          notifiedLowClasses = false,
-        } = pkg;
-
-        const remaining = totalClasses - classesUsed;
-
-        if (active && !isUnlimited && remaining <= 1 && !notifiedLowClasses) {
-          updatePromises.push(
-            (async () => {
-              try {
-                // 1. Enviar email
-                await sendClassReminderEmail(
-                  email,
-                  firstName ?? "Usuario",
-                  {
-                    day: "Próximas clases",
-                    hour: "¡Atención!",
-                    discipline: `Te queda${remaining === 1 ? "" : "n"} ${remaining} clase${remaining === 1 ? "" : "s"}`,
-                    branch: "¡Aprovecha antes que se acabe tu paquete!",
-                  },
-                  "individual"
-                ); // Tipo por defecto para emails de expiración
-
-                // 2. Marcar como notificado
-                const userRef = admin.firestore().doc(`users/${doc.id}`);
-                const updatedPackages = [...packages];
-                updatedPackages[i].notifiedLowClasses = true;
-
-                await userRef.update({ packages: updatedPackages });
-                console.log(
-                  `🔔 Aviso enviado a ${email} (restantes: ${remaining})`
-                );
-              } catch (err) {
-                console.error(`❌ Error enviando aviso a ${email}:`, err);
-              }
-            })()
-          );
-        }
-      });
+    const users = await prisma.user.findMany({
+      where: {
+        classesAvailable: { lte: 1, gte: 0 },
+      },
+      include: {
+        transactions: {
+          where: {
+            status: 1,
+            notifiedLowClasses: false,
+            expiredAt: { gt: new Date() },
+          },
+        },
+      },
     });
+
+    const updatePromises: Promise<void>[] = [];
+
+    for (const user of users) {
+      if (user.transactions.length > 0) {
+        updatePromises.push(
+          (async () => {
+            try {
+              await sendClassReminderEmail(
+                user.email,
+                user.name ?? "Usuario",
+                {
+                  day: "Próximas clases",
+                  hour: "¡Atención!",
+                  discipline: `Te queda${user.classesAvailable === 1 ? "" : "n"} ${user.classesAvailable} clase${user.classesAvailable === 1 ? "" : "s"}`,
+                  branch: "¡Aprovecha antes que se acabe tu paquete!",
+                },
+                "individual"
+              );
+
+              await prisma.transaction.updateMany({
+                where: { id: { in: user.transactions.map((t) => t.id) } },
+                data: { notifiedLowClasses: true },
+              });
+
+              console.log(
+                `🔔 Aviso enviado a ${user.email} (restantes: ${user.classesAvailable})`
+              );
+            } catch (err) {
+              console.error(`❌ Error enviando aviso a ${user.email}:`, err);
+            }
+          })()
+        );
+      }
+    }
 
     await Promise.all(updatePromises);
   } catch (err) {
@@ -474,64 +448,62 @@ cron.schedule("0 8 * * *", async () => {
    CRON 4: Avisar 5 días antes de que un paquete expire
 ──────────────────────────────────────────────────────────────── */
 cron.schedule("30 8 * * *", async () => {
-  // a las 08:30 CDMX, diario
   try {
     const today = DateTime.now().setZone("America/Mexico_City").startOf("day");
-    const usersSnap = await admin.firestore().collection("users").get();
 
-    const updatePromises: Promise<unknown>[] = [];
+    const startRange = today.plus({ days: 1 }).toJSDate();
+    const endRange = today.plus({ days: 6 }).toJSDate();
 
-    usersSnap.docs.forEach((doc) => {
-      const { email, firstName, packages } = doc.data();
-
-      if (!Array.isArray(packages)) return;
-
-      packages.forEach((pkg, i) => {
-        const {
-          expiresAt,
-          isUnlimited = false,
-          active = false,
-          notifiedExpiry = false, // ← nuevo flag
-        } = pkg;
-
-        if (!active || isUnlimited || !expiresAt) return;
-
-        const expiryDate = DateTime.fromISO(expiresAt)
-          .setZone("America/Mexico_City")
-          .startOf("day");
-        const daysLeft = Math.round(expiryDate.diff(today, "days").days);
-
-        if (daysLeft <= 5 && daysLeft >= 1 && !notifiedExpiry) {
-          updatePromises.push(
-            (async () => {
-              try {
-                /* 1.  enviar email --------------------------------------- */
-                await sendPackageExpiryWarningEmail(
-                  email,
-                  firstName ?? "Usuario",
-                  daysLeft
-                );
-
-                /* 2.  marcar como notificado ----------------------------- */
-                const userRef = admin.firestore().doc(`users/${doc.id}`);
-                const updatedPackages = [...packages];
-                updatedPackages[i].notifiedExpiry = true;
-
-                await userRef.update({ packages: updatedPackages });
-                console.log(
-                  `⏰ Aviso de expiración enviado a ${email} (faltan ${daysLeft} días)`
-                );
-              } catch (err) {
-                console.error(
-                  `❌ Error enviando aviso de expiración a ${email}:`,
-                  err
-                );
-              }
-            })()
-          );
-        }
-      });
+    const transactions = await prisma.transaction.findMany({
+      where: {
+        status: 1,
+        expiredAt: {
+          gte: startRange,
+          lt: endRange,
+        },
+        notifiedExpiry: false,
+      },
+      include: { user: true },
     });
+
+    const updatePromises: Promise<void>[] = [];
+
+    for (const tx of transactions) {
+      if (!tx.user || !tx.expiredAt) continue;
+
+      const expiryDate = DateTime.fromJSDate(tx.expiredAt)
+        .setZone("America/Mexico_City")
+        .startOf("day");
+      const daysLeft = Math.round(expiryDate.diff(today, "days").days);
+
+      if (daysLeft <= 5 && daysLeft >= 1) {
+        updatePromises.push(
+          (async () => {
+            try {
+              await sendPackageExpiryWarningEmail(
+                tx.user!.email,
+                tx.user!.name ?? "Usuario",
+                daysLeft
+              );
+
+              await prisma.transaction.update({
+                where: { id: tx.id },
+                data: { notifiedExpiry: true },
+              });
+
+              console.log(
+                `⏰ Aviso de expiración enviado a ${tx.user!.email} (faltan ${daysLeft} días)`
+              );
+            } catch (err) {
+              console.error(
+                `❌ Error enviando aviso de expiración a ${tx.user!.email}:`,
+                err
+              );
+            }
+          })()
+        );
+      }
+    }
 
     await Promise.all(updatePromises);
   } catch (err) {
@@ -541,96 +513,77 @@ cron.schedule("30 8 * * *", async () => {
 
 /* ────────────────────────────────────────────────────────────────
    CRON 5: Devolver crédito de waitlist expiradas
-   Cada hora en horario 06:00–20:00
 ──────────────────────────────────────────────────────────────── */
 cron.schedule("0 * * * *", async () => {
   try {
     const now = DateTime.now().setZone("America/Mexico_City");
     const { hour } = now;
-    if (hour < 6 || hour > 20) return; // sólo entre 06:00 y 20:00
+    if (hour < 6 || hour > 20) return;
 
-    const todayStr = now.toISODate()!; // "YYYY-MM-DD"
+    const todayStr = now.toISODate()!;
     const currentTime = now.toFormat("HH:mm");
 
-    // 1) Traer todas las waitlists pendientes
-    const snap = await waitlistsCol.where("status", "==", "pending").get();
-    if (snap.empty) return;
+    const waitlists = await prisma.waitingList.findMany({
+      where: { status: "pending" },
+      include: { session: true, user: true },
+    });
 
-    const batch = db.batch();
+    if (waitlists.length === 0) return;
+
+    const updates: Promise<void>[] = [];
     let processed = 0;
 
-    // 2) Para cada entrada, comprobar si la clase ya empezó
-    await Promise.all(
-      snap.docs.map(async (waitDoc) => {
-        const { classId, userId } = waitDoc.data() as {
-          classId: string;
-          userId: string;
-          createdAt: string;
-        };
+    for (const wl of waitlists) {
+      if (!wl.session || !wl.user) continue;
 
-        const classSnap = await classesCol.doc(classId).get();
-        if (!classSnap.exists) return;
+      const day = wl.session.dateStart.toISOString().slice(0, 10);
+      const clsHour = wl.session.timeStart.toISOString().slice(11, 16);
 
-        const { day, hour: clsHour } = classSnap.data() as {
-          day: string;
-          hour: string;
-        };
-        const classStarted =
-          day < todayStr || (day === todayStr && clsHour <= currentTime);
+      const classStarted =
+        day < todayStr || (day === todayStr && clsHour <= currentTime);
 
-        if (!classStarted) return;
+      if (!classStarted) continue;
 
-        // 3) Cargar usuario y revertir crédito si no es ilimitado
-        const userRef = usersCol.doc(userId);
-        const userSnap = await userRef.get();
-        if (!userSnap.exists) return;
+      updates.push(
+        (async () => {
+          await prisma.$transaction(async (tx) => {
+            await tx.user.update({
+              where: { id: wl.userId },
+              data: {
+                classesAvailable: { increment: 1 },
+                classesTaken: { decrement: 1 },
+              },
+            });
 
-        // Sólo tomamos paquetes; no necesitamos userClasses
-        const { packages: userPkgs } = userSnap.data() as {
-          packages?: Array<{
-            active: boolean;
-            isUnlimited: boolean;
-            expiresAt?: string;
-          }>;
-        };
-
-        const hasUnlimited = (userPkgs ?? []).some(
-          ({ active, isUnlimited, expiresAt }) =>
-            active &&
-            isUnlimited &&
-            (!expiresAt || new Date(expiresAt) > now.toJSDate())
-        );
-
-        if (!hasUnlimited) {
-          batch.update(userRef, {
-            "classes.available": increment(1),
-            "classes.taken": increment(-1),
+            await tx.waitingList.update({
+              where: {
+                userId_sessionId: {
+                  userId: wl.userId,
+                  sessionId: wl.sessionId,
+                },
+              },
+              data: {
+                status: "rejected",
+                rejectedEmailSent: true,
+              },
+            });
           });
-        }
 
-        // 4) Marcar waitlist como rechazada y bandera de email
-        batch.update(waitDoc.ref, {
-          status: "rejected",
-          rejectedEmailSent: true,
-        });
-        processed += 1;
+          if (!wl.rejectedEmailSent) {
+            await sendWaitlistRejectedEmail(
+              wl.user!.email,
+              wl.user!.name ?? "Usuario",
+              String(wl.sessionId)
+            );
+          }
 
-        // 5) Enviar email de rechazo (revisando posible duplicado)
-        const latestWl = await waitDoc.ref.get();
-        const latestData = latestWl.data() as
-          | { rejectedEmailSent?: boolean }
-          | undefined;
-        const alreadySent = Boolean(latestData?.rejectedEmailSent);
-        if (!alreadySent) {
-          const { email, firstName } = userSnap.data()!;
-          await sendWaitlistRejectedEmail(email, firstName, classId);
-        }
-      })
-    );
+          processed++;
+        })()
+      );
+    }
 
-    // 6) Commit de los cambios de una sola vez
-    if (processed > 0) {
-      await batch.commit();
+    if (updates.length > 0) {
+      await Promise.all(updates);
       console.log(
         `🔄 Devolvieron crédito y rechazaron ${processed} waitlists expiradas.`
       );
@@ -640,167 +593,8 @@ cron.schedule("0 * * * *", async () => {
   }
 });
 
-cron.schedule("*/2 * * * *", async () => {
-  try {
-    const now = DateTime.now().setZone("America/Mexico_City");
-    const startOfYear = now.startOf("year").toJSDate();
-    const endOfYear = now.endOf("year").toJSDate();
-    const startOfMonth = now.startOf("month").toJSDate();
-    const endOfMonth = now.endOf("month").toJSDate();
-    const startOfWeek = now.startOf("week").toJSDate();
-    const endOfWeek = now.endOf("week").toJSDate();
-    const startOfDay = now.startOf("day").toJSDate();
-    const endOfDay = now.endOf("day").toJSDate();
-
-    const db = admin.firestore();
-
-    const sumQuery = async (
-      col: "transactions" | "paypal_transactions",
-      start?: Date,
-      end?: Date
-    ): Promise<number> => {
-      const isTx = col === "transactions";
-      const statusNeeded = isTx ? "paid" : "COMPLETED";
-      let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
-        .collection(col)
-        .select("amount", "status", "createdAt");
-      if (start) q = q.where("createdAt", ">=", start.toISOString());
-      if (end) q = q.where("createdAt", "<=", end.toISOString());
-      if (!start && !end) q = q.where("status", "==", statusNeeded);
-      const snap = await q.get();
-      return snap.docs.reduce((sum, d) => {
-        const data = d.data() as any;
-        if ((start || end) && data.status !== statusNeeded) return sum;
-        const amt =
-          typeof data.amount === "string" ? Number(data.amount) : data.amount;
-        return sum + (Number.isFinite(amt) ? amt : 0);
-      }, 0);
-    };
-
-    const sumDiscounts = async (start: Date, end: Date) => {
-      let withDisc = 0;
-      let withoutDisc = 0;
-      let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
-        .collection("transactions")
-        .select("amount", "status", "createdAt", "couponUsed");
-      q = q.where("createdAt", ">=", start.toISOString());
-      q = q.where("createdAt", "<=", end.toISOString());
-      const snap = await q.get();
-      snap.docs.forEach((d) => {
-        const data = d.data() as any;
-        if (data.status !== "paid") return;
-        const amt =
-          typeof data.amount === "string" ? Number(data.amount) : data.amount;
-        const val = Number.isFinite(amt) ? amt : 0;
-        if (data.couponUsed) withDisc += val;
-        else withoutDisc += val;
-      });
-      return { withDisc, withoutDisc };
-    };
-
-    const sumByMethod = async (start: Date, end: Date) => {
-      const result: { cash: number; terminal: number; paypal: number } = {
-        cash: 0,
-        terminal: 0,
-        paypal: 0,
-      };
-      let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = db
-        .collection("transactions")
-        .select("amount", "status", "createdAt", "paymentMethod");
-      q = q.where("createdAt", ">=", start.toISOString());
-      q = q.where("createdAt", "<=", end.toISOString());
-      const snap = await q.get();
-      snap.docs.forEach((d) => {
-        const data = d.data() as any;
-        if (data.status !== "paid") return;
-        const amt =
-          typeof data.amount === "string" ? Number(data.amount) : data.amount;
-        const val = Number.isFinite(amt) ? amt : 0;
-        const raw = data.paymentMethod as string | undefined;
-        let method: "cash" | "terminal" | "paypal" | null = null;
-        if (raw === "cash") method = "cash";
-        else if (raw === "terminal") method = "terminal";
-        else if (raw === "paypal") method = "terminal";
-        else if (typeof raw === "string") {
-          if (raw.startsWith("payment.")) {
-            const sub = raw.slice("payment.".length);
-            if (sub === "card" || sub === "pos" || sub === "paypal")
-              method = "terminal";
-            else if (sub === "cash") method = "cash";
-          }
-        }
-        if (method) result[method] += val;
-      });
-      return result;
-    };
-
-    const [yearTx, yearPaypal] = await Promise.all([
-      sumQuery("transactions", startOfYear, endOfYear),
-      sumQuery("paypal_transactions", startOfYear, endOfYear),
-    ]);
-    const anual = yearTx + yearPaypal;
-
-    const [monthTx, monthPaypal] = await Promise.all([
-      sumQuery("transactions", startOfMonth, endOfMonth),
-      sumQuery("paypal_transactions", startOfMonth, endOfMonth),
-    ]);
-    const mensual = monthTx + monthPaypal;
-
-    const [weekTx, weekPaypal] = await Promise.all([
-      sumQuery("transactions", startOfWeek, endOfWeek),
-      sumQuery("paypal_transactions", startOfWeek, endOfWeek),
-    ]);
-    const semanal = weekTx + weekPaypal;
-
-    const [dayTx, dayPaypal] = await Promise.all([
-      sumQuery("transactions", startOfDay, endOfDay),
-      sumQuery("paypal_transactions", startOfDay, endOfDay),
-    ]);
-    const diaria = dayTx + dayPaypal;
-
-    const [yearDisc, monthDisc] = await Promise.all([
-      sumDiscounts(startOfYear, endOfYear),
-      sumDiscounts(startOfMonth, endOfMonth),
-    ]);
-
-    const [yearByMethod, monthByMethod] = await Promise.all([
-      sumByMethod(startOfYear, endOfYear),
-      sumByMethod(startOfMonth, endOfMonth),
-    ]);
-
-    let total = 0;
-    const summaryDoc = await db.doc("metrics/summary").get();
-    const existingTotal = summaryDoc.exists
-      ? (summaryDoc.data()?.total as number | undefined)
-      : undefined;
-    if (typeof existingTotal === "number" && Number.isFinite(existingTotal)) {
-      total = existingTotal;
-    } else {
-      const [allTx, allPaypal] = await Promise.all([
-        sumQuery("transactions"),
-        sumQuery("paypal_transactions"),
-      ]);
-      total = allTx + allPaypal;
-    }
-
-    await db.doc("metrics/summary").set(
-      {
-        total,
-        anual,
-        mensual,
-        semanal,
-        diaria,
-        anualConDescuento: yearDisc.withDisc,
-        anualSinDescuento: yearDisc.withoutDisc,
-        mensualConDescuento: monthDisc.withDisc,
-        mensualSinDescuento: monthDisc.withoutDisc,
-        anualPorMetodo: yearByMethod,
-        mensualPorMetodo: monthByMethod,
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
-  } catch (err) {
-    console.error("Error actualizando metrics/summary:", err);
-  }
-});
+/* ────────────────────────────────────────────────────────────────
+   CRON 6: Métricas eliminadas en SQL
+   (La agregación se debe hacer on-demand via API)
+──────────────────────────────────────────────────────────────── */
+// cron.schedule("*/2 * * * *", async () => { ... });

@@ -1,5 +1,5 @@
 import bcrypt from "bcrypt";
-import admin from "../config/firebase";
+import { prisma } from "../config/prisma";
 
 const DEFAULT_ADMIN = {
   email: "admintemporal@pbstudioapp.com",
@@ -15,53 +15,45 @@ const DEFAULT_ADMIN = {
 
 export const initializeDefaultAdmin = async () => {
   try {
-    console.log("Verificando si ya existe el administrador por defecto...");
+    console.log("Verificando si ya existe el administrador por defecto (SQL)...");
 
-    // Buscar si ya existe en Firestore ese email
-    const existingDoc = await admin
-      .firestore()
-      .collection("users")
-      .where("email", "==", DEFAULT_ADMIN.email)
-      .limit(1)
-      .get();
+    const existingUser = await prisma.user.findUnique({
+      where: { email: DEFAULT_ADMIN.email },
+    });
 
-    if (!existingDoc.empty) {
-      console.log("Ya existe el administrador por defecto en Firestore.");
+    if (existingUser) {
+      console.log("Ya existe el administrador por defecto en SQL.");
       return;
-    }
-
-    // Crear o recuperar el usuario en Firebase Auth
-    let userRecord;
-    try {
-      userRecord = await admin.auth().createUser({
-        email: DEFAULT_ADMIN.email,
-        password: DEFAULT_ADMIN.password,
-      });
-      console.log("Administrador creado en Firebase Auth.");
-    } catch (error) {
-			console.log("TCL: initializeDefaultAdmin -> error", error)
-      userRecord = await admin.auth().getUserByEmail(DEFAULT_ADMIN.email);
-      console.log("Administrador ya existía en Firebase Auth.");
     }
 
     // Hashear la contraseña
     const hashedPassword = await bcrypt.hash(DEFAULT_ADMIN.password, 10);
 
-    // Guardar el usuario en Firestore
-    await admin
-      .firestore()
-      .collection("users")
-      .doc(userRecord.uid)
-      .set({
-        ...DEFAULT_ADMIN,
-        password: hashedPassword,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
+    // Buscar sucursal por defecto (opcional)
+    const branch = await prisma.branchOffice.findFirst({
+        where: { name: DEFAULT_ADMIN.branch }
+    });
 
-    console.log("✅ Administrador por defecto creado exitosamente en Firestore.");
+    await prisma.user.create({
+      data: {
+        email: DEFAULT_ADMIN.email,
+        password: hashedPassword,
+        name: DEFAULT_ADMIN.firstName,
+        lastname: DEFAULT_ADMIN.lastName,
+        phone: DEFAULT_ADMIN.phone,
+        enabled: true,
+        roles: JSON.stringify(["admin"]),
+        permissions: JSON.stringify(DEFAULT_ADMIN.permissions),
+        branchOfficeId: branch?.id ?? null,
+        freeSession: false,
+        classesAvailable: 0,
+        classesTaken: 0,
+      },
+    });
+
+    console.log("✅ Administrador por defecto creado exitosamente en SQL.");
   } catch (error) {
     console.error("❌ Error al crear administrador por defecto:", error);
-    throw error;
+    // No throw error to avoid stopping server startup if this fails
   }
 };

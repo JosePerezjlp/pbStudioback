@@ -1,34 +1,40 @@
 import { Request, Response } from "express";
 import multer from "multer";
-import admin from "../config/firebase";
-import { uploadToFirebase } from "../utils/uploadToFirebase";
+import { prisma } from "../config/prisma";
+import { uploadLocal, deleteLocalFile } from "../utils/uploadLocal";
 
-// ✅ Función para eliminar una imagen de Firebase Storage
-const deleteFromFirebase = async (url: string) => {
-  try {
-    const bucket = admin.storage().bucket();
+/* ─────────────────────────────
+   Helpers
+────────────────────────────── */
 
-    const storageDomain = "https://storage.googleapis.com/";
-    const pathStart = `${bucket.name}/`;
+// Helper to get configuration by module
+const getConfig = async (moduleName: string) => {
+  const config = await prisma.configuration.findFirst({
+    where: { module: moduleName },
+  });
+  return config;
+};
 
-    if (!url.startsWith(storageDomain + pathStart)) {
-      console.warn("⚠️ URL no pertenece al bucket esperado:", url);
-      return;
-    }
-
-    const filePath = url.replace(storageDomain + pathStart, "");
-    await bucket.file(filePath).delete();
-
-    console.log("✅ Imagen eliminada:", filePath);
-  } catch (error) {
-    console.warn("⚠️ No se pudo eliminar la imagen:", url, error);
+// Helper to set configuration by module (create or update)
+const setConfig = async (moduleName: string, data: any) => {
+  const existing = await getConfig(moduleName);
+  const dataStr = typeof data === "string" ? data : JSON.stringify(data);
+  
+  if (existing) {
+    return await prisma.configuration.update({
+      where: { id: existing.id },
+      data: { data: dataStr },
+    });
+  } else {
+    return await prisma.configuration.create({
+      data: { module: moduleName, data: dataStr },
+    });
   }
 };
 
-
 // 🔄 Función genérica para guardar contenido HTML
 const updateContent = async (
-  docId: string,
+  moduleName: string,
   html: string,
   res: Response
 ): Promise<void> => {
@@ -38,37 +44,39 @@ const updateContent = async (
       return;
     }
 
-    const contentRef = admin.firestore().collection("content").doc(docId);
-
-    await contentRef.set(
-      {
-        html,
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
+    await setConfig(moduleName, { html, updatedAt: new Date().toISOString() });
 
     res
       .status(200)
-      .json({ message: `Contenido '${docId}' actualizado correctamente` });
+      .json({ message: `Contenido '${moduleName}' actualizado correctamente` });
   } catch (error) {
-    console.error(`Error al actualizar contenido '${docId}':`, error);
+    console.error(`Error al actualizar contenido '${moduleName}':`, error);
     res.status(500).json({ error: "Error interno del servidor" });
   }
 };
 
 // 🔄 Función genérica para obtener contenido HTML
-const getContent = async (docId: string, res: Response): Promise<void> => {
+const getContent = async (moduleName: string, res: Response): Promise<void> => {
   try {
-    const doc = await admin.firestore().collection("content").doc(docId).get();
-    if (!doc.exists) {
-      res.status(404).json({ error: `Contenido '${docId}' no encontrado` });
+    const config = await getConfig(moduleName);
+    if (!config) {
+      // Return empty or default if not found, or 404
+      // Frontend expects { html: "..." }
+      res.status(404).json({ error: `Contenido '${moduleName}' no encontrado` });
       return;
     }
 
-    res.status(200).json(doc.data());
+    // Try to parse if it's JSON, otherwise return as string wrapper
+    let data;
+    try {
+        data = JSON.parse(config.data);
+    } catch {
+        data = { html: config.data };
+    }
+
+    res.status(200).json(data);
   } catch (error) {
-    console.error(`Error al obtener contenido '${docId}':`, error);
+    console.error(`Error al obtener contenido '${moduleName}':`, error);
     res.status(500).json({ error: "Error interno del servidor" });
   }
 };
@@ -91,22 +99,24 @@ export const updatePrivacyController = (req: Request, res: Response) =>
 
 export const getPrivacyController = async (_req: Request, res: Response) => {
   try {
-    const db = admin.firestore();
     const preferredIds = ["privacyNotice", "privacy", "avisoPrivacidad", "aviso_de_privacidad"];
+    
+    // Try to find any of the preferred modules
+    const configs = await prisma.configuration.findMany({
+        where: { module: { in: preferredIds } }
+    });
 
-    for (const id of preferredIds) {
-      const snap = await db.collection("content").doc(id).get();
-      if (snap.exists) {
-        res.status(200).json(snap.data());
-        return;
-      }
-    }
-
-    const coll = await db.collection("content").limit(1).get();
-    if (!coll.empty) {
-      const d = coll.docs[0];
-      res.status(200).json(d.data());
-      return;
+    if (configs.length > 0) {
+         // Sort by preferred order if needed, but for now just take the first one found
+         // or specific logic. The original code looped.
+         // Let's just pick 'privacyNotice' if present, else first available.
+         const match = configs.find(c => c.module === "privacyNotice") || configs[0];
+         try {
+             res.status(200).json(JSON.parse(match.data));
+         } catch {
+             res.status(200).json({ html: match.data });
+         }
+         return;
     }
 
     res.status(404).json({ error: "Contenido 'privacyNotice' no encontrado" });
@@ -129,10 +139,10 @@ export const updateHomeContent = [
       const {
         textBannerMain,
         textTitleLeft,
-        textSubtitleLeft, // ✅ corregido
+        textSubtitleLeft,
         textBtnLeft,
         textTitleRight,
-        textSubtitleRight, // ✅ corregido
+        textSubtitleRight,
         textBtnRight,
       } = req.body;
 
@@ -140,9 +150,16 @@ export const updateHomeContent = [
         [fieldname: string]: Express.Multer.File[];
       };
 
-      const contentRef = admin.firestore().collection("homeContent").doc("main");
-      const existingDoc = await contentRef.get();
-      const existingData = existingDoc.exists ? existingDoc.data() || {} : {};
+      // Get existing content
+      const existingConfig = await getConfig("homeContent");
+      let existingData: any = {};
+      if (existingConfig) {
+          try {
+              existingData = JSON.parse(existingConfig.data);
+          } catch {
+              existingData = {};
+          }
+      }
 
       const imageUrls: Record<string, string> = {
         imageMain: existingData.imageMain || "",
@@ -155,11 +172,11 @@ export const updateHomeContent = [
         Object.keys(imageUrls).map(async (key) => {
           if (images[key]) {
             const file = images[key][0];
-            const newUrl = await uploadToFirebase(file);
+            const newUrl = await uploadLocal(file, "home");
 
             const oldUrl = imageUrls[key];
             if (oldUrl && oldUrl !== newUrl) {
-              await deleteFromFirebase(oldUrl);
+              await deleteLocalFile(oldUrl);
             }
 
             imageUrls[key] = newUrl;
@@ -167,27 +184,23 @@ export const updateHomeContent = [
         })
       );
 
-      await contentRef.set(
-        {
+      const newData = {
           textBannerMain,
           textTitleLeft,
-          textSubTitleLeft: textSubtitleLeft ?? "", // ← evita undefined
+          textSubTitleLeft: textSubtitleLeft ?? "",
           textBtnLeft,
           textTitleRight,
-          textSubTitleRight: textSubtitleRight ?? "", // ← evita undefined
+          textSubTitleRight: textSubtitleRight ?? "",
           textBtnRight,
           ...imageUrls,
           updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
-      
+      };
 
-      const updatedDoc = await contentRef.get();
+      await setConfig("homeContent", newData);
 
       res.status(200).json({
         message: "Contenido actualizado",
-        data: updatedDoc.data(),
+        data: newData,
       });
     } catch (error) {
       console.error("Error al actualizar home content:", error);
@@ -202,18 +215,19 @@ export const getHomeContent = async (
   res: Response
 ): Promise<void> => {
   try {
-    const doc = await admin
-      .firestore()
-      .collection("homeContent")
-      .doc("main")
-      .get();
+    const config = await getConfig("homeContent");
 
-    if (!doc.exists) {
+    if (!config) {
       res.status(404).json({ error: "Contenido de inicio no encontrado" });
       return;
     }
 
-    res.status(200).json(doc.data());
+    try {
+        const data = JSON.parse(config.data);
+        res.status(200).json(data);
+    } catch {
+        res.status(500).json({ error: "Error al procesar datos de inicio" });
+    }
   } catch (error) {
     console.error("Error al obtener contenido de inicio:", error);
     res.status(500).json({ error: "Error interno del servidor" });

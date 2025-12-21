@@ -4,8 +4,8 @@ import {
   createPayPalOrderController,
   createPayPalOrderMobileController,
   capturePayPalOrderController,
-  getAllTransactionsController,
 } from "../controllers/paypalController";
+import { getAllTransactionsController } from "../controllers/transactionController";
 
 const router = express.Router();
 

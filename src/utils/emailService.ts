@@ -1,10 +1,12 @@
 import { Resend } from "resend";
-import admin from "../config/firebase";
 import { formatDateVisibleMx } from "./time";
+import { prisma } from "../config/prisma";
 
 const resend = new Resend(process.env.RESEND_API_KEY); // usa variables de entorno en producción
 
 const FROM = "PB Studio <admin@pbstudioapp.com>"; // puedes personalizarlo si ya tienes un dominio verificado
+const BASE_URL =
+  process.env.API_URL || "https://webpbstudio-produccion.onrender.com";
 
 // utilidad para escapar HTML en strings dinámicos
 const escapeHtml = (s: string) =>
@@ -44,7 +46,7 @@ export const sendWelcomeEmail = async (to: string, name: string) => {
               <tr>
                 <td align="center" style="padding:24px 16px 8px 16px;">
                   <img 
-                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2FRegistroemail.jpeg?alt=media&token=314a8fde-30a3-454c-9481-231f579d7a20" 
+                    src="${BASE_URL}/uploads/emailImages/Registroemail.jpeg" 
                     alt="Bienvenida de PB Studio"
                     width="600"
                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
@@ -119,7 +121,7 @@ export const sendReservationConfirmationEmail = async (
               <tr>
                 <td align="center" style="padding:24px 16px 8px 16px;">
                   <img
-                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2FReservaconfirm.jpeg?alt=media&token=0c1f6357-cde3-4a03-8045-2acce3f13695"
+                    src="${BASE_URL}/uploads/emailImages/Reservaconfirm.jpeg"
                     alt="Reserva confirmada en PB Studio"
                     width="600"
                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
@@ -190,7 +192,7 @@ export const sendReservationCancelledEmail = async (
               <tr>
                 <td align="center" style="padding:24px 16px 8px 16px;">
                   <img
-                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2FReservaCancelada.jpeg?alt=media&token=7547e7cd-1119-4bc9-bd28-b73c75a68a66"
+                    src="${BASE_URL}/uploads/emailImages/ReservaCancelada.jpeg"
                     alt="Reserva cancelada en PB Studio"
                     width="600"
                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
@@ -352,7 +354,7 @@ export const sendPackageExpiryWarningEmail = async (
               <tr>
                 <td align="center" style="padding:24px 16px 8px 16px;">
                   <img 
-                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2Fpaqueteproximoaexpirar.jpeg?alt=media&token=45defb9c-0118-4290-a1ff-0cd71f1bc69d" 
+                    src="${BASE_URL}/uploads/emailImages/paqueteproximoaexpirar.jpeg" 
                     alt="PB Studio - Paquete por expirar"
                     width="600"
                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
@@ -429,13 +431,14 @@ export const sendClassReminderEmail = async (
 
 export const getAdminContactEmail = async (): Promise<string | null> => {
   try {
-    const doc = await admin
-      .firestore()
-      .collection("configurations")
-      .doc("general_settings")
-      .get();
+    const config = await prisma.configuration.findFirst({
+      where: { module: "general_settings" },
+    });
 
-    const data = doc.data();
+    if (!config || !config.data) return null;
+
+    // Assuming data is stored as a JSON string
+    const data = JSON.parse(config.data);
     return data?.email || null;
   } catch (err) {
     console.error("Error al obtener el correo de contacto:", err);
@@ -517,7 +520,7 @@ export const sendPasswordResetCodeEmail = async (
               <tr>
                 <td align="center" style="padding:24px 16px 8px 16px;">
                   <img 
-                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2Frestablecerpass.jpeg?alt=media&token=b916775b-3c22-46b8-9e3d-dffa3525bbea" 
+                    src="${BASE_URL}/uploads/emailImages/restablecerpass.jpeg" 
                     alt="PB Studio - Restablecer contraseña"
                     width="600"
                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
@@ -577,29 +580,19 @@ export const sendPasswordResetCodeEmail = async (
 };
 
 async function getClassInfo(classId: string) {
-  const doc = await admin.firestore().collection("classes").doc(classId).get();
-  if (!doc.exists) throw new Error("Clase no encontrada para email");
-  const { discipline, day, hour } = doc.data() as {
-    discipline: string | { name?: string };
-    day: string;
-    hour: string;
-  };
-  const dateStr = formatDateVisibleMx(day);
-  let disciplineName = "";
-  if (typeof discipline === "string") {
-    try {
-      const dSnap = await admin
-        .firestore()
-        .collection("disciplines")
-        .doc(discipline)
-        .get();
-      disciplineName = String((dSnap.data() as any)?.name || discipline);
-    } catch {
-      disciplineName = String(discipline);
-    }
-  } else {
-    disciplineName = String(discipline?.name || "Clase");
-  }
+  const session = await prisma.session.findUnique({
+    where: { id: Number(classId) },
+    include: { discipline: true },
+  });
+
+  if (!session) throw new Error("Clase no encontrada para email");
+
+  const { discipline, dateStart, timeStart } = session;
+
+  const dateStr = formatDateVisibleMx(dateStart.toISOString().slice(0, 10));
+  const hour = timeStart.toISOString().slice(11, 16); // HH:mm from ISO string (assuming stored as UTC components)
+  const disciplineName = discipline?.name || "Clase";
+
   return { discipline: disciplineName, dateStr, hour };
 }
 
