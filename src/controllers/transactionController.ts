@@ -568,14 +568,141 @@ export const getTransactionSummaryController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const total = await prisma.transaction.aggregate({
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+    const startOfDay = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    );
+
+    // 1. Totales Generales (Histórico)
+    const totalAgg = await prisma.transaction.aggregate({
       _sum: { total: true },
-      _count: { id: true },
       where: { status: 1 }, // Paid
     });
-    res.json({ totalAmount: total._sum.total, count: total._count.id });
+
+    // 2. Totales por Periodo
+    // Anual (Año actual)
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const anualAgg = await prisma.transaction.aggregate({
+      _sum: { total: true },
+      where: { status: 1, createdAt: { gte: startOfYear } },
+    });
+
+    // Mensual
+    const mensualAgg = await prisma.transaction.aggregate({
+      _sum: { total: true },
+      where: { status: 1, createdAt: { gte: startOfMonth } },
+    });
+
+    // Semanal
+    const semanalAgg = await prisma.transaction.aggregate({
+      _sum: { total: true },
+      where: { status: 1, createdAt: { gte: startOfWeek } },
+    });
+
+    // Diario
+    const diariaAgg = await prisma.transaction.aggregate({
+      _sum: { total: true },
+      where: { status: 1, createdAt: { gte: startOfDay } },
+    });
+
+    // 3. Desgloses con/sin descuento (Anual y Mensual)
+    // Anual con descuento
+    const anualConDescAgg = await prisma.transaction.aggregate({
+      _sum: { total: true },
+      where: {
+        status: 1,
+        createdAt: { gte: startOfYear },
+        discount: { gt: 0 }, // Asumiendo que 'discount' > 0 significa con descuento
+      },
+    });
+    // Anual sin descuento
+    const anualSinDescAgg = await prisma.transaction.aggregate({
+      _sum: { total: true },
+      where: {
+        status: 1,
+        createdAt: { gte: startOfYear },
+        discount: 0, // O null si discount es nullable y default null, pero schema dice Int @default(0)
+      },
+    });
+
+    // Mensual con descuento
+    const mensualConDescAgg = await prisma.transaction.aggregate({
+      _sum: { total: true },
+      where: {
+        status: 1,
+        createdAt: { gte: startOfMonth },
+        discount: { gt: 0 },
+      },
+    });
+    // Mensual sin descuento
+    const mensualSinDescAgg = await prisma.transaction.aggregate({
+      _sum: { total: true },
+      where: {
+        status: 1,
+        createdAt: { gte: startOfMonth },
+        discount: 0,
+      },
+    });
+
+    // 4. Desgloses por Método de Pago (Anual y Mensual)
+    const methods = ["cash", "terminal", "paypal"];
+
+    // Función helper para obtener totales por método
+    const getTotalsByMethod = async (fromDate: Date) => {
+      const result: Record<string, number> = {
+        cash: 0,
+        terminal: 0,
+        paypal: 0,
+      };
+
+      const groups = await prisma.transaction.groupBy({
+        by: ["chargeMethod"],
+        _sum: { total: true },
+        where: {
+          status: 1,
+          createdAt: { gte: fromDate },
+        },
+      });
+
+      groups.forEach((g) => {
+        if (g.chargeMethod && result.hasOwnProperty(g.chargeMethod)) {
+          result[g.chargeMethod] = Number(g._sum.total || 0);
+        }
+      });
+      return result;
+    };
+
+    const anualPorMetodo = await getTotalsByMethod(startOfYear);
+    const mensualPorMetodo = await getTotalsByMethod(startOfMonth);
+
+    // Construir respuesta final
+    const response = {
+      total: Number(totalAgg._sum.total || 0),
+      anual: Number(anualAgg._sum.total || 0),
+      mensual: Number(mensualAgg._sum.total || 0),
+      semanal: Number(semanalAgg._sum.total || 0),
+      diaria: Number(diariaAgg._sum.total || 0),
+
+      anualConDescuento: Number(anualConDescAgg._sum.total || 0),
+      anualSinDescuento: Number(anualSinDescAgg._sum.total || 0),
+
+      mensualConDescuento: Number(mensualConDescAgg._sum.total || 0),
+      mensualSinDescuento: Number(mensualSinDescAgg._sum.total || 0),
+
+      anualPorMetodo,
+      mensualPorMetodo,
+    };
+
+    res.json(response);
   } catch (e) {
-    res.status(500).json({ error: "Error obteniendo resumen" });
+    console.error("Error calculating summary:", e);
+    res.status(500).json({ error: "Error obteniendo resumen detallado" });
   }
 };
 

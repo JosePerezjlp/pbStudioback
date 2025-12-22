@@ -127,23 +127,63 @@ export const getAllInstructorsController = async (
     const enabledRaw =
       typeof qp.enabled === "string" ? qp.enabled.toLowerCase() : undefined;
 
-    let whereClause = {};
-    if (enabledRaw === "true") whereClause = { enabled: true };
-    else if (enabledRaw === "false") whereClause = { enabled: false };
+    let whereClause: any = {};
+    if (enabledRaw === "true") whereClause.isActive = true;
+    else if (enabledRaw === "false") whereClause.isActive = false;
 
-    const instructors = await prisma.instructor.findMany({
+    // Fetch all staff matching the active criteria
+    const staffMembers = await prisma.staff.findMany({
       where: whereClause,
-      orderBy: { createdAt: "desc" },
+      include: {
+        profile: true,
+        instructorsDisciplines: {
+          include: {
+            discipline: true,
+          },
+        },
+      },
     });
 
-    // Transform result to match previous API format (disciplines as array)
+    // Filter by role manually since roles are serialized JSON strings
+    const instructors = staffMembers.filter((staff) => {
+      try {
+        const roles = staff.roles;
+        if (typeof roles === "string") {
+          if (roles.includes("ROLE_INSTRUCTOR")) return true;
+          try {
+            const parsed = JSON.parse(roles);
+            return Array.isArray(parsed) && parsed.includes("ROLE_INSTRUCTOR");
+          } catch {
+            return false;
+          }
+        }
+        return false;
+      } catch {
+        return false;
+      }
+    });
+
+    // Map to the expected format
     const formattedInstructors = instructors.map((inst) => ({
-      ...inst,
-      disciplines: inst.disciplines ? JSON.parse(inst.disciplines) : [],
+      id: inst.id,
+      firstName: inst.profile?.firstname || inst.username,
+      lastName: inst.profile?.paternalSurname || "",
+      email: inst.email,
+      phone: inst.profile?.telephone || "",
+      address: inst.profile?.address || "",
+      description: inst.profile?.description || "",
+      joinDate: inst.profile?.admissionAt || inst.lastLogin,
+      disciplines: inst.instructorsDisciplines.map((d) => d.discipline.name),
+      enabled: inst.isActive,
+      branch: "",
+      image: inst.profile?.photo || "",
+      createdAt: inst.profile?.createdAt,
+      updatedAt: inst.profile?.updatedAt,
     }));
 
     res.status(200).json({ instructors: formattedInstructors });
   } catch (error) {
+    console.error("Error getting instructors:", error);
     res.status(500).json({
       error: "Error al obtener instructores",
       details: String(error),
@@ -167,8 +207,16 @@ export const getInstructorByIdController = async (
   }
 
   try {
-    const instructor = await prisma.instructor.findUnique({
+    const instructor = await prisma.staff.findUnique({
       where: { id },
+      include: {
+        profile: true,
+        instructorsDisciplines: {
+          include: {
+            discipline: true,
+          },
+        },
+      },
     });
 
     if (!instructor) {
@@ -176,12 +224,42 @@ export const getInstructorByIdController = async (
       return;
     }
 
-    res.status(200).json({
-      ...instructor,
-      disciplines: instructor.disciplines
-        ? JSON.parse(instructor.disciplines)
-        : [],
-    });
+    // Check role
+    let isInstructor = false;
+    try {
+      if (instructor.roles.includes("ROLE_INSTRUCTOR")) isInstructor = true;
+      else {
+        const parsed = JSON.parse(instructor.roles);
+        if (Array.isArray(parsed) && parsed.includes("ROLE_INSTRUCTOR"))
+          isInstructor = true;
+      }
+    } catch {}
+
+    if (!isInstructor) {
+      res.status(404).json({ error: "Instructor no encontrado" });
+      return;
+    }
+
+    const formattedInstructor = {
+      id: instructor.id,
+      firstName: instructor.profile?.firstname || instructor.username,
+      lastName: instructor.profile?.paternalSurname || "",
+      email: instructor.email,
+      phone: instructor.profile?.telephone || "",
+      address: instructor.profile?.address || "",
+      description: instructor.profile?.description || "",
+      joinDate: instructor.profile?.admissionAt || instructor.lastLogin,
+      disciplines: instructor.instructorsDisciplines.map(
+        (d) => d.discipline.name
+      ),
+      enabled: instructor.isActive,
+      branch: "",
+      image: instructor.profile?.photo || "",
+      createdAt: instructor.profile?.createdAt,
+      updatedAt: instructor.profile?.updatedAt,
+    };
+
+    res.status(200).json(formattedInstructor);
   } catch (error) {
     res.status(500).json({
       error: "Error al obtener instructor",

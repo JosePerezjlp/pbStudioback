@@ -13,7 +13,7 @@ export const checkPermission = (
   return async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const { user } = req;
-      
+
       if (!user) {
         res.status(401).json({ error: "No autenticado" });
         return;
@@ -22,24 +22,29 @@ export const checkPermission = (
       const { role, permissions = {} } = user;
 
       // Los admins tienen todos los permisos
-      if (role === "admin") {
+      if (role === "admin" || user.isAdmin) {
         next();
         return;
       }
 
       // Para staff (colaborador / instructor), verificar permisos específicos
-      if (role === "collaborator" || role === "instructor") {
+      if (
+        role === "collaborator" ||
+        role === "instructor" ||
+        role === "reception" ||
+        role === "staff"
+      ) {
         const modulePermissions = permissions[module] || [];
-        
+
         if (modulePermissions.includes(action)) {
           next();
           return;
         }
 
-        res.status(403).json({ 
+        res.status(403).json({
           error: "Permisos insuficientes",
           required: { module, action },
-          userPermissions: permissions
+          userPermissions: permissions,
         });
         return;
       }
@@ -63,7 +68,7 @@ export const checkAnyPermission = (
   return async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const { user } = req;
-      
+
       if (!user) {
         res.status(401).json({ error: "No autenticado" });
         return;
@@ -72,13 +77,18 @@ export const checkAnyPermission = (
       const { role, permissions = {} } = user;
 
       // Los admins tienen todos los permisos
-      if (role === "admin") {
+      if (role === "admin" || user.isAdmin) {
         next();
         return;
       }
 
       // Para staff (colaborador / instructor), verificar al menos uno de los permisos
-      if (role === "collaborator" || role === "instructor") {
+      if (
+        role === "collaborator" ||
+        role === "instructor" ||
+        role === "reception" ||
+        role === "staff"
+      ) {
         const hasPermission = permissionPairs.some(([module, action]) => {
           const modulePermissions = permissions[module] || [];
           return modulePermissions.includes(action);
@@ -89,10 +99,10 @@ export const checkAnyPermission = (
           return;
         }
 
-        res.status(403).json({ 
+        res.status(403).json({
           error: "Permisos insuficientes",
           required: permissionPairs,
-          userPermissions: permissions
+          userPermissions: permissions,
         });
         return;
       }

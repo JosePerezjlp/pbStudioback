@@ -121,7 +121,13 @@ export const getAllUsersController = async (req: Request, res: Response) => {
   res.status(501).json({ message: "Not implemented" });
 };
 export const getRecentUsersController = async (req: Request, res: Response) => {
-  res.status(501).json({ message: "Not implemented" });
+  try {
+    const recentUsers = await userService.getRecentUsers(5);
+    res.json(recentUsers);
+  } catch (error) {
+    console.error("Error getting recent users:", error);
+    res.status(500).json({ error: "Error obteniendo usuarios recientes" });
+  }
 };
 export const getUserByIdController = async (req: Request, res: Response) => {
   res.status(501).json({ message: "Not implemented" });
@@ -145,7 +151,17 @@ export const disableUserController = async (req: Request, res: Response) => {
   res.status(501).json({ message: "Not implemented" });
 };
 export const getUsersStatsController = async (req: Request, res: Response) => {
-  res.status(501).json({ message: "Not implemented" });
+  try {
+    console.log("Starting getUsersStatsController...");
+    const stats = await userService.getUsersStats();
+    console.log("Stats retrieved:", stats);
+    res.json(stats);
+  } catch (error) {
+    console.error("Error getting user stats:", error);
+    res
+      .status(500)
+      .json({ error: "Error obteniendo estadísticas de usuarios" });
+  }
 };
 export const updateMyBirthDateController = async (
   req: Request,

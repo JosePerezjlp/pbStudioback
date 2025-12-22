@@ -227,9 +227,12 @@ export const getFutureClassesController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const day = String(req.query.day || "");
+    const today = DateTime.now().toISODate();
+    const day = String(req.query.day || today);
     const hour = String(req.query.hour || "");
-    const discipline = String(req.query.discipline || "");
+    const discipline = req.query.discipline
+      ? String(req.query.discipline)
+      : undefined;
     const branchId = (req.query.branchId as string | undefined) || undefined;
     const typeParam = (req.query.type as string | undefined) || undefined;
     const limitParam = Number(req.query.limit ?? 50);
@@ -240,23 +243,21 @@ export const getFutureClassesController = async (
     ).toLowerCase();
     const onlyAvailable = onlyAvailableParam !== "false";
 
-    if (!day || !discipline) {
-      res
-        .status(400)
-        .json({ error: "Parámetros 'day' y 'discipline' son requeridos" });
-      return;
-    }
+    // Removed strict validation for day and discipline to allow flexible queries
+    // if (!day || !discipline) {
+    //   res
+    //     .status(400)
+    //     .json({ error: "Parámetros 'day' y 'discipline' son requeridos" });
+    //   return;
+    // }
 
     const where: Prisma.SessionWhereInput = {
       dateStart: { gte: new Date(day) },
       status: 1, // Abierta
     };
 
-    // Filter by discipline (name) - need to join or find ID first?
-    // Since discipline param is ID in Firestore usually, but here it says "discipline"
-    // In Firestore controller it was doing: .where("discipline", "==", discipline)
-    // Assuming discipline param is the ID.
-    if (!isNaN(Number(discipline))) {
+    // Filter by discipline if provided
+    if (discipline && !isNaN(Number(discipline))) {
       where.disciplineId = Number(discipline);
     }
 

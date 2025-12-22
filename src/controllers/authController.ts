@@ -10,19 +10,26 @@ export const loginController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { email, password } = req.body;
+    const { email, password, isDashboard } = req.body;
 
     if (!email || !password) {
       res.status(400).json({ error: "Email y contraseña son requeridos" });
       return;
     }
 
-    const user = await userService.validateUser(email, password);
+    const user = await userService.validateUser(email, password, isDashboard);
 
     if (!user) {
       res.status(401).json({ error: "Credenciales inválidas" });
       return;
     }
+
+    // Generar y guardar sessionId para validar sesión única
+    const sessionId = `session_${user.type}_${user.id}_${Date.now()}_${Math.random()
+      .toString(36)
+      .substring(7)}`;
+    await userService.updateSessionId(user.id, user.type, sessionId);
+    user.sessionId = sessionId;
 
     // Generar Token JWT
     const token = jwt.sign(
@@ -31,6 +38,7 @@ export const loginController = async (
         id: user.id,
         email: user.email,
         role: user.role,
+        type: user.type,
       },
       JWT_SECRET,
       { expiresIn: "7d" } // Token dura 7 días
@@ -48,9 +56,8 @@ export const loginController = async (
         name: user.name,
         isAdmin: user.isAdmin,
         branches: user.branches || [],
-        // Campos legacy que el frontend podría esperar
-        permissions: {}, // Rellenar si es necesario
-        sessionId: "session_sql_" + Date.now(),
+        permissions: user.permissions || {},
+        sessionId: sessionId,
       },
     });
   } catch (error) {
@@ -76,11 +83,9 @@ export const registerController = async (
     } = req.body;
 
     if (!email || !password || !firstName) {
-      res
-        .status(400)
-        .json({
-          error: "Faltan datos obligatorios (email, password, firstName)",
-        });
+      res.status(400).json({
+        error: "Faltan datos obligatorios (email, password, firstName)",
+      });
       return;
     }
 

@@ -563,7 +563,8 @@ export const getAllReservationsController = async (
                 branchName: r.session.branchOffice?.name,
                 disciplineName: r.session.discipline?.name,
                 instructorFirstName: r.session.instructor?.profile?.firstname,
-                instructorLastName: r.session.instructor?.profile?.paternalSurname
+                instructorLastName: r.session.instructor?.profile?.paternalSurname,
+                type: r.session.type === 'g' ? 'grupal' : (r.session.type === 'i' ? 'individual' : r.session.type)
             } : null
         }));
 

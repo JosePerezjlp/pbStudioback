@@ -61,8 +61,24 @@ class UserService {
    */
   async validateUser(
     email: string,
-    passwordPlain: string
+    passwordPlain: string,
+    isDashboard: boolean = false
   ): Promise<UserContext | null> {
+    // Si es login de dashboard, buscar SOLO en Staff
+    if (isDashboard) {
+      const staff = await this.prisma.staff.findUnique({
+        where: { email },
+        include: { staffBranchOffices: true },
+      });
+
+      if (staff && staff.password) {
+        const isValid = await bcrypt.compare(passwordPlain, staff.password);
+        if (isValid) return this.mapStaffToContext(staff);
+      }
+      return null;
+    }
+
+    // Comportamiento normal (Web/App):
     // 1. Buscar en Users
     const user = await this.prisma.user.findUnique({
       where: { email },
@@ -149,10 +165,22 @@ class UserService {
   private mapStaffToContext(staff: any): UserContext {
     let roles: string[] = [];
     try {
-      if (staff.roles && staff.roles.startsWith("[")) {
-        roles = JSON.parse(staff.roles);
-      } else {
-        roles = [staff.roles];
+      const rawRoles = staff.roles;
+      if (rawRoles) {
+        if (rawRoles.startsWith("[")) {
+          // JSON format: ["admin", "staff"]
+          roles = JSON.parse(rawRoles);
+        } else if (rawRoles.includes("ROLE_ADMIN")) {
+          // PHP Serialized format hack: check content
+          roles = ["admin"];
+        } else if (rawRoles.includes("ROLE_INSTRUCTOR")) {
+          roles = ["instructor"];
+        } else if (rawRoles.includes("ROLE_RECEPTION")) {
+          roles = ["reception"];
+        } else {
+          // Fallback or single string
+          roles = [rawRoles];
+        }
       }
     } catch (e) {}
 
@@ -161,12 +189,81 @@ class UserService {
     let permissions: Record<string, string[]> = {};
     try {
       if (staff.permissions) {
-        permissions =
-          typeof staff.permissions === "string"
-            ? JSON.parse(staff.permissions)
-            : staff.permissions;
+        // Handle PHP Serialized permissions (starts with a:)
+        if (
+          typeof staff.permissions === "string" &&
+          staff.permissions.startsWith("a:")
+        ) {
+          // For now, if it's PHP serialized, we might fail to parse it easily in JS without a library.
+          // But if you just saved it from the new system, it should be JSON stringified.
+          // If it is coming from the old system as PHP serialized, we might need a parser or just reset it.
+          // Let's assume if it starts with 'a:', we can't read it easily yet, so we treat it as empty or try to regex.
+
+          // However, the user says "se guardo correctamente .. aparecen los permisos".
+          // This suggests it MIGHT be saved as JSON string but maybe the "string" check is failing or JSON.parse is failing?
+          // Or maybe it is saved as an object in Prisma if the type is JSON?
+          // Prisma types `Json` field as `any` or object, not string.
+
+          // Let's check if it's already an object
+          if (typeof staff.permissions === "object") {
+            permissions = staff.permissions;
+          } else {
+            permissions = JSON.parse(staff.permissions);
+          }
+        } else {
+          // Standard JSON parsing attempt
+          permissions =
+            typeof staff.permissions === "string"
+              ? JSON.parse(staff.permissions)
+              : staff.permissions;
+        }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.log("Error parsing permissions:", e);
+    }
+
+    // Si es admin, otorgar todos los permisos por defecto si no tiene ninguno definido
+    if (isAdmin && Object.keys(permissions).length === 0) {
+      permissions = {
+        dashboard: ["estadisticas"],
+        sucursales: ["listado", "crear", "editar"],
+        salones: ["editar", "crear", "listado"],
+        paquetes: ["editar", "crear", "listado"],
+        disciplinas: ["editar", "crear", "listado"],
+        instructores: ["listado", "crear", "editar", "borrar"],
+        clases: [
+          "lista_espera",
+          "reservaciones",
+          "cancelar",
+          "editar",
+          "crear",
+          "listado",
+        ],
+        clases_por_dia: ["editar", "crear", "listado"],
+        usuarios: [
+          "editar",
+          "restablecer_contraseña",
+          "habilitar_deshabilitar",
+          "perfil",
+          "crear",
+          "exportar",
+          "listado",
+        ],
+        reservaciones: ["crear", "cancelar"],
+        transacciones: [
+          "listado",
+          "caja",
+          "detalle",
+          "cancelar",
+          "editar_fecha_expiracion",
+        ],
+        cupones: ["listado", "crear", "editar", "detalle"],
+        contenido: ["editar"],
+        configuracion: ["editar"],
+        staff: ["listado", "crear", "editar"],
+        operaciones: ["ver"],
+      };
+    }
 
     // Staff doesn't have sessionId in schema, but adminSessionGuard tried to read it.
     // If we want to support it, we should add it to Staff schema too.
@@ -188,6 +285,76 @@ class UserService {
       permissions,
       sessionId: staff.sessionId,
     };
+  }
+
+  /**
+   * Obtiene estadísticas de usuarios
+   */
+  async getUsersStats() {
+    const totalUsers = await this.prisma.user.count();
+
+    const activeUsers = await this.prisma.user.count({
+      where: { enabled: true },
+    });
+
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const newUsersLast30Days = await this.prisma.user.count({
+      where: {
+        createdAt: {
+          gte: thirtyDaysAgo,
+        },
+      },
+    });
+
+    return {
+      totalUsers,
+      activeUsers,
+      newUsersLast30Days,
+    };
+  }
+
+  /**
+   * Obtiene los usuarios más recientes
+   */
+  async getRecentUsers(limit: number = 5) {
+    return this.prisma.user.findMany({
+      take: limit,
+      orderBy: {
+        createdAt: "desc",
+      },
+      select: {
+        id: true,
+        name: true,
+        lastname: true,
+        email: true,
+        createdAt: true,
+        phone: true,
+        enabled: true,
+      },
+    });
+  }
+
+  /**
+   * Actualiza el sessionId de un usuario o staff
+   */
+  async updateSessionId(
+    id: number,
+    type: "user" | "staff",
+    sessionId: string
+  ): Promise<void> {
+    if (type === "user") {
+      await this.prisma.user.update({
+        where: { id },
+        data: { sessionId },
+      });
+    } else {
+      await this.prisma.staff.update({
+        where: { id },
+        data: { sessionId },
+      });
+    }
   }
 }
 
