@@ -4,7 +4,6 @@ import bcrypt from "bcrypt";
 
 export interface UserContext {
   id: number;
-  firebaseUid?: string | null;
   email: string;
   role: string;
   branches?: number[];
@@ -36,7 +35,23 @@ class UserService {
 
     let birthday: Date | null = null;
     if (data.birthDate) {
-      birthday = new Date(data.birthDate);
+      // Formato esperado: dd/mm (sin año)
+      const parts = data.birthDate.trim().split("/");
+      if (parts.length === 2) {
+        const day = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10);
+
+        // Validar día y mes
+        if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+          // Usar año 2000 como año por defecto
+          const testDate = new Date(2000, month - 1, day);
+
+          // Verificar que la fecha sea válida (por ejemplo, 31/02 sería inválido)
+          if (testDate.getDate() === day && testDate.getMonth() === month - 1) {
+            birthday = testDate;
+          }
+        }
+      }
     }
 
     return this.prisma.user.create({
@@ -52,6 +67,8 @@ class UserService {
         enabled: true,
         freeSession: false,
         roles: JSON.stringify(["user"]),
+        createdAt: new Date(),
+        updatedAt: new Date(),
       },
     });
   }
@@ -87,7 +104,14 @@ class UserService {
 
     if (user && user.password) {
       const isValid = await bcrypt.compare(passwordPlain, user.password);
-      if (isValid) return this.mapUserToContext(user);
+      if (isValid) {
+        // Registrar último inicio de sesión para usuarios finales
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { lastLogin: new Date() },
+        });
+        return this.mapUserToContext(user);
+      }
     }
 
     // 2. Buscar en Staff
@@ -98,7 +122,14 @@ class UserService {
 
     if (staff && staff.password) {
       const isValid = await bcrypt.compare(passwordPlain, staff.password);
-      if (isValid) return this.mapStaffToContext(staff);
+      if (isValid) {
+        // Registrar último inicio de sesión para staff/dashboard
+        await this.prisma.staff.update({
+          where: { id: staff.id },
+          data: { lastLogin: new Date() },
+        });
+        return this.mapStaffToContext(staff);
+      }
     }
 
     return null;
@@ -127,16 +158,38 @@ class UserService {
   }
 
   private mapUserToContext(user: any): UserContext {
+    // Manejar AMBOS formatos: PHP serializado (datos viejos) y JSON (datos nuevos)
     let roles: string[] = ["user"];
     try {
       if (user.roles) {
-        if (user.roles.startsWith("[")) {
-          roles = JSON.parse(user.roles);
-        } else {
-          roles = [user.roles];
+        if (typeof user.roles === "string") {
+          // JSON format: ["user"] o ["admin"]
+          if (user.roles.startsWith("[")) {
+            roles = JSON.parse(user.roles);
+          }
+          // PHP serialized format: a:{i:0;s:9:"ROLE_USER";}
+          else if (user.roles.includes("a:{")) {
+            // Extraer roles de formato PHP serializado
+            if (user.roles.includes("ROLE_ADMIN")) {
+              roles = ["admin"];
+            } else if (user.roles.includes("ROLE_USER")) {
+              roles = ["user"];
+            } else {
+              roles = ["user"]; // fallback
+            }
+          }
+          // String simple: "user" o "admin"
+          else {
+            roles = [user.roles];
+          }
+        } else if (Array.isArray(user.roles)) {
+          roles = user.roles;
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error("Error parsing user roles:", e);
+      // Fallback a ["user"] si falla el parse
+    }
 
     let permissions: Record<string, string[]> = {};
     try {
@@ -146,11 +199,12 @@ class UserService {
             ? JSON.parse(user.permissions)
             : user.permissions;
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error("Error parsing user permissions:", e);
+    }
 
     return {
       id: user.id,
-      firebaseUid: user.firebaseUid,
       email: user.email,
       name: user.name,
       role: roles.includes("admin") ? "admin" : "user",
@@ -163,63 +217,76 @@ class UserService {
   }
 
   private mapStaffToContext(staff: any): UserContext {
-    let roles: string[] = [];
+    // Manejar AMBOS formatos: PHP serializado (datos viejos) y JSON (datos nuevos)
+    let roles: string[] = ["staff"];
     try {
-      const rawRoles = staff.roles;
-      if (rawRoles) {
-        if (rawRoles.startsWith("[")) {
-          // JSON format: ["admin", "staff"]
-          roles = JSON.parse(rawRoles);
-        } else if (rawRoles.includes("ROLE_ADMIN")) {
-          // PHP Serialized format hack: check content
-          roles = ["admin"];
-        } else if (rawRoles.includes("ROLE_INSTRUCTOR")) {
-          roles = ["instructor"];
-        } else if (rawRoles.includes("ROLE_RECEPTION")) {
-          roles = ["reception"];
-        } else {
-          // Fallback or single string
-          roles = [rawRoles];
+      if (staff.roles) {
+        if (typeof staff.roles === "string") {
+          // JSON format: ["admin"], ["instructor"], etc.
+          if (staff.roles.startsWith("[")) {
+            roles = JSON.parse(staff.roles);
+          }
+          // PHP serialized format: a:{i:0;s:10:"ROLE_ADMIN";}
+          else if (staff.roles.includes("a:{")) {
+            // Extraer roles de formato PHP serializado
+            if (staff.roles.includes("ROLE_ADMIN")) {
+              roles = ["admin"];
+            } else if (staff.roles.includes("ROLE_INSTRUCTOR")) {
+              roles = ["instructor"];
+            } else if (staff.roles.includes("ROLE_RECEPTION")) {
+              roles = ["reception"];
+            } else if (staff.roles.includes("ROLE_STAFF")) {
+              roles = ["staff"];
+            } else {
+              roles = ["staff"]; // fallback
+            }
+          }
+          // String simple: "admin", "instructor", etc.
+          else {
+            roles = [staff.roles];
+          }
+        } else if (Array.isArray(staff.roles)) {
+          roles = staff.roles;
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error("Error parsing staff roles:", e);
+      // Fallback a ["staff"] si falla el parse
+    }
 
     const isAdmin = roles.includes("admin");
 
     let permissions: Record<string, string[]> = {};
     try {
       if (staff.permissions) {
-        // Handle PHP Serialized permissions (starts with a:)
-        if (
-          typeof staff.permissions === "string" &&
-          staff.permissions.startsWith("a:")
-        ) {
-          // For now, if it's PHP serialized, we might fail to parse it easily in JS without a library.
-          // But if you just saved it from the new system, it should be JSON stringified.
-          // If it is coming from the old system as PHP serialized, we might need a parser or just reset it.
-          // Let's assume if it starts with 'a:', we can't read it easily yet, so we treat it as empty or try to regex.
+        // Manejar AMBOS formatos: PHP serializado y JSON
+        if (typeof staff.permissions === "string") {
+          const permsStr = staff.permissions.trim();
 
-          // However, the user says "se guardo correctamente .. aparecen los permisos".
-          // This suggests it MIGHT be saved as JSON string but maybe the "string" check is failing or JSON.parse is failing?
-          // Or maybe it is saved as an object in Prisma if the type is JSON?
-          // Prisma types `Json` field as `any` or object, not string.
-
-          // Let's check if it's already an object
-          if (typeof staff.permissions === "object") {
-            permissions = staff.permissions;
-          } else {
-            permissions = JSON.parse(staff.permissions);
+          // PHP serialized format: a:{i:0;s:15:"backend_session";...}
+          if (permsStr.startsWith("a:")) {
+            // Extraer todos los valores de permisos entre comillas
+            // Ej: a:2:{i:0;s:15:"backend_session";i:1;s:12:"backend_user";}
+            const matches = [...permsStr.matchAll(/"([^"]+)"/g)];
+            const flatLegacyPerms = matches.map((m) => m[1]);
+            permissions = this.mapLegacyStaffPermissions(
+              flatLegacyPerms,
+              roles
+            );
           }
-        } else {
-          // Standard JSON parsing attempt
-          permissions =
-            typeof staff.permissions === "string"
-              ? JSON.parse(staff.permissions)
-              : staff.permissions;
+          // JSON format: {"dashboard":["estadisticas"],...}
+          else if (permsStr.startsWith("{")) {
+            permissions = JSON.parse(permsStr);
+          }
+        } else if (
+          typeof staff.permissions === "object" &&
+          staff.permissions !== null
+        ) {
+          permissions = staff.permissions;
         }
       }
     } catch (e) {
-      console.log("Error parsing permissions:", e);
+      console.error("Error parsing staff permissions:", e);
     }
 
     // Si es admin, otorgar todos los permisos por defecto si no tiene ninguno definido
@@ -275,7 +342,6 @@ class UserService {
 
     return {
       id: staff.id,
-      firebaseUid: staff.firebaseUid,
       email: staff.email || "",
       name: staff.username || "Staff",
       role: roles[0] || "staff",
@@ -285,6 +351,132 @@ class UserService {
       permissions,
       sessionId: staff.sessionId,
     };
+  }
+
+  /**
+   * Convierte la lista plana de permisos legacy del backend PHP
+   * (backend_session, backend_user_new, dashboard_stats, etc.)
+   * al nuevo esquema de permisos por módulo/acción usado en Node.
+   */
+  private mapLegacyStaffPermissions(
+    legacyPerms: string[],
+    roles: string[]
+  ): Record<string, string[]> {
+    const result: Record<string, Set<string>> = {};
+
+    const add = (module: string, action: string) => {
+      if (!result[module]) result[module] = new Set<string>();
+      result[module].add(action);
+    };
+
+    for (const perm of legacyPerms) {
+      switch (perm) {
+        // Dashboard
+        case "dashboard_stats":
+          add("dashboard", "estadisticas");
+          break;
+
+        // Paquetes
+        case "backend_package":
+          add("paquetes", "listado");
+          break;
+        case "backend_package_edit":
+          add("paquetes", "editar");
+          add("paquetes", "crear");
+          break;
+
+        // Clases (sessions)
+        case "backend_session":
+          add("clases", "listado");
+          break;
+        case "backend_session_new":
+          add("clases", "crear");
+          break;
+        case "backend_session_edit":
+          add("clases", "editar");
+          break;
+        case "backend_session_cancel":
+          add("clases", "cancelar");
+          break;
+        case "backend_session_reservations":
+          add("clases", "reservaciones");
+          break;
+        case "backend_session_waitinglist":
+          add("clases", "lista_espera");
+          break;
+
+        // Clases por día
+        case "backend_session_day":
+          add("clases_por_dia", "listado");
+          break;
+        case "backend_session_day_new":
+          add("clases_por_dia", "crear");
+          break;
+        case "backend_session_day_edit":
+          add("clases_por_dia", "editar");
+          break;
+
+        // Usuarios
+        case "backend_user":
+          add("usuarios", "listado");
+          break;
+        case "backend_user_new":
+          add("usuarios", "crear");
+          break;
+        case "backend_user_show":
+          add("usuarios", "perfil");
+          break;
+        case "backend_user_edit":
+          add("usuarios", "editar");
+          break;
+        case "backend_user_toggle_enable":
+          add("usuarios", "habilitar_deshabilitar");
+          break;
+        case "backend_user_export":
+          add("usuarios", "exportar");
+          break;
+        case "backend_user_reset_password":
+          add("usuarios", "restablecer_contraseña");
+          break;
+
+        // Reservaciones de usuario
+        case "backend_user_reservation_new":
+          add("reservaciones", "crear");
+          break;
+        case "backend_user_reservation_cancel":
+          add("reservaciones", "cancelar");
+          break;
+
+        // Transacciones
+        case "backend_transaction":
+        case "backend_transaction_show":
+          add("transacciones", "listado");
+          add("transacciones", "detalle");
+          break;
+        case "backend_transaction_new":
+          add("transacciones", "crear");
+          break;
+        case "backend_transaction_edit_expiration":
+          add("transacciones", "editar_fecha_expiracion");
+          break;
+
+        default:
+          break;
+      }
+    }
+
+    // Si no se pudo mapear nada y el rol es admin/colaborador,
+    // dejamos que la lógica de más abajo asigne defaults para admin.
+    if (Object.keys(result).length === 0) {
+      return {};
+    }
+
+    // Convertir Sets a arrays simples
+    const out: Record<string, string[]> = {};
+    for (const [module, actions] of Object.entries(result)) {
+      out[module] = Array.from(actions);
+    }
+    return out;
   }
 
   /**
@@ -349,12 +541,8 @@ class UserService {
         where: { id },
         data: { sessionId },
       });
-    } else {
-      await this.prisma.staff.update({
-        where: { id },
-        data: { sessionId },
-      });
     }
+    // Staff doesn't have sessionId field in database
   }
 }
 

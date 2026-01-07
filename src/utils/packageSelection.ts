@@ -27,6 +27,10 @@ export const normalizeClassType = (
   if (t === ClassType.GROUPS) return ClassType.GROUPS;
   if (t === ClassType.INDIVIDUAL) return ClassType.INDIVIDUAL;
 
+  // Códigos cortos históricos usados en MySQL: 'g' (grupal) / 'i' (individual)
+  if (t === "g") return ClassType.GROUPS;
+  if (t === "i") return ClassType.INDIVIDUAL;
+
   // Sinónimos ES/EN
   const groupsSyn = ["group", "groups", "grupal", "grupales"];
   const indivSyn = [

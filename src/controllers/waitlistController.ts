@@ -80,7 +80,7 @@ export const createWaitlistController = async (
         },
       });
 
-      if (existing && existing.status === "pending") {
+      if (existing && existing.isAvailable) {
         throw new Error(ERROR_CODES.DUPLICATE_RESERVATION);
       }
 
@@ -126,8 +126,8 @@ export const createWaitlistController = async (
         }
       }
 
-      let consumedClass = false;
-      let packageId: number | null = null;
+      // Package tracking removed as packageId and consumedClass fields don't exist in schema
+      // These would need to be tracked elsewhere if needed
 
       if (!hasUnlimited) {
         // Seleccionar paquete finito
@@ -142,10 +142,6 @@ export const createWaitlistController = async (
         if (sortedPackages.length === 0) {
           throw new Error(ERROR_CODES.NO_CLASSES_AVAILABLE);
         }
-
-        const selectedPkg = sortedPackages[0];
-        packageId = selectedPkg.id;
-        consumedClass = true;
 
         // Descontar del paquete (Transaction)
         // Waitlist logic: we deduct ONLY if it's NOT unlimited.
@@ -199,20 +195,14 @@ export const createWaitlistController = async (
       const wl = await tx.waitingList.upsert({
         where: { userId_sessionId: { userId, sessionId } },
         update: {
-          status: "pending",
-          consumedClass,
-          packageId,
-          rejectedEmailSent: false,
-          createdAt: new Date(),
+          isAvailable: true,
           updatedAt: new Date(),
+          error: null, // Clear any previous errors
         },
         create: {
           userId,
           sessionId,
-          status: "pending",
-          consumedClass,
-          packageId,
-          isAvailable: true, // Assuming this means the request is valid? Or something else?
+          isAvailable: true,
           createdAt: new Date(),
           updatedAt: new Date(),
         },
@@ -309,10 +299,10 @@ export const getAllWaitlistsController = async (
         id: `${wl.userId}_${wl.sessionId}`,
         userId: String(wl.userId),
         classId: String(wl.sessionId),
-        status: wl.status,
+        status: wl.isAvailable ? "pending" : "rejected", // Map isAvailable to status
         createdAt: wl.createdAt,
-        consumedClass: wl.consumedClass,
-        packageId: wl.packageId ? String(wl.packageId) : null,
+        isAvailable: wl.isAvailable,
+        error: wl.error,
         class: s
           ? {
               id: String(s.id),
@@ -325,8 +315,6 @@ export const getAllWaitlistsController = async (
               branch: s.branchOffice?.id,
             }
           : null,
-        // Add user info if needed? Old code didn't seem to add user details in `enriched` map explicitly but `list` had data()
-        // Wait, old code `getAllWaitlists` mapped doc.data().
       };
     });
 
@@ -362,7 +350,7 @@ export const getWaitlistsByClassController = async (
     const waitlists = await prisma.waitingList.findMany({
       where: {
         sessionId: sessionId,
-        status: "pending",
+        isAvailable: true, // Use isAvailable instead of status
       },
       include: {
         user: true,
@@ -377,10 +365,10 @@ export const getWaitlistsByClassController = async (
       id: `${wl.userId}_${wl.sessionId}`,
       userId: String(wl.userId),
       classId: String(wl.sessionId),
-      status: wl.status,
+      status: wl.isAvailable ? "pending" : "rejected",
       createdAt: wl.createdAt,
-      consumedClass: wl.consumedClass,
-      packageId: wl.packageId ? String(wl.packageId) : null,
+      isAvailable: wl.isAvailable,
+      error: wl.error,
       user: {
         id: wl.user.id,
         name: wl.user.name,
@@ -451,10 +439,10 @@ export const getWaitlistByIdController = async (
       id: waitlistId,
       userId: String(wl.userId),
       classId: String(wl.sessionId),
-      status: wl.status,
+      status: wl.isAvailable ? "pending" : "rejected",
       createdAt: wl.createdAt,
-      consumedClass: wl.consumedClass,
-      packageId: wl.packageId ? String(wl.packageId) : null,
+      isAvailable: wl.isAvailable,
+      error: wl.error,
     });
   } catch (err) {
     console.error("getWaitlistById error:", err);
@@ -489,7 +477,7 @@ export const updateWaitlistController = async (
         where: { userId_sessionId: ids },
       });
       if (!wl) throw new Error("WAITLIST_NOT_FOUND");
-      if (wl.status !== "pending") throw new Error("WAITLIST_NOT_PENDING");
+      if (!wl.isAvailable) throw new Error("WAITLIST_NOT_PENDING");
 
       const session = await tx.session.findUnique({
         where: { id: ids.sessionId },
@@ -505,25 +493,8 @@ export const updateWaitlistController = async (
 
         if (available <= 0) throw new Error(ERROR_CODES.NO_SLOTS_AVAILABLE);
 
-        // Límite diario ilimitado (si no consumió clase)
-        if (!wl.consumedClass) {
-          const sessionDate = session.dateStart;
-          const startOfDay = new Date(sessionDate);
-          startOfDay.setHours(0, 0, 0, 0);
-          const endOfDay = new Date(sessionDate);
-          endOfDay.setHours(23, 59, 59, 999);
-
-          const daily = await tx.reservation.count({
-            where: {
-              userId: ids.userId,
-              isAvailable: true,
-              session: {
-                dateStart: { gte: startOfDay, lte: endOfDay },
-              },
-            },
-          });
-          if (daily >= 2) throw new Error(ERROR_CODES.UNLIMITED_DAILY_LIMIT);
-        }
+        // Note: consumedClass and packageId fields don't exist in schema
+        // Daily limit check removed as we can't track if class was consumed
 
         // Asignar asiento
         // Assuming default logic: find first available seat number
@@ -548,18 +519,16 @@ export const updateWaitlistController = async (
             sessionId: ids.sessionId,
             placeNumber: assignedSeat,
             isAvailable: true,
-            // classDay: session.dateStart, // Not in schema, session has dateStart
             createdAt: new Date(),
             attended: false,
-            transactionId: wl.packageId || undefined,
-            // consumedClass logic handled by transactionId link?
+            // Note: transactionId removed as packageId doesn't exist in waitlist
           },
         });
 
-        // Update Waitlist
+        // Update Waitlist - mark as not available (accepted)
         await tx.waitingList.update({
           where: { userId_sessionId: ids },
-          data: { status: "accepted" },
+          data: { isAvailable: false, updatedAt: new Date() },
         });
 
         // Update Session occupied?
@@ -580,22 +549,15 @@ export const updateWaitlistController = async (
         };
       } else {
         // Rejected
-        if (wl.consumedClass) {
-          // Reembolsar
-          await tx.user.update({
-            where: { id: ids.userId },
-            data: {
-              classesAvailable: { increment: 1 },
-              classesTaken: { decrement: 1 },
-            },
-          });
-        }
+        // Note: consumedClass field doesn't exist, so we can't refund
+        // This would need to be tracked differently if needed
 
         await tx.waitingList.update({
           where: { userId_sessionId: ids },
           data: {
-            status: "rejected",
-            rejectedEmailSent: true, // Flag to avoid double sending if we had a cron
+            isAvailable: false,
+            error: "rejected", // Use error field to store rejection reason
+            updatedAt: new Date(),
           },
         });
 

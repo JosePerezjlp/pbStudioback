@@ -34,7 +34,7 @@ export const loginController = async (
     // Generar Token JWT
     const token = jwt.sign(
       {
-        uid: user.firebaseUid || `sql_${user.id}`, // Mantener compatibilidad con estructura de token
+        uid: `sql_${user.id}`,
         id: user.id,
         email: user.email,
         role: user.role,
@@ -50,7 +50,7 @@ export const loginController = async (
       token,
       user: {
         id: user.id,
-        uid: user.firebaseUid,
+        uid: `sql_${user.id}`,
         email: user.email,
         role: user.role,
         name: user.name,

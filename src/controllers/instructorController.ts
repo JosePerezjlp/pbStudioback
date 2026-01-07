@@ -1,7 +1,9 @@
 import { Request, Response } from "express";
 import multer from "multer";
+import bcrypt from "bcrypt";
+import { v4 as uuidv4 } from "uuid";
 import { prisma } from "../config/prisma";
-import { uploadLocal, deleteLocalFile } from "../utils/uploadLocal";
+import { uploadToFirebaseStorage } from "../utils/firebaseStorage";
 
 /* ─────────────────────────────
    Helpers
@@ -56,13 +58,11 @@ export const createInstructorController = [
         !String(firstName || "").trim() ||
         disciplines.length === 0 ||
         !String(description || "").trim() ||
-        !String(branchFinal || "").trim() ||
-        !String(phone || "").trim() ||
         !String(joinDate || "").trim()
       ) {
         res.status(400).json({
           error:
-            "Faltan campos obligatorios: nombre, disciplinas, descripción, sucursal, teléfono y fecha de ingreso",
+            "Faltan campos obligatorios: nombre, disciplinas, descripción y fecha de ingreso",
         });
         return;
       }
@@ -71,8 +71,9 @@ export const createInstructorController = [
       let imageUrl = "";
       if (req.file) {
         try {
-          imageUrl = await uploadLocal(req.file, "instructors");
-        } catch (_) {
+          imageUrl = await uploadToFirebaseStorage(req.file, "instructors");
+        } catch (e) {
+          console.error("Error subiendo imagen a Firebase Storage:", e);
           imageUrl = "";
         }
       }
@@ -83,28 +84,83 @@ export const createInstructorController = [
         return;
       }
 
-      // Corregido: Usamos el modelo 'instructor' (singular).
-      // Asegúrate de ejecutar 'npx prisma generate' para actualizar el cliente.
-      const instructor = await prisma.instructor.create({
-        data: {
-          firstName: String(firstName),
-          lastName: lastName ? String(lastName) : null,
-          email: email ? String(email) : null,
-          phone: String(phone),
-          address: address ? String(address) : null,
-          description: String(description),
-          joinDate: new Date(String(joinDate)), // Ensure valid date format
-          disciplines: JSON.stringify(disciplines),
-          enabled: enabledFinal,
-          branch: branchFinal,
-          image: imageUrl,
-        },
+      // Crear instructor usando tablas staff / staff_profile / instructors_disciplines / staff_branch_office
+
+      // username único basado en email o nombre
+      const baseUsername = (email && String(email).split("@")[0]) || String(firstName).toLowerCase().replace(/[^a-z0-9]/gi, "");
+      const username = `${baseUsername || "instructor"}-${Date.now()}`.slice(0, 25);
+
+      // password aleatoria (no se expone)
+      const rawPassword = uuidv4();
+      const passwordHash = await bcrypt.hash(rawPassword, 10);
+
+      const parsedJoinDate = new Date(String(joinDate));
+
+      // branchId numérico (si viene)
+      let branchOfficeId: number | null = null;
+      if (branchFinal && !Number.isNaN(Number(branchFinal))) {
+        branchOfficeId = Number(branchFinal);
+      }
+
+      const disciplineIds = disciplines
+        .map((d) => Number(d))
+        .filter((n) => Number.isFinite(n));
+
+      const created = await prisma.$transaction(async (tx) => {
+        const staff = await tx.staff.create({
+          data: {
+            username,
+            password: passwordHash,
+            email: email ? String(email) : null,
+            roles: JSON.stringify(["ROLE_INSTRUCTOR"]),
+            isActive: enabledFinal,
+            permissions: "{}",
+            deleted: false,
+          },
+        });
+
+        await tx.staffProfile.create({
+          data: {
+            staffId: staff.id,
+            firstname: String(firstName || ""),
+            paternalSurname: lastName ? String(lastName) : null,
+            telephone: phone ? String(phone) : null,
+            address: address ? String(address) : null,
+            description: description ? String(description) : null,
+            admissionAt: parsedJoinDate,
+            photo: imageUrl,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        });
+
+        if (branchOfficeId) {
+          await tx.staffBranchOffice.create({
+            data: {
+              staffId: staff.id,
+              branchOfficeId,
+            },
+          });
+        }
+
+        if (disciplineIds.length > 0) {
+          await tx.instructorsDisciplines.createMany({
+            data: disciplineIds.map((disciplineId) => ({
+              staffId: staff.id,
+              disciplineId,
+            })),
+            skipDuplicates: true,
+          });
+        }
+
+        return staff;
       });
 
       res.status(201).json({
         message: "Instructor creado correctamente",
-        id: instructor.id,
+        id: created.id,
       });
+      return;
     } catch (error: unknown) {
       console.error("🔥 ERROR al crear instructor:", error);
       res.status(500).json({
@@ -141,8 +197,31 @@ export const getAllInstructorsController = async (
             discipline: true,
           },
         },
+        staffBranchOffices: true,
       },
     });
+
+    // Para evitar problemas de datos inconsistentes (donde la relación staff_branch_office no existe pero la tabla legacy 'instructor' tiene el dato),
+    // vamos a buscar también en la tabla 'instructor' si es necesario.
+    // Esto es un "fix" temporal para soportar migraciones incompletas.
+
+    // Obtenemos los IDs de staff que no tienen sucursales cargadas
+    const staffIdsWithoutBranch = staffMembers
+      .filter((s) => s.staffBranchOffices.length === 0)
+      .map((s) => s.id);
+
+    // Buscamos en la tabla 'instructor' legacy
+    let legacyInstructorsMap = new Map<number, string>();
+    // COMENTADO: La tabla 'instructor' legacy ya no existe en el schema
+    // if (staffIdsWithoutBranch.length > 0) {
+    //   const legacyInstructors = await prisma.instructor.findMany({
+    //     where: { id: { in: staffIdsWithoutBranch } },
+    //     select: { id: true, branch: true },
+    //   });
+    //   legacyInstructors.forEach((li) => {
+    //     if (li.branch) legacyInstructorsMap.set(li.id, li.branch);
+    //   });
+    // }
 
     // Filter by role manually since roles are serialized JSON strings
     const instructors = staffMembers.filter((staff) => {
@@ -164,22 +243,36 @@ export const getAllInstructorsController = async (
     });
 
     // Map to the expected format
-    const formattedInstructors = instructors.map((inst) => ({
-      id: inst.id,
-      firstName: inst.profile?.firstname || inst.username,
-      lastName: inst.profile?.paternalSurname || "",
-      email: inst.email,
-      phone: inst.profile?.telephone || "",
-      address: inst.profile?.address || "",
-      description: inst.profile?.description || "",
-      joinDate: inst.profile?.admissionAt || inst.lastLogin,
-      disciplines: inst.instructorsDisciplines.map((d) => d.discipline.name),
-      enabled: inst.isActive,
-      branch: "",
-      image: inst.profile?.photo || "",
-      createdAt: inst.profile?.createdAt,
-      updatedAt: inst.profile?.updatedAt,
-    }));
+    const formattedInstructors = instructors.map((inst) => {
+      let branchId: number | null = null;
+
+      if (inst.staffBranchOffices.length > 0) {
+        branchId = inst.staffBranchOffices[0].branchOfficeId;
+      } else {
+        // Fallback: intentar obtener de la tabla legacy 'instructor'
+        const legacyBranch = legacyInstructorsMap.get(inst.id);
+        if (legacyBranch && !isNaN(Number(legacyBranch))) {
+          branchId = Number(legacyBranch);
+        }
+      }
+
+      return {
+        id: inst.id,
+        firstName: inst.profile?.firstname || inst.username,
+        lastName: inst.profile?.paternalSurname || "",
+        email: inst.email,
+        phone: inst.profile?.telephone || "",
+        address: inst.profile?.address || "",
+        description: inst.profile?.description || "",
+        joinDate: inst.profile?.admissionAt || inst.lastLogin,
+        disciplines: inst.instructorsDisciplines.map((d) => d.discipline.name),
+        enabled: inst.isActive,
+        branch: branchId, // ID numérico o null
+        image: inst.profile?.photo || "",
+        createdAt: inst.profile?.createdAt,
+        updatedAt: inst.profile?.updatedAt,
+      };
+    });
 
     res.status(200).json({ instructors: formattedInstructors });
   } catch (error) {
@@ -216,6 +309,7 @@ export const getInstructorByIdController = async (
             discipline: true,
           },
         },
+        staffBranchOffices: true,
       },
     });
 
@@ -240,6 +334,32 @@ export const getInstructorByIdController = async (
       return;
     }
 
+    let branchId =
+      instructor.staffBranchOffices.length > 0
+        ? instructor.staffBranchOffices[0].branchOfficeId
+        : null;
+
+    // COMENTADO: La tabla 'instructor' legacy ya no existe en el schema
+    // if (!branchId) {
+    //   const legacyInst = await prisma.instructor.findUnique({
+    //     where: { id },
+    //     select: { branch: true },
+    //   });
+    //   if (legacyInst?.branch && !isNaN(Number(legacyInst.branch))) {
+    //     branchId = Number(legacyInst.branch);
+    //   }
+    // }
+
+    if (!branchId && instructor.email) {
+      const userWithBranch = await prisma.user.findUnique({
+        where: { email: instructor.email },
+        select: { branchOfficeId: true },
+      });
+      if (userWithBranch?.branchOfficeId) {
+        branchId = userWithBranch.branchOfficeId;
+      }
+    }
+
     const formattedInstructor = {
       id: instructor.id,
       firstName: instructor.profile?.firstname || instructor.username,
@@ -253,7 +373,7 @@ export const getInstructorByIdController = async (
         (d) => d.discipline.name
       ),
       enabled: instructor.isActive,
-      branch: "",
+      branch: branchId,
       image: instructor.profile?.photo || "",
       createdAt: instructor.profile?.createdAt,
       updatedAt: instructor.profile?.updatedAt,
@@ -282,67 +402,164 @@ export const updateInstructorController = [
     }
 
     try {
-      const existingInstructor = await prisma.instructor.findUnique({
+      const existing = await prisma.staff.findUnique({
         where: { id },
+        include: {
+          profile: true,
+          instructorsDisciplines: true,
+          staffBranchOffices: true,
+        },
       });
 
-      if (!existingInstructor) {
+      if (!existing) {
         res.status(404).json({ error: "Instructor no encontrado" });
         return;
       }
 
-      const body = req.body;
+      // Validar que realmente sea instructor
+      let isInstructor = false;
+      try {
+        if (existing.roles.includes("ROLE_INSTRUCTOR")) isInstructor = true;
+        else {
+          const parsed = JSON.parse(existing.roles);
+          if (Array.isArray(parsed) && parsed.includes("ROLE_INSTRUCTOR")) {
+            isInstructor = true;
+          }
+        }
+      } catch {
+        // noop
+      }
+
+      if (!isInstructor) {
+        res.status(404).json({ error: "Instructor no encontrado" });
+        return;
+      }
+
+      const body = req.body as Record<string, unknown>;
+
       const disciplinesParsed = parseDisciplines(body.disciplines);
 
-      const updateData: any = {};
+      const enabledFinal =
+        (body as any).isActive !== undefined
+          ? String((body as any).isActive) === "true"
+          : body.enabled !== undefined
+          ? String(body.enabled) === "true"
+          : undefined;
 
-      if (body.firstName) updateData.firstName = String(body.firstName);
-      if (body.lastName) updateData.lastName = String(body.lastName);
-      if (body.phone) updateData.phone = String(body.phone);
-      if (body.address) updateData.address = String(body.address);
-      if (body.description) updateData.description = String(body.description);
-      if (body.joinDate) updateData.joinDate = new Date(String(body.joinDate));
-      if (body.branch) updateData.branch = String(body.branch);
-      if (body.email) updateData.email = String(body.email);
+      const branchFinal = String((body.branchId ?? body.branch) ?? "");
 
-      if (body.isActive !== undefined) {
-        updateData.enabled = String(body.isActive) === "true";
-      } else if (body.enabled !== undefined) {
-        updateData.enabled = String(body.enabled) === "true";
-      }
-
-      if (disciplinesParsed.length > 0) {
-        updateData.disciplines = JSON.stringify(disciplinesParsed);
-      } else if (
-        body.disciplines &&
-        Array.isArray(JSON.parse(JSON.stringify(body.disciplines))) &&
-        JSON.parse(JSON.stringify(body.disciplines)).length === 0
-      ) {
-        // Allow clearing disciplines if explicit empty array
-        updateData.disciplines = "[]";
-      }
-
-      // Handle image
+      // Subir nueva imagen si viene
+      let newImageUrl: string | undefined;
       if (req.file) {
         try {
-          const newUrl = await uploadLocal(req.file, "instructors");
-          updateData.image = newUrl;
-
-          // Delete old image
-          if (existingInstructor.image) {
-            await deleteLocalFile(existingInstructor.image);
-          }
-        } catch (_) {
-          console.error("Error uploading new image");
+          newImageUrl = await uploadToFirebaseStorage(req.file, "instructors");
+        } catch (e) {
+          console.error("Error subiendo nueva imagen a Firebase Storage:", e);
         }
       }
 
-      await prisma.instructor.update({
-        where: { id },
-        data: updateData,
+      await prisma.$transaction(async (tx) => {
+        // Actualizar tabla staff
+        const staffUpdateData: any = {};
+        if (body.email !== undefined) {
+          staffUpdateData.email = body.email ? String(body.email) : null;
+        }
+        if (enabledFinal !== undefined) {
+          staffUpdateData.isActive = enabledFinal;
+        }
+
+        if (Object.keys(staffUpdateData).length > 0) {
+          await tx.staff.update({
+            where: { id },
+            data: staffUpdateData,
+          });
+        }
+
+        // Actualizar / crear perfil
+        const profileUpdateData: any = {};
+        if (body.firstName !== undefined)
+          profileUpdateData.firstname = String(body.firstName);
+        if (body.lastName !== undefined)
+          profileUpdateData.paternalSurname = String(body.lastName);
+        if (body.phone !== undefined)
+          profileUpdateData.telephone = body.phone
+            ? String(body.phone)
+            : null;
+        if (body.address !== undefined)
+          profileUpdateData.address = body.address
+            ? String(body.address)
+            : null;
+        if (body.description !== undefined)
+          profileUpdateData.description = body.description
+            ? String(body.description)
+            : null;
+        if (body.joinDate !== undefined) {
+          profileUpdateData.admissionAt = new Date(String(body.joinDate));
+        }
+        if (newImageUrl) {
+          profileUpdateData.photo = newImageUrl;
+        }
+        if (Object.keys(profileUpdateData).length > 0) {
+          profileUpdateData.updatedAt = new Date();
+
+          const existingProfile = await tx.staffProfile.findUnique({
+            where: { staffId: id },
+          });
+
+          if (existingProfile) {
+            await tx.staffProfile.update({
+              where: { id: existingProfile.id },
+              data: profileUpdateData,
+            });
+          } else {
+            await tx.staffProfile.create({
+              data: {
+                staffId: id,
+                ...profileUpdateData,
+                createdAt: new Date(),
+              },
+            });
+          }
+        }
+
+        // Actualizar sucursal si viene un valor numérico
+        if (branchFinal) {
+          const branchOfficeId = Number(branchFinal);
+          if (Number.isFinite(branchOfficeId)) {
+            await tx.staffBranchOffice.deleteMany({ where: { staffId: id } });
+            await tx.staffBranchOffice.create({
+              data: {
+                staffId: id,
+                branchOfficeId,
+              },
+            });
+          }
+        }
+
+        // Actualizar disciplinas si vienen
+        if (disciplinesParsed.length > 0) {
+          const disciplineIds = disciplinesParsed
+            .map((d) => Number(d))
+            .filter((n) => Number.isFinite(n));
+
+          await tx.instructorsDisciplines.deleteMany({
+            where: { staffId: id },
+          });
+
+          if (disciplineIds.length > 0) {
+            await tx.instructorsDisciplines.createMany({
+              data: disciplineIds.map((disciplineId) => ({
+                staffId: id,
+                disciplineId,
+              })),
+              skipDuplicates: true,
+            });
+          }
+        }
       });
 
       res.status(200).json({ message: "Instructor actualizado correctamente" });
+      return;
     } catch (error: unknown) {
       console.error("Error al actualizar instructor:", error);
       res.status(500).json({
@@ -368,22 +585,28 @@ export const deleteInstructorController = async (
   }
 
   try {
-    const instructor = await prisma.instructor.findUnique({
-      where: { id },
+    // DESHABILITADO: La tabla 'instructor' legacy ya no existe
+    res.status(501).json({
+      error: "Función no implementada - usar la tabla staff en su lugar",
     });
+    return;
 
-    if (!instructor) {
-      res.status(404).json({ error: "Instructor no encontrado" });
-      return;
-    }
-
-    if (instructor.image) {
-      await deleteLocalFile(instructor.image);
-    }
-
-    await prisma.instructor.delete({
-      where: { id },
-    });
+    // const instructor = await prisma.instructor.findUnique({
+    //   where: { id },
+    // });
+    //
+    // if (!instructor) {
+    //   res.status(404).json({ error: "Instructor no encontrado" });
+    //   return;
+    // }
+    //
+    // if (instructor.image) {
+    //   await deleteLocalFile(instructor.image);
+    // }
+    //
+    // await prisma.instructor.delete({
+    //   where: { id },
+    // });
 
     res.status(200).json({ message: "Instructor eliminado correctamente" });
   } catch (error) {

@@ -13,20 +13,18 @@ export class BranchService {
    */
   async createBranch(data: {
     name: string;
-    address?: string;
-    phone?: string;
-    lat?: string;
-    lng?: string;
-    status?: number;
+    isActive?: boolean;
     isPublic?: boolean;
     location?: string;
+    address?: string;
+    phone?: string;
     area?: string;
   }): Promise<BranchOffice> {
     return this.prisma.branchOffice.create({
       data: {
         ...data,
-        status: data.status ?? 1, // Default 1
-        isActive: true, // Default true
+        isActive: data.isActive ?? true, // Default true
+        isPublic: data.isPublic ?? true, // Default true
         createdAt: new Date(),
         updatedAt: new Date(),
       },
@@ -88,9 +86,13 @@ export class BranchService {
    */
   async deleteBranch(id: number): Promise<BranchOffice> {
     // Físicamente borrar o soft-delete depende de tu regla de negocio.
-    // Aquí asumiremos borrado físico por ahora, o cambiar status a 0.
-    return this.prisma.branchOffice.delete({
+    // Aquí asumiremos soft-delete usando isActive = false.
+    return this.prisma.branchOffice.update({
       where: { id },
+      data: {
+        isActive: false,
+        updatedAt: new Date(),
+      },
     });
   }
 }

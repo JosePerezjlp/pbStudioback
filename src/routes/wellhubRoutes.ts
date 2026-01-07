@@ -25,12 +25,13 @@ router.post(
 router.get("/:gymId/products", verifyToken, getProductsController);
 router.get("/:gymId/classes", verifyToken, getClassesController);
 
-router.post(
-  "/:gymId/classes/:classId/slots",
-  verifyToken,
-  createSlotController
-);
-router.post("/:gymId/classes", verifyToken, createCategoryController);
+// DESHABILITADO TEMPORALMENTE: creación de slots y categorías de Wellhub
+// router.post(
+//   "/:gymId/classes/:classId/slots",
+//   verifyToken,
+//   createSlotController
+// );
+// router.post("/:gymId/classes", verifyToken, createCategoryController);
 
 router.get("/cheking/:userId", verifyToken, getUserChecking);
 router.put("/reserve/:classId", verifyToken, updateBookingController);

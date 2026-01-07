@@ -10,7 +10,17 @@ const DEFAULT_ADMIN = {
   isAdmin: true,
   phone: "0000000000",
   branch: "Principal",
-  permissions: { superuser: true },
+  permissions: {
+    usuarios: ["listado", "exportar", "crear", "perfil", "editar", "habilitar_deshabilitar", "eliminar", "restablecer_contraseña"],
+    transacciones: ["listado", "exportar", "detalle", "crear", "cancelar", "editar_fecha_expiracion", "eliminar", "caja"],
+    clases: ["listado", "crear", "editar", "eliminar", "reservaciones", "lista_espera"],
+    clases_por_dia: ["listado", "crear", "editar", "eliminar"],
+    notificaciones: ["borrar"],
+    staff: ["listado", "crear", "editar", "eliminar"],
+    paquetes: ["listado", "crear", "editar"],
+    sucursales: ["listado", "crear", "editar"],
+    reportes: ["ver", "exportar"],
+  },
 };
 
 export const initializeDefaultAdmin = async () => {
@@ -21,11 +31,6 @@ export const initializeDefaultAdmin = async () => {
       where: { email: DEFAULT_ADMIN.email },
     });
 
-    if (existingUser) {
-      console.log("Ya existe el administrador por defecto en SQL.");
-      return;
-    }
-
     // Hashear la contraseña
     const hashedPassword = await bcrypt.hash(DEFAULT_ADMIN.password, 10);
 
@@ -33,6 +38,21 @@ export const initializeDefaultAdmin = async () => {
     const branch = await prisma.branchOffice.findFirst({
         where: { name: DEFAULT_ADMIN.branch }
     });
+
+    if (existingUser) {
+      // Update password and permissions if exists
+      await prisma.user.update({
+        where: { email: DEFAULT_ADMIN.email },
+        data: {
+          password: hashedPassword,
+          roles: JSON.stringify(["admin"]),
+          permissions: JSON.stringify(DEFAULT_ADMIN.permissions),
+          enabled: true,
+        }
+      });
+      console.log("✅ Administrador por defecto actualizado en SQL.");
+      return;
+    }
 
     await prisma.user.create({
       data: {

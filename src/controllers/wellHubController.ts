@@ -311,8 +311,6 @@ export const wellhubWebhookController = async (
         emergencyContactPhone: null,
         classesAvailable: 0,
         classesTaken: 0,
-        // firebaseUid? Maybe generate one or leave null
-        firebaseUid: `sql_${Date.now()}`, // Temporary placeholder if needed unique
       },
     });
 

@@ -21,15 +21,13 @@ export const createBranchController = async (
       return;
     }
 
-    // Adaptación para Prisma: status es obligatorio en SQL (Int). Asumimos 1 (Activo)
     const newBranch = await branchService.createBranch({
       name,
       address: address || "",
       phone: phone || "",
-      status: 1, // Default active
+      area: area || "",
       isPublic: Boolean(isPublic),
       location: location || "",
-      area: area || "",
     });
 
     res
@@ -133,12 +131,14 @@ export const updateBranchController = async (
     const updateData: any = {};
 
     if (req.body.name) updateData.name = String(req.body.name);
+    if (req.body.location) updateData.location = String(req.body.location);
     if (req.body.address) updateData.address = String(req.body.address);
     if (req.body.phone) updateData.phone = String(req.body.phone);
-    if (req.body.location) updateData.location = String(req.body.location);
+    if (req.body.area) updateData.area = String(req.body.area);
     if ("isPublic" in req.body)
       updateData.isPublic = Boolean(req.body.isPublic);
-    if (req.body.area) updateData.area = String(req.body.area);
+    if ("isActive" in req.body)
+      updateData.isActive = Boolean(req.body.isActive);
 
     await branchService.updateBranch(id, updateData);
 

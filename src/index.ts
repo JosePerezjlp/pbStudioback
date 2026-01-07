@@ -30,7 +30,6 @@ import staffRouter from "./routes/staffRoutes";
 import attendanceRouter from "./routes/attendances";
 import waitListRouter from "./routes/waitlist";
 import notificationsRouter from "./routes/notifications";
-import { initializePersonalAdmin } from "./utils/devadminit";
 import {
   sendClassReminderEmail,
   sendPackageExpiryWarningEmail,
@@ -236,7 +235,6 @@ if (PERF_ENABLE && PERF_INTERVAL_SEC > 0) {
 const startServer = async () => {
   try {
     // Inicializar administrador por defecto
-    await initializePersonalAdmin();
     await initializeDefaultAdmin();
 
     app.listen(port, () => {
@@ -325,7 +323,6 @@ cron.schedule("*/10 * * * *", async () => {
         reservations: {
           where: {
             isAvailable: true,
-            emailReminderSent: false,
           },
           include: { user: true },
         },
@@ -362,11 +359,6 @@ cron.schedule("*/10 * * * *", async () => {
                 },
                 "individual"
               );
-
-              await prisma.reservation.update({
-                where: { id: res.id },
-                data: { emailReminderSent: true },
-              });
 
               console.log(`📧 Recordatorio enviado a ${email}`);
             } catch (err) {

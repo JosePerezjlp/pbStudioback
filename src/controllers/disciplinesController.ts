@@ -117,16 +117,16 @@ export const updateDisciplineController = async (
     const updateData: {
       name?: string;
       description?: string;
-      is_active?: boolean;
-      updated_at?: Date;
+      isActive?: boolean;
+      updatedAt?: Date;
     } = {
-      updated_at: new Date(),
+      updatedAt: new Date(),
     };
 
     if (req.body.name) updateData.name = String(req.body.name);
-    if (req.body.description)
-      updateData.description = String(req.body.description);
-    if ("enabled" in req.body) updateData.is_active = Boolean(req.body.enabled);
+    if ("description" in req.body)
+      updateData.description = String(req.body.description ?? "");
+    if ("enabled" in req.body) updateData.isActive = Boolean(req.body.enabled);
 
     await prisma.discipline.update({
       where: { id },

@@ -71,12 +71,18 @@ export const createClassController = async (
       gympass,
     } = req.body as Record<string, unknown>;
 
-    // Números válidos
-    let parsedCapacity: number;
-    let parsedOccupied: number;
+    // Números válidos (permitimos omitir y luego usamos la capacidad del salón)
+    let parsedCapacity: number | null = null;
+    let parsedOccupied = 0;
+
     try {
-      parsedCapacity = parseNumberOrFail(capacity);
-      parsedOccupied = parseNumberOrFail(occupied);
+      if (capacity !== undefined && capacity !== null && capacity !== "") {
+        parsedCapacity = parseNumberOrFail(capacity);
+      }
+
+      if (occupied !== undefined && occupied !== null && occupied !== "") {
+        parsedOccupied = parseNumberOrFail(occupied);
+      }
     } catch {
       res.status(400).json({ error: "Los campos numéricos no son válidos" });
       return;
@@ -144,8 +150,20 @@ export const createClassController = async (
       res.status(404).json({ error: "Salón no encontrado" });
       return;
     }
-    const roomType =
-      normalizeClassType(roomRecord.type) ?? ClassType.INDIVIDUAL;
+
+    // IMPORTANTE: respetar el formato original de MySQL
+    // session.type debe guardar exactamente el mismo valor que ya existe
+    // en la tabla (por ejemplo 'g' / 'i'), no el enum "groups"/"individual".
+    // Para lógica de negocio usamos normalizeClassType al leer.
+    const sessionType = roomRecord.type;
+
+    // Capacidad efectiva: si no se envía o viene en 0/negativa, usamos la del salón
+    const effectiveCapacity =
+      parsedCapacity !== null && parsedCapacity > 0
+        ? parsedCapacity
+        : roomRecord.capacity;
+
+    const effectiveOccupied = parsedOccupied || 0;
 
     // Normalizar info
     const infoNormalized =
@@ -175,10 +193,10 @@ export const createClassController = async (
         exerciseRoomId: roomId,
         disciplineId: disciplineId,
         instructorId: instructorId,
-        exerciseRoomCapacity: parsedCapacity,
-        availableCapacity: parsedCapacity - parsedOccupied,
+        exerciseRoomCapacity: effectiveCapacity,
+        availableCapacity: Math.max(effectiveCapacity - effectiveOccupied, 0),
         status: statusInt,
-        type: roomType,
+        type: sessionType,
         information: infoNormalized,
         placesNotAvailable: "[]", // Default empty array
         createdAt: new Date(),
@@ -479,12 +497,24 @@ export const deleteClassController = async (
   req: Request,
   res: Response
 ): Promise<void> => {
-  const { id } = req.params;
+  const { id, classId } = req.params;
+  const idToUse = id || classId; // Acepta ambos nombres de parámetro
+  const sessionId = parseInt(idToUse, 10);
+
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "ID de clase inválido" });
+    return;
+  }
+
   try {
-    await prisma.session.delete({ where: { id: Number(id) } });
+    await prisma.session.delete({ where: { id: sessionId } });
     res.json({ message: "Clase eliminada" });
   } catch (e) {
-    res.status(500).json({ error: "Error eliminando clase" });
+    console.error("Error eliminando clase:", e);
+    res.status(500).json({
+      error: "Error eliminando clase",
+      details: e instanceof Error ? e.message : String(e),
+    });
   }
 };
 
@@ -492,15 +522,44 @@ export const getClassByIdController = async (
   req: Request,
   res: Response
 ): Promise<void> => {
-  const { id } = req.params;
+  const { id, classId } = req.params;
+  const idToUse = id || classId; // Acepta ambos nombres de parámetro
+  console.log("📋 getClassById - ID recibido:", idToUse, typeof idToUse);
+
+  const sessionId = parseInt(idToUse, 10);
+  console.log(
+    "📋 getClassById - ID parseado:",
+    sessionId,
+    "isNaN:",
+    isNaN(sessionId)
+  );
+
+  if (isNaN(sessionId)) {
+    res
+      .status(400)
+      .json({ error: "ID de clase inválido", receivedId: idToUse });
+    return;
+  }
+
   try {
     const session = await prisma.session.findUnique({
-      where: { id: Number(id) },
+      where: { id: sessionId },
       include: {
         discipline: true,
         exerciseRoom: true,
         instructor: true,
         branchOffice: true,
+        // Importante para backend: incluir reservaciones activas
+        reservations: {
+          where: {
+            cancellationAt: null,
+          },
+          select: {
+            id: true,
+            userId: true,
+            placeNumber: true,
+          },
+        },
       },
     });
     if (!session) {
@@ -509,7 +568,11 @@ export const getClassByIdController = async (
     }
     res.json(session);
   } catch (e) {
-    res.status(500).json({ error: "Error obteniendo clase" });
+    console.error("Error obteniendo clase:", e);
+    res.status(500).json({
+      error: "Error obteniendo clase",
+      details: e instanceof Error ? e.message : String(e),
+    });
   }
 };
 
@@ -517,13 +580,118 @@ export const updateClassController = async (
   req: Request,
   res: Response
 ): Promise<void> => {
-  const { id } = req.params;
+  const { id, classId } = req.params;
+  const idToUse = id || classId; // Acepta ambos nombres de parámetro
+
+  // Validar que el ID es válido
+  const sessionId = parseInt(idToUse, 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "ID de clase inválido" });
+    return;
+  }
+
   try {
-    // TODO: Validate body properly
-    await prisma.session.update({ where: { id: Number(id) }, data: req.body });
+    const {
+      day,
+      hour,
+      branch,
+      room,
+      discipline,
+      instructor,
+      info,
+      capacity,
+      occupied,
+      status,
+      enabled,
+    } = req.body;
+
+    // Preparar datos para actualizar
+    const updateData: any = {};
+
+    // Campos opcionales que se pueden actualizar
+    if (day !== undefined) {
+      updateData.dateStart = new Date(day);
+    }
+
+    if (hour !== undefined) {
+      const [hours, minutes] = hour.split(":").map(Number);
+      const timeDate = new Date();
+      timeDate.setFullYear(1970, 0, 1);
+      timeDate.setHours(hours, minutes, 0, 0);
+      updateData.timeStart = timeDate;
+    }
+
+    if (branch !== undefined) updateData.branchOfficeId = Number(branch);
+    if (room !== undefined) updateData.exerciseRoomId = Number(room);
+    if (discipline !== undefined) updateData.disciplineId = Number(discipline);
+    if (instructor !== undefined) updateData.instructorId = Number(instructor);
+    if (info !== undefined) updateData.information = info;
+
+    // Capacidad y lugares disponibles: misma filosofía que en createClassController
+    // Si se envía capacity/occupied, actualizamos exerciseRoomCapacity y recalculamos availableCapacity
+    // Siempre respetando que availableCapacity = capacidad - ocupados (o 0 mínimo)
+    if (capacity !== undefined || occupied !== undefined) {
+      const current = await prisma.session.findUnique({
+        where: { id: sessionId },
+      });
+      if (!current) {
+        res.status(404).json({ error: "Clase no encontrada" });
+        return;
+      }
+
+      // Capacidad base del salón (por si la sesión actual tiene 0)
+      const roomIdForCapacity =
+        (room !== undefined && Number(room)) ||
+        current.exerciseRoomId ||
+        undefined;
+
+      let roomCapacityFallback: number | null = null;
+      if (roomIdForCapacity) {
+        const roomRecord = await prisma.exerciseRoom.findUnique({
+          where: { id: Number(roomIdForCapacity) },
+        });
+        roomCapacityFallback = roomRecord?.capacity ?? null;
+      }
+
+      const rawCapacity =
+        capacity !== undefined && capacity !== "" ? Number(capacity) : null;
+
+      const newCapacity =
+        rawCapacity !== null && rawCapacity > 0
+          ? rawCapacity
+          : current.exerciseRoomCapacity > 0
+            ? current.exerciseRoomCapacity
+            : (roomCapacityFallback ?? current.exerciseRoomCapacity);
+
+      const rawOccupied =
+        occupied !== undefined && occupied !== "" ? Number(occupied) : null;
+
+      const newOccupied =
+        rawOccupied !== null && rawOccupied >= 0
+          ? rawOccupied
+          : newCapacity - current.availableCapacity;
+
+      updateData.exerciseRoomCapacity = newCapacity;
+      updateData.availableCapacity = Math.max(newCapacity - newOccupied, 0);
+    }
+    if (status !== undefined)
+      updateData.status =
+        status === "abierta" ? 1 : status === "cerrada" ? 0 : Number(status);
+
+    updateData.updatedAt = new Date();
+
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: updateData,
+    });
+
     res.json({ message: "Clase actualizada" });
   } catch (e) {
-    res.status(500).json({ error: "Error actualizando clase" });
+    console.error("Error actualizando clase:", e);
+    res.status(500).json({
+      error: "Error actualizando clase",
+      details: e instanceof Error ? e.message : String(e),
+    });
   }
 };
 
@@ -557,6 +725,85 @@ export const deleteOldClassesController = async (
   res: Response
 ): Promise<void> => {
   res.status(501).json({ error: "Not implemented for safety" });
+};
+
+// Lista reservaciones realizadas con paquetes ilimitados en un rango de fechas
+export const getAllUnlimitedClassesController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { startDate, endDate } = req.query as {
+      startDate?: string;
+      endDate?: string;
+    };
+
+    if (!startDate || !endDate) {
+      res.status(400).json({
+        error: "Parámetros startDate y endDate son obligatorios",
+      });
+      return;
+    }
+
+    const start = DateTime.fromISO(String(startDate)).startOf("day");
+    const end = DateTime.fromISO(String(endDate)).endOf("day");
+
+    if (!start.isValid || !end.isValid) {
+      res.status(400).json({ error: "Fechas inválidas" });
+      return;
+    }
+
+    const sessions = await prisma.session.findMany({
+      where: {
+        dateStart: {
+          gte: start.toJSDate(),
+          lte: end.toJSDate(),
+        },
+      },
+      include: {
+        discipline: true,
+        exerciseRoom: true,
+        branchOffice: true,
+        instructor: {
+          include: {
+            profile: true,
+          },
+        },
+        reservations: {
+          where: { cancellationAt: null },
+        },
+      },
+      orderBy: {
+        dateStart: "asc",
+      },
+    });
+
+    const classes = sessions.map((s) => ({
+      id: s.id,
+      date: s.dateStart,
+      time: s.timeStart,
+      branchOfficeId: s.branchOfficeId,
+      disciplineId: s.disciplineId,
+      roomId: s.exerciseRoomId,
+      instructorId: s.instructorId,
+      capacity: s.exerciseRoomCapacity,
+      reservationsCount: s.reservations.length,
+      status: s.status,
+      disciplineName: s.discipline?.name ?? null,
+      roomName: s.exerciseRoom?.name ?? null,
+      branchName: s.branchOffice?.name ?? null,
+      instructorName:
+        s.instructor?.profile?.firstname || s.instructor?.username || null,
+    }));
+
+    res.status(200).json({ classes });
+  } catch (error) {
+    console.error("Error al obtener clases ilimitadas:", error);
+    res.status(500).json({
+      error: "Error al obtener clases ilimitadas",
+      details: String(error),
+    });
+  }
 };
 
 export const getClassesStatsController = async (

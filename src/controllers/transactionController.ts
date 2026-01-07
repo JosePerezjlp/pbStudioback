@@ -87,16 +87,18 @@ export const createCashTransactionController = async (
     // Identificar usuario objetivo
     let targetUser: any = null;
 
-    // Resolver usuario objetivo
+    // Resolver usuario objetivo solo por ID SQL (aceptando "sql_123" o "123")
     if (targetUserId) {
-      targetUser = await prisma.user.findFirst({
-        where: {
-          OR: [
-            { id: Number(targetUserId) || 0 },
-            { firebaseUid: String(targetUserId) },
-          ],
-        },
-      });
+      const match = /^sql_(\d+)$/.exec(String(targetUserId));
+      const numericId = match ? Number(match[1]) : Number(targetUserId);
+
+      if (!numericId || Number.isNaN(numericId)) {
+        targetUser = null;
+      } else {
+        targetUser = await prisma.user.findUnique({
+          where: { id: numericId },
+        });
+      }
     } else if (requesterUid) {
       targetUser = await prisma.user.findUnique({
         where: { id: requesterUid },
@@ -419,8 +421,8 @@ export const getAllTransactionsController = async (
     // Fechas
     if (startDate || endDate) {
       where.createdAt = {};
-      if (startDate) where.createdAt.gte = new Date(startDate);
-      if (endDate) where.createdAt.lte = new Date(endDate);
+      if (startDate) where.createdAt.gte = normalizeStartDate(startDate);
+      if (endDate) where.createdAt.lte = normalizeEndDate(endDate);
     }
 
     // Búsqueda por Email o Nombre (Join con User)
@@ -711,14 +713,88 @@ export const getRankingsController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const rankings = await prisma.transaction.groupBy({
-      by: ["userId"],
-      _sum: { total: true },
-      orderBy: { _sum: { total: "desc" } },
-      take: 10,
+    // 1. Obtener todas las sucursales activas
+    const branches = await prisma.branchOffice.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true },
     });
-    res.json({ rankings });
+
+    // 2. Para cada sucursal, obtener el "ranking" de transacciones (Top ventas)
+    // Asumimos que "ranking" se refiere a las transacciones con mayor monto (o recientes).
+    // Basado en el ejemplo JSON, parece ser un listado detallado.
+    // Usaremos Top 10 por monto por ahora.
+
+    const result = await Promise.all(
+      branches.map(async (branch) => {
+        const transactions = await prisma.transaction.findMany({
+          where: {
+            branchOfficeId: branch.id,
+            status: 1, // Pagado
+          },
+          orderBy: {
+            total: "desc", // Ranking por monto
+          },
+          take: 10, // Top 10
+          include: {
+            user: {
+              select: { id: true, name: true, lastname: true, email: true },
+            },
+            package: {
+              select: {
+                id: true,
+                type: true,
+                totalClasses: true,
+                altText: true,
+              },
+            },
+          },
+        });
+
+        // Formatear transacciones
+        const formattedRankings = transactions.map((t) => {
+          const dt = t.createdAt
+            ? DateTime.fromJSDate(t.createdAt).setLocale("es")
+            : DateTime.now().setLocale("es");
+
+          // Capitalizar primera letra del día
+          const dayName = dt.toFormat("cccc");
+          const dayOfWeek = dayName.charAt(0).toUpperCase() + dayName.slice(1);
+
+          const hour = dt.toFormat("hh:mm a"); // 09:00 AM
+
+          // Etiqueta del paquete
+          let pkgLabel = "—";
+          if (t.package) {
+            pkgLabel = t.package.altText || `${t.package.totalClasses} Clases`;
+          } else if (t.packageTotalClasses) {
+            pkgLabel = `${t.packageTotalClasses} Clases`;
+          }
+
+          const fullName = t.user
+            ? `${t.user.name} ${t.user.lastname || ""}`.trim()
+            : "Usuario Eliminado";
+
+          return {
+            userId: t.userId ? String(t.userId) : "",
+            fullName,
+            dayOfWeek,
+            hour,
+            pkgLabel,
+            sum: Number(t.total),
+          };
+        });
+
+        return {
+          branchId: String(branch.id),
+          branchName: branch.name,
+          rankings: formattedRankings,
+        };
+      })
+    );
+
+    res.json({ branches: result });
   } catch (e) {
+    console.error("Error obteniendo rankings:", e);
     res.status(500).json({ error: "Error obteniendo rankings" });
   }
 };

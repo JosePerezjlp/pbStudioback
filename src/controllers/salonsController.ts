@@ -99,41 +99,60 @@ function validateSeats(seats: Seat[], capacity: number) {
   });
 }
 
-// Helper to resolve Branch and Discipline IDs
-const resolveReferences = async (branch: string | number, discipline: string | number) => {
-    let branchId: number | null = null;
-    let disciplineId: number | null = null;
-
-    // Resolve Branch
-    if (typeof branch === 'number') {
-        branchId = branch;
-    } else if (branch) {
-        // Try parsing as int first
-        const p = parseInt(branch);
-        if (!isNaN(p)) {
-            branchId = p;
-        } else {
-            // Try finding by name
-            const b = await prisma.branchOffice.findFirst({ where: { name: branch } });
-            if (b) branchId = b.id;
-        }
-    }
-
-    // Resolve Discipline
-    if (typeof discipline === 'number') {
-        disciplineId = discipline;
-    } else if (discipline) {
-        const p = parseInt(discipline);
-        if (!isNaN(p)) {
-            disciplineId = p;
-        } else {
-            const d = await prisma.discipline.findFirst({ where: { name: discipline } });
-            if (d) disciplineId = d.id;
-        }
-    }
-
-    return { branchId, disciplineId };
+// helper seguro para parsear layout guardado en BD
+function safeParseSeatsLayout(
+  raw: string | null | undefined
+): Seat[] | undefined {
+  if (!raw) return undefined;
+  try {
+    return parseSeats(raw);
+  } catch {
+    return undefined;
+  }
 }
+
+// Helper to resolve Branch and Discipline IDs
+const resolveReferences = async (
+  branch: string | number,
+  discipline: string | number
+) => {
+  let branchId: number | null = null;
+  let disciplineId: number | null = null;
+
+  // Resolve Branch
+  if (typeof branch === "number") {
+    branchId = branch;
+  } else if (branch) {
+    // Try parsing as int first
+    const p = parseInt(branch);
+    if (!isNaN(p)) {
+      branchId = p;
+    } else {
+      // Try finding by name
+      const b = await prisma.branchOffice.findFirst({
+        where: { name: branch },
+      });
+      if (b) branchId = b.id;
+    }
+  }
+
+  // Resolve Discipline
+  if (typeof discipline === "number") {
+    disciplineId = discipline;
+  } else if (discipline) {
+    const p = parseInt(discipline);
+    if (!isNaN(p)) {
+      disciplineId = p;
+    } else {
+      const d = await prisma.discipline.findFirst({
+        where: { name: discipline },
+      });
+      if (d) disciplineId = d.id;
+    }
+  }
+
+  return { branchId, disciplineId };
+};
 
 /* -------------------- controllers -------------------- */
 
@@ -174,21 +193,23 @@ export const createClassroomController = async (
       validateSeats(seats, parsedCapacity);
     }
 
-    const { branchId, disciplineId } = await resolveReferences(branch, discipline);
+    const { branchId, disciplineId } = await resolveReferences(
+      branch,
+      discipline
+    );
 
     if (!branchId) {
-        res.status(400).json({ error: "Sucursal no válida o no encontrada" });
-        return;
+      res.status(400).json({ error: "Sucursal no válida o no encontrada" });
+      return;
     }
     if (!disciplineId) {
-        res.status(400).json({ error: "Disciplina no válida o no encontrada" });
-        return;
+      res.status(400).json({ error: "Disciplina no válida o no encontrada" });
+      return;
     }
 
     const room = await prisma.exerciseRoom.create({
       data: {
         name: String(name),
-        unavailableSpots: parsedUnavailableSpots,
         capacity: parsedCapacity,
         disciplineId,
         branchOfficeId: branchId,
@@ -199,7 +220,9 @@ export const createClassroomController = async (
       },
     });
 
-    res.status(201).json({ message: "Salón creado correctamente", id: room.id });
+    res
+      .status(201)
+      .json({ message: "Salón creado correctamente", id: room.id });
   } catch (err) {
     console.error("Error al crear salón:", err);
     const details = err instanceof Error ? err.message : String(err);
@@ -222,9 +245,9 @@ export const getAllClassroomsController = async (
 
     const classrooms = rooms.map((room) => ({
       ...room,
-      seatsLayout: room.seatsLayout ? JSON.parse(room.seatsLayout) : undefined,
+      seatsLayout: safeParseSeatsLayout((room as any).seatsLayout),
       discipline: room.disciplineId ? String(room.disciplineId) : "", // maintain compat
-      branch: room.branchOfficeId ? String(room.branchOfficeId) : "",   // maintain compat
+      branch: room.branchOfficeId ? String(room.branchOfficeId) : "", // maintain compat
       disciplineName: room.discipline?.name || null,
       branchName: room.branchOffice?.name || null,
     }));
@@ -244,19 +267,19 @@ export const getClassroomsByBranchController = async (
 ): Promise<void> => {
   try {
     const { branchId } = req.params;
-    
+
     // Resolve branchId (it might be a string ID from param)
     // Assuming it's an ID or we need to find it.
     // If it is numeric, treat as ID.
     const bId = parseInt(branchId);
     if (isNaN(bId)) {
-        // If it's not a number, try to find by name? Or maybe it's invalid.
-        // Or maybe it's a legacy UUID?
-        // For now, let's assume it's an ID. If it's not, we might return empty or error.
-        // Let's try to find by name if parsing fails?
-        // But routes usually use IDs.
-        res.status(400).json({ error: "ID de sucursal inválido" });
-        return;
+      // If it's not a number, try to find by name? Or maybe it's invalid.
+      // Or maybe it's a legacy UUID?
+      // For now, let's assume it's an ID. If it's not, we might return empty or error.
+      // Let's try to find by name if parsing fails?
+      // But routes usually use IDs.
+      res.status(400).json({ error: "ID de sucursal inválido" });
+      return;
     }
 
     const rooms = await prisma.exerciseRoom.findMany({
@@ -270,7 +293,7 @@ export const getClassroomsByBranchController = async (
 
     const classrooms = rooms.map((room) => ({
       ...room,
-      seatsLayout: room.seatsLayout ? JSON.parse(room.seatsLayout) : undefined,
+      seatsLayout: safeParseSeatsLayout((room as any).seatsLayout),
       discipline: room.disciplineId ? String(room.disciplineId) : "",
       branch: room.branchOfficeId ? String(room.branchOfficeId) : "",
       disciplineName: room.discipline?.name || null,
@@ -280,12 +303,10 @@ export const getClassroomsByBranchController = async (
     res.status(200).json({ classrooms });
   } catch (err) {
     console.error("Error al obtener salones por sucursal:", err);
-    res
-      .status(500)
-      .json({
-        error: "Error al obtener salones por sucursal",
-        details: String(err),
-      });
+    res.status(500).json({
+      error: "Error al obtener salones por sucursal",
+      details: String(err),
+    });
   }
 };
 
@@ -296,8 +317,8 @@ export const getClassroomByIdController = async (
   const { classroomId } = req.params;
   const id = parseInt(classroomId);
   if (isNaN(id)) {
-      res.status(400).json({ error: "ID inválido" });
-      return;
+    res.status(400).json({ error: "ID inválido" });
+    return;
   }
 
   try {
@@ -316,7 +337,7 @@ export const getClassroomByIdController = async (
 
     const data = {
       ...room,
-      seatsLayout: room.seatsLayout ? JSON.parse(room.seatsLayout) : undefined,
+      seatsLayout: safeParseSeatsLayout((room as any).seatsLayout),
       discipline: room.disciplineId ? String(room.disciplineId) : "",
       branch: room.branchOfficeId ? String(room.branchOfficeId) : "",
       disciplineName: room.discipline?.name || null,
@@ -339,8 +360,8 @@ export const updateClassroomController = async (
   const { classroomId } = req.params;
   const id = parseInt(classroomId);
   if (isNaN(id)) {
-      res.status(400).json({ error: "ID inválido" });
-      return;
+    res.status(400).json({ error: "ID inválido" });
+    return;
   }
 
   try {
@@ -355,10 +376,8 @@ export const updateClassroomController = async (
 
     // numéricos
     if (body.unavailableSpots !== undefined) {
-      updateData.unavailableSpots = parseNumber(
-        "unavailableSpots",
-        body.unavailableSpots
-      );
+      // Se valida pero no se persiste directamente en la BD
+      parseNumber("unavailableSpots", body.unavailableSpots);
     }
     if (body.capacity !== undefined) {
       updateData.capacity = parseNumber("capacity", body.capacity);
@@ -366,17 +385,21 @@ export const updateClassroomController = async (
 
     // strings/bools
     if (body.name !== undefined) updateData.name = String(body.name);
-    if (body.isActive !== undefined) updateData.isActive = Boolean(body.isActive);
+    if (body.isActive !== undefined)
+      updateData.isActive = Boolean(body.isActive);
     if (body.type !== undefined) updateData.type = String(body.type);
 
     // Relations
     if (body.branch !== undefined) {
-        const { branchId } = await resolveReferences(body.branch as string, "");
-        if (branchId) updateData.branchOfficeId = branchId;
+      const { branchId } = await resolveReferences(body.branch as string, "");
+      if (branchId) updateData.branchOfficeId = branchId;
     }
     if (body.discipline !== undefined) {
-        const { disciplineId } = await resolveReferences("", body.discipline as string);
-        if (disciplineId) updateData.disciplineId = disciplineId;
+      const { disciplineId } = await resolveReferences(
+        "",
+        body.discipline as string
+      );
+      if (disciplineId) updateData.disciplineId = disciplineId;
     }
 
     // seats: usar capacidad efectiva
@@ -394,8 +417,8 @@ export const updateClassroomController = async (
     updateData.updatedAt = new Date();
 
     await prisma.exerciseRoom.update({
-        where: { id },
-        data: updateData
+      where: { id },
+      data: updateData,
     });
 
     res.status(200).json({ message: "Salón actualizado correctamente" });
@@ -413,8 +436,8 @@ export const deleteClassroomController = async (
   const { classroomId } = req.params;
   const id = parseInt(classroomId);
   if (isNaN(id)) {
-      res.status(400).json({ error: "ID inválido" });
-      return;
+    res.status(400).json({ error: "ID inválido" });
+    return;
   }
 
   try {

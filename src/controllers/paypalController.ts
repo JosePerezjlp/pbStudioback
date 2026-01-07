@@ -310,7 +310,7 @@ export const capturePayPalOrderController = async (
           couponId: finalCoupon?.id || null,
           couponDiscount: finalCoupon ? finalCoupon.discount : 0,
 
-          // paypalOrderId: orderID, // Field not in schema
+          paypalOrderId: orderID,
           chargeId: captureID,
           cardType: "paypal",
         },

@@ -64,7 +64,7 @@ export const verifyToken: RequestHandler = async (
     }
 
     req.user = {
-      uid: userContext.firebaseUid || `sql_${userContext.id}`,
+      uid: `sql_${userContext.id}`,
       id: userContext.id,
       role: userContext.role,
       isAdmin: userContext.isAdmin,

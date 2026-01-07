@@ -4,6 +4,19 @@ import { prisma } from "../config/prisma";
 
 const resend = new Resend(process.env.RESEND_API_KEY); // usa variables de entorno en producción
 
+// Flag global para deshabilitar envíos reales de correo (por ahora)
+const EMAIL_SENDING_DISABLED = true;
+
+// Helper centralizado: respeta el flag y evita tocar cada llamada a Resend
+const safeSendEmail = async (
+  params: Parameters<(typeof resend.emails)["send"]>[0]
+) => {
+  if (EMAIL_SENDING_DISABLED) {
+    return; // noop temporal: no envía nada
+  }
+  await resend.emails.send(params);
+};
+
 const FROM = "PB Studio <admin@pbstudioapp.com>"; // puedes personalizarlo si ya tienes un dominio verificado
 const BASE_URL =
   process.env.API_URL || "https://webpbstudio-produccion.onrender.com";
@@ -32,7 +45,7 @@ const formatClassType = (type: string | undefined): string => {
 // Envia con imagen al registrar
 export const sendWelcomeEmail = async (to: string, name: string) => {
   try {
-    await resend.emails.send({
+    await safeSendEmail({
       from: FROM,
       to,
       subject: `¡Bienvenido ${name} a PB Studio!`,
@@ -101,7 +114,8 @@ export const sendReservationConfirmationEmail = async (
       seatInfo = `<br/><br/><strong>🎫 Tu lugar:</strong> Asiento #${seatNumber}`;
     }
 
-    await resend.emails.send({
+    if (EMAIL_SENDING_DISABLED) return; // temporalmente no enviar
+    await safeSendEmail({
       from: FROM,
       to,
       subject: `Reserva confirmada: ${safeClass}`,
@@ -172,7 +186,7 @@ export const sendReservationCancelledEmail = async (
     const safeClass = escapeHtml(classInfo);
     const formattedClassType = formatClassType(classType);
 
-    await resend.emails.send({
+    await safeSendEmail({
       from: FROM,
       to,
       subject: `Reserva cancelada: ${safeClass}`,
@@ -249,7 +263,7 @@ export const sendPackagePurchaseEmail = async (
     : packageName;
 
   try {
-    await resend.emails.send({
+    await safeSendEmail({
       from: FROM,
       to,
       subject: "¡Compra de paquete exitosa!",
@@ -340,7 +354,7 @@ export const sendPackageExpiryWarningEmail = async (
   try {
     const daysLabel = daysLeft === 1 ? "1 día" : `${daysLeft} días`;
 
-    await resend.emails.send({
+    await safeSendEmail({
       from: FROM,
       to,
       subject: "Tu paquete está por vencer",
@@ -405,7 +419,7 @@ export const sendClassReminderEmail = async (
   const { day, hour, discipline, branch } = info;
   const formattedClassType = formatClassType(classType);
 
-  await resend.emails.send({
+  await safeSendEmail({
     from: FROM,
     to,
     subject: "⏰ ¡Tu clase comienza en 2 horas!",
@@ -462,7 +476,7 @@ export const sendContactNotificationEmail = async (payload: {
     return;
   }
 
-  await resend.emails.send({
+  await safeSendEmail({
     from: FROM,
     to: adminEmail,
     subject: "📩 Nuevo mensaje de contacto",
@@ -486,7 +500,7 @@ export const sendContactAutoReplyEmail = async (payload: {
 }) => {
   const { name, email } = payload;
 
-  await resend.emails.send({
+  await safeSendEmail({
     from: FROM,
     to: email,
     subject: "¡Hemos recibido tu mensaje en PB Studio!",
@@ -506,7 +520,7 @@ export const sendPasswordResetCodeEmail = async (
   code: string
 ) => {
   try {
-    await resend.emails.send({
+    await safeSendEmail({
       from: FROM,
       to,
       subject: "Código para restablecer tu contraseña",
@@ -610,7 +624,7 @@ export const sendWaitlistEntryEmail = async (
     const safeDate = escapeHtml(dateStr);
     const safeHour = escapeHtml(hour);
 
-    await resend.emails.send({
+    await safeSendEmail({
       from: FROM,
       to,
       subject: `Lista de espera: ${safeDiscipline} — ${safeDate} ${safeHour}`,
@@ -700,7 +714,7 @@ export const sendWaitlistAcceptedEmail = async (
       seatInfo = `<br/><br/><strong>🎫 Tu lugar:</strong> Asiento #${seatNumber}`;
     }
 
-    await resend.emails.send({
+    await safeSendEmail({
       from: FROM,
       to,
       subject: `¡Cupo disponible: ${safeDiscipline} — ${safeDate} ${safeHour}`,
@@ -773,7 +787,7 @@ export const sendWaitlistRejectedEmail = async (
   try {
     const { discipline, dateStr, hour } = await getClassInfo(classId);
 
-    await resend.emails.send({
+    await safeSendEmail({
       from: FROM,
       to,
       subject: "Tu solicitud en lista de espera ha finalizado",
@@ -832,7 +846,7 @@ export const sendWaitlistCancelledByUserEmail = async (
   try {
     const { discipline, dateStr, hour } = await getClassInfo(classId);
 
-    await resend.emails.send({
+    await safeSendEmail({
       from: FROM,
       to,
       subject: "Has salido de la lista de espera",

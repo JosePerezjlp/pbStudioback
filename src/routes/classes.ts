@@ -1,5 +1,6 @@
 import express from "express";
 import { verifyToken } from "../middleware/authMiddleware";
+import { optionalAuth } from "../middleware/optionalAuth";
 import { checkPermission } from "../middleware/permissionMiddleware";
 import {
   createClassController,
@@ -13,45 +14,45 @@ import {
   getOpenClassesPublicController,
   getAvailableClassesByBranchController,
   deleteOldClassesController,
+  getAllUnlimitedClassesController,
 } from "../controllers/classController";
+import { getClassesForReservationController } from "../controllers/reservationClassController";
 import { adminSessionGuard } from "../middleware/adminSessionGuard";
 
 const router = express.Router();
 
-// Públicas (usuarios autenticados pueden ver clases)
-router.get("/", getAllClassesController);
+// Públicas (con autenticación opcional para filtros basados en rol)
+router.get("/", optionalAuth, getAllClassesController);
 router.get("/stats", getClassesStatsController);
 router.get("/future", getFutureClassesController);
 router.get("/open", getOpenClassesPublicController);
 router.get("/available", getAvailableClassesByBranchController);
+router.get("/for-reservation", verifyToken, getClassesForReservationController);
+router.get("/all-unlimited", verifyToken, getAllUnlimitedClassesController);
 router.get("/:classId", verifyToken, getClassByIdController);
 
-// Protegidas con permisos específicos y sesión única (solo para administradores/staff)
+// Protegidas con permisos específicos (solo para administradores/staff)
 router.post(
   "/",
   verifyToken,
-  adminSessionGuard,
   checkPermission("clases", "crear"),
   createClassController
 );
 router.post(
   "/bulk",
   verifyToken,
-  adminSessionGuard,
   checkPermission("clases", "crear"),
   createClassesBulkController
 );
 router.put(
   "/:classId",
   verifyToken,
-  adminSessionGuard,
   checkPermission("clases", "editar"),
   updateClassController
 );
 router.delete(
   "/:classId",
   verifyToken,
-  adminSessionGuard,
   checkPermission("clases", "cancelar"),
   deleteClassController
 );
@@ -59,7 +60,6 @@ router.delete(
 router.delete(
   "/cleanup/old",
   verifyToken,
-  adminSessionGuard,
   checkPermission("clases", "cancelar"),
   deleteOldClassesController
 );

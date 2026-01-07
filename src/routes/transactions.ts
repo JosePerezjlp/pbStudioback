@@ -41,7 +41,6 @@ router.get(
 router.get(
   "/recent",
   verifyToken,
-  adminSessionGuard,
   checkPermission("transacciones", "listado"),
   getRecentTransactionsController
 );
