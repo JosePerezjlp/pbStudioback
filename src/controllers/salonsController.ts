@@ -283,7 +283,10 @@ export const getClassroomsByBranchController = async (
     }
 
     const rooms = await prisma.exerciseRoom.findMany({
-      where: { branchOfficeId: bId },
+      where: {
+        branchOfficeId: bId,
+        isActive: true,
+      },
       orderBy: { createdAt: "desc" },
       include: {
         discipline: true,

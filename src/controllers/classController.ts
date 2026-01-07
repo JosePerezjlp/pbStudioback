@@ -817,3 +817,67 @@ export const getClassesStatsController = async (
     res.status(500).json({ error: "Error" });
   }
 };
+
+export const getClassesByDayController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { day, branchId } = req.query;
+
+    if (!day) {
+      res.status(400).json({ error: "El parámetro 'day' es requerido" });
+      return;
+    }
+
+    const where: Prisma.SessionWhereInput = {
+      dateStart: new Date(day as string),
+    };
+
+    if (branchId && !isNaN(Number(branchId))) {
+      where.branchOfficeId = Number(branchId);
+    }
+
+    const sessions = await prisma.session.findMany({
+      where,
+      include: {
+        discipline: true,
+        exerciseRoom: true,
+        instructor: {
+          include: {
+            profile: true,
+          },
+        },
+        branchOffice: true,
+      },
+      orderBy: [{ timeStart: "asc" }],
+    });
+
+    const formattedSessions = sessions.map((s) => ({
+      id: String(s.id),
+      day: s.dateStart.toISOString().split("T")[0],
+      hour: s.timeStart.toISOString().slice(11, 16),
+      discipline: s.discipline?.name || "",
+      disciplineId: String(s.disciplineId),
+      instructor: s.instructor
+        ? `${s.instructor.profile?.firstname || ""} ${s.instructor.profile?.paternalSurname || ""}`.trim()
+        : "",
+      instructorId: String(s.instructorId),
+      branch: s.branchOffice?.name || "",
+      branchId: String(s.branchOfficeId),
+      room: s.exerciseRoom?.name || "",
+      roomId: String(s.exerciseRoomId),
+      info: s.information || "",
+      capacity: s.exerciseRoomCapacity || 0,
+      occupied: s.exerciseRoomCapacity - s.availableCapacity,
+      status: s.status === 1 ? "abierta" : "cerrada",
+      gympass: !!s.gympassSlotId,
+      type: s.type,
+    }));
+
+    res.json(formattedSessions);
+  } catch (e) {
+    console.error("Error en getClassesByDayController:", e);
+    res.status(500).json({ error: "Error al obtener clases por día" });
+  }
+};

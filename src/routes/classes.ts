@@ -15,6 +15,7 @@ import {
   getAvailableClassesByBranchController,
   deleteOldClassesController,
   getAllUnlimitedClassesController,
+  getClassesByDayController,
 } from "../controllers/classController";
 import { getClassesForReservationController } from "../controllers/reservationClassController";
 import { adminSessionGuard } from "../middleware/adminSessionGuard";
@@ -29,6 +30,7 @@ router.get("/open", getOpenClassesPublicController);
 router.get("/available", getAvailableClassesByBranchController);
 router.get("/for-reservation", verifyToken, getClassesForReservationController);
 router.get("/all-unlimited", verifyToken, getAllUnlimitedClassesController);
+router.get("/by-day", getClassesByDayController);
 router.get("/:classId", verifyToken, getClassByIdController);
 
 // Protegidas con permisos específicos (solo para administradores/staff)
