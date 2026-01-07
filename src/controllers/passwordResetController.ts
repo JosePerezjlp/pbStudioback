@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import prisma from "../config/prisma";
 import bcrypt from "bcrypt";
+import crypto from "crypto";
 import { sendPasswordResetCodeEmail } from "../utils/emailService";
 
 /* ---------- 1) Solicitar código ---------- */
@@ -31,6 +32,7 @@ export const requestResetCode = async (req: Request, res: Response): Promise<voi
 
     /* 2. Generar código y fecha de expiración */
     const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // +2h
 
     /* 3. Guardar (Upsert) */
@@ -38,6 +40,7 @@ export const requestResetCode = async (req: Request, res: Response): Promise<voi
       where: { email },
       update: {
         code,
+        token,
         expiresAt,
         used: false,
         createdAt: new Date(),
@@ -45,6 +48,7 @@ export const requestResetCode = async (req: Request, res: Response): Promise<voi
       create: {
         email,
         code,
+        token,
         expiresAt,
         used: false,
       },
