@@ -324,6 +324,8 @@ model Transaction {
   expiredAt             DateTime?       @map("expired_at") @db.DateTime(0)
   idempotencyKey        String?         @unique(map: "idempotency_key") @map("idempotency_key") @db.VarChar(128)
   paypalOrderId         String?         @map("paypal_order_id") @db.VarChar(50)
+  notifiedLowClasses    Boolean         @default(false) @map("notified_low_classes")
+  notifiedExpiry        Boolean         @default(false) @map("notified_expiry")
   couponHistories       CouponHistory[]
   reservations          Reservation[]
   coupon                Coupon?         @relation(fields: [couponId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "FK_723705D166C5951B")
@@ -381,19 +383,49 @@ model User {
 }
 
 model WaitingList {
-  userId      Int       @map("user_id")
-  sessionId   Int       @map("session_id")
-  isAvailable Boolean   @map("is_available")
-  createdAt   DateTime? @map("created_at") @db.DateTime(0)
-  error       String?   @db.VarChar(255)
-  updatedAt   DateTime? @map("updated_at") @db.DateTime(0)
-  session     Session   @relation(fields: [sessionId], references: [id], onUpdate: Restrict, map: "FK_E4F3965B613FECDF")
-  user        User      @relation(fields: [userId], references: [id], onUpdate: Restrict, map: "FK_E4F3965BA76ED395")
+  userId             Int       @map("user_id")
+  sessionId          Int       @map("session_id")
+  isAvailable        Boolean   @map("is_available")
+  createdAt          DateTime? @map("created_at") @db.DateTime(0)
+  error              String?   @db.VarChar(255)
+  updatedAt          DateTime? @map("updated_at") @db.DateTime(0)
+  status             String    @default("pending") @db.VarChar(50)
+  rejectedEmailSent  Boolean   @default(false) @map("rejected_email_sent")
+  session            Session   @relation(fields: [sessionId], references: [id], onUpdate: Restrict, map: "FK_E4F3965B613FECDF")
+  user               User      @relation(fields: [userId], references: [id], onUpdate: Restrict, map: "FK_E4F3965BA76ED395")
 
   @@id([userId, sessionId])
   @@index([sessionId], map: "IDX_E4F3965B613FECDF")
   @@index([userId], map: "IDX_E4F3965BA76ED395")
   @@map("waiting_list")
+}
+
+model PasswordReset {
+  id        Int       @id @default(autoincrement())
+  email     String    @db.VarChar(180)
+  token     String    @unique @db.VarChar(64)
+  expiresAt DateTime  @map("expires_at") @db.DateTime(0)
+  createdAt DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  used      Boolean   @default(false)
+
+  @@index([email], map: "idx_password_reset_email")
+  @@index([token], map: "idx_password_reset_token")
+  @@map("password_reset")
+}
+
+model Notification {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  type      String    @db.VarChar(50)
+  title     String    @db.VarChar(255)
+  message   String    @db.Text
+  read      Boolean   @default(false)
+  createdAt DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  readAt    DateTime? @map("read_at") @db.DateTime(0)
+
+  @@index([userId], map: "idx_notification_user")
+  @@index([read], map: "idx_notification_read")
+  @@map("notification")
 }
 
 model doctrine_migration_versions {
