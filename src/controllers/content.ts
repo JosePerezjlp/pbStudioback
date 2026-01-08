@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import multer from "multer";
 import { prisma } from "../config/prisma";
-import { uploadLocal, deleteLocalFile } from "../utils/uploadLocal";
+import { uploadToFirebaseStorage } from "../utils/firebaseStorage";
 
 /* ─────────────────────────────
    Helpers
@@ -19,7 +19,7 @@ const getConfig = async (moduleName: string) => {
 const setConfig = async (moduleName: string, data: any) => {
   const existing = await getConfig(moduleName);
   const dataStr = typeof data === "string" ? data : JSON.stringify(data);
-  
+
   if (existing) {
     return await prisma.configuration.update({
       where: { id: existing.id },
@@ -62,16 +62,18 @@ const getContent = async (moduleName: string, res: Response): Promise<void> => {
     if (!config) {
       // Return empty or default if not found, or 404
       // Frontend expects { html: "..." }
-      res.status(404).json({ error: `Contenido '${moduleName}' no encontrado` });
+      res
+        .status(404)
+        .json({ error: `Contenido '${moduleName}' no encontrado` });
       return;
     }
 
     // Try to parse if it's JSON, otherwise return as string wrapper
     let data;
     try {
-        data = JSON.parse(config.data);
+      data = JSON.parse(config.data);
     } catch {
-        data = { html: config.data };
+      data = { html: config.data };
     }
 
     res.status(200).json(data);
@@ -99,24 +101,30 @@ export const updatePrivacyController = (req: Request, res: Response) =>
 
 export const getPrivacyController = async (_req: Request, res: Response) => {
   try {
-    const preferredIds = ["privacyNotice", "privacy", "avisoPrivacidad", "aviso_de_privacidad"];
-    
+    const preferredIds = [
+      "privacyNotice",
+      "privacy",
+      "avisoPrivacidad",
+      "aviso_de_privacidad",
+    ];
+
     // Try to find any of the preferred modules
     const configs = await prisma.configuration.findMany({
-        where: { module: { in: preferredIds } }
+      where: { module: { in: preferredIds } },
     });
 
     if (configs.length > 0) {
-         // Sort by preferred order if needed, but for now just take the first one found
-         // or specific logic. The original code looped.
-         // Let's just pick 'privacyNotice' if present, else first available.
-         const match = configs.find(c => c.module === "privacyNotice") || configs[0];
-         try {
-             res.status(200).json(JSON.parse(match.data));
-         } catch {
-             res.status(200).json({ html: match.data });
-         }
-         return;
+      // Sort by preferred order if needed, but for now just take the first one found
+      // or specific logic. The original code looped.
+      // Let's just pick 'privacyNotice' if present, else first available.
+      const match =
+        configs.find((c) => c.module === "privacyNotice") || configs[0];
+      try {
+        res.status(200).json(JSON.parse(match.data));
+      } catch {
+        res.status(200).json({ html: match.data });
+      }
+      return;
     }
 
     res.status(404).json({ error: "Contenido 'privacyNotice' no encontrado" });
@@ -154,11 +162,11 @@ export const updateHomeContent = [
       const existingConfig = await getConfig("homeContent");
       let existingData: any = {};
       if (existingConfig) {
-          try {
-              existingData = JSON.parse(existingConfig.data);
-          } catch {
-              existingData = {};
-          }
+        try {
+          existingData = JSON.parse(existingConfig.data);
+        } catch {
+          existingData = {};
+        }
       }
 
       const imageUrls: Record<string, string> = {
@@ -172,28 +180,22 @@ export const updateHomeContent = [
         Object.keys(imageUrls).map(async (key) => {
           if (images[key]) {
             const file = images[key][0];
-            const newUrl = await uploadLocal(file, "home");
-
-            const oldUrl = imageUrls[key];
-            if (oldUrl && oldUrl !== newUrl) {
-              await deleteLocalFile(oldUrl);
-            }
-
+            const newUrl = await uploadToFirebaseStorage(file, "home");
             imageUrls[key] = newUrl;
           }
         })
       );
 
       const newData = {
-          textBannerMain,
-          textTitleLeft,
-          textSubTitleLeft: textSubtitleLeft ?? "",
-          textBtnLeft,
-          textTitleRight,
-          textSubTitleRight: textSubtitleRight ?? "",
-          textBtnRight,
-          ...imageUrls,
-          updatedAt: new Date().toISOString(),
+        textBannerMain,
+        textTitleLeft,
+        textSubTitleLeft: textSubtitleLeft ?? "",
+        textBtnLeft,
+        textTitleRight,
+        textSubTitleRight: textSubtitleRight ?? "",
+        textBtnRight,
+        ...imageUrls,
+        updatedAt: new Date().toISOString(),
       };
 
       await setConfig("homeContent", newData);
@@ -223,10 +225,10 @@ export const getHomeContent = async (
     }
 
     try {
-        const data = JSON.parse(config.data);
-        res.status(200).json(data);
+      const data = JSON.parse(config.data);
+      res.status(200).json(data);
     } catch {
-        res.status(500).json({ error: "Error al procesar datos de inicio" });
+      res.status(500).json({ error: "Error al procesar datos de inicio" });
     }
   } catch (error) {
     console.error("Error al obtener contenido de inicio:", error);

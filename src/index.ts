@@ -186,10 +186,10 @@ app.use("/password-reset", passwordResetRouter);
 app.use("/config", configRouter);
 // Ruta pública para validar cupones (sin autenticación)
 app.get("/coupons/validate", validateCouponController);
-app.use("/coupons", verifyToken, adminSessionGuard, couponsRouter);
-app.use("/staff", verifyToken, adminSessionGuard, staffRouter);
-app.use("/attendance", verifyToken, adminSessionGuard, attendanceRouter);
-app.use("/waitlist", verifyToken, waitListRouter); // adminSessionGuard aplicado en router individual
+app.use("/coupons", verifyToken, couponsRouter);
+app.use("/staff", verifyToken, staffRouter);
+app.use("/attendance", verifyToken, attendanceRouter);
+app.use("/waitlist", verifyToken, waitListRouter);
 app.use("/notifications", notificationsRouter);
 
 const PERF_ENABLE =

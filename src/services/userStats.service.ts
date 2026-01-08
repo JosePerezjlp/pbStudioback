@@ -39,180 +39,193 @@ export async function getUserClassStats(
   try {
     const now = DateTime.now().setZone("America/Mexico_City").toJSDate();
 
-    // 1. Clases disponibles: suma de todas las transacciones activas
+    // 1. Clases disponibles: suma de todas las transacciones pagadas aún vigentes
+    //    IMPORTANTE: No confiamos en flags de migración como isCompleted / isExpired,
+    //    contamos únicamente en base a reservas reales y fecha de expiración.
     const activeTransactions = await prisma.transaction.findMany({
-    where: {
-      userId,
-      status: 1, // Pagado
-      isCompleted: true,
-      isExpired: false,
-      OR: [
-        { expirationAt: null }, // Sin expiración
-        { expirationAt: { gte: now } }, // No expirado
-      ],
-    },
-    select: {
-      id: true,
-      packageTotalClasses: true,
-      packageIsUnlimited: true,
-      reservations: {
-        where: {
-          cancellationAt: null,
-        },
-        select: {
-          id: true,
-        },
-      },
-    },
-  });
-
-  // Calcular clases disponibles
-  let classesAvailable = 0;
-  let hasUnlimited = false;
-
-  for (const tx of activeTransactions) {
-    if (tx.packageIsUnlimited) {
-      hasUnlimited = true;
-      break; // Si tiene ilimitado, no necesitamos contar más
-    }
-    const used = tx.reservations.length;
-    const available = Math.max(0, tx.packageTotalClasses - used);
-    classesAvailable += available;
-  }
-
-  // Si tiene paquete ilimitado, mostrar un número alto
-  if (hasUnlimited) {
-    classesAvailable = 999;
-  }
-
-  // 2. Clases tomadas: reservaciones completadas (attended = true)
-  const classesTaken = await prisma.reservation.count({
-    where: {
-      userId,
-      attended: true,
-      cancellationAt: null, // No canceladas
-    },
-  });
-
-  // 3. Próximas clases: reservaciones futuras activas
-  const upcomingClasses = await prisma.reservation.count({
-    where: {
-      userId,
-      cancellationAt: null, // No canceladas
-      session: {
-        dateStart: { gte: now }, // Fecha futura
-        status: 1, // Clase activa
-      },
-    },
-  });
-
-  // 4. Lista de espera
-  const waitlistCount = await prisma.waitingList.count({
-    where: {
-      userId,
-      isAvailable: true, // Solo contar los que están esperando disponibilidad
-    },
-  });
-
-  // 5. Detalle por paquete (todas las transacciones pagadas del usuario)
-  let userTransactions = await prisma.transaction.findMany({
-    where: {
-      userId,
-      status: 1, // Pagado
-      isCompleted: true,
-    },
-    orderBy: {
-      createdAt: "desc", // Últimos paquetes primero
-    },
-    select: {
-      id: true,
-      packageTotalClasses: true,
-      expirationAt: true,
-      isExpired: true,
-      packageIsUnlimited: true,
-      packageType: true,
-      packageId: true,
-      reservations: {
-        where: {
-          cancellationAt: null,
-        },
-        select: {
-          id: true,
-        },
-      },
-    },
-  });
-
-  // Get package info separately
-  const packageIds = userTransactions.map(t => t.packageId).filter((id): id is number => id !== null);
-  
-  let packagesInfo: Array<{ id: number; isActive: boolean }> = [];
-  if (packageIds.length > 0) {
-    packagesInfo = await prisma.package.findMany({
       where: {
-        id: { in: packageIds },
+        userId,
+        status: 1, // Pagado
+        OR: [
+          { expirationAt: null }, // Sin expiración (paquetes viejos o ilimitados)
+          { expirationAt: { gte: now } }, // No expirado por fecha
+        ],
       },
       select: {
         id: true,
-        isActive: true,
+        packageTotalClasses: true,
+        packageIsUnlimited: true,
+        reservations: {
+          where: {
+            cancellationAt: null,
+          },
+          select: {
+            id: true,
+          },
+        },
       },
     });
-  }
 
-  const packageMap = new Map(packagesInfo.map(p => [p.id, p]));
+    // Calcular clases disponibles
+    let classesAvailable = 0;
+    let hasUnlimited = false;
 
-  // Seleccionar solo los últimos 3 paquetes grupales y 3 individuales
-  const packages: UserPackageStats[] = [];
-  let groupsCount = 0;
-  let individualCount = 0;
-
-  for (const tx of userTransactions) {
-    const classType = normalizePackageType(tx.packageType);
-
-    if (classType === ClassType.GROUPS) {
-      if (groupsCount >= 3) continue;
-      groupsCount++;
-    } else if (classType === ClassType.INDIVIDUAL) {
-      if (individualCount >= 3) continue;
-      individualCount++;
-    } else {
-      // Paquetes que no son de clases (otro tipo) no se muestran en esta vista
-      continue;
+    for (const tx of activeTransactions) {
+      if (tx.packageIsUnlimited) {
+        hasUnlimited = true;
+        break; // Si tiene ilimitado, no necesitamos contar más
+      }
+      const used = tx.reservations.length;
+      const available = Math.max(0, tx.packageTotalClasses - used);
+      classesAvailable += available;
     }
 
-    const classesUsed = tx.reservations.length;
-    const classesAvailable = Math.max(0, tx.packageTotalClasses - classesUsed);
-    const packageInfo = tx.packageId ? packageMap.get(tx.packageId) : undefined;
-    
-    packages.push({
-      id: tx.id,
-      totalClasses: tx.packageTotalClasses,
-      classesUsed,
-      classesAvailable,
-      expirationAt: tx.expirationAt,
-      isExpired:
-        tx.isExpired ||
-        (tx.expirationAt ? tx.expirationAt.getTime() < now.getTime() : false),
-      isUnlimited: tx.packageIsUnlimited,
-      type: tx.packageType,
-      classType,
-      // Si por alguna razón no hay relación de package, asumimos true
-      isActive: packageInfo?.isActive ?? true,
+    // Si tiene paquete ilimitado, mostrar un número alto
+    if (hasUnlimited) {
+      classesAvailable = 999;
+    }
+
+    // 2. Clases tomadas: contar reservaciones no canceladas de sesiones pasadas O con attended=true
+    const classesTaken = await prisma.reservation.count({
+      where: {
+        userId,
+        cancellationAt: null, // No canceladas
+        OR: [
+          { attended: true }, // Marcadas como asistidas
+          {
+            session: {
+              dateStart: { lt: now }, // Sesiones pasadas
+            },
+          },
+        ],
+      },
     });
 
-    // Si ya tenemos 3 y 3, podemos cortar
-    if (groupsCount >= 3 && individualCount >= 3) {
-      break;
-    }
-  }
+    // 3. Próximas clases: reservaciones futuras activas
+    const upcomingClasses = await prisma.reservation.count({
+      where: {
+        userId,
+        cancellationAt: null, // No canceladas
+        session: {
+          dateStart: { gte: now }, // Fecha futura
+          status: 1, // Clase activa
+        },
+      },
+    });
 
-  return {
-    classesAvailable,
-    classesTaken,
-    upcomingClasses,
-    waitlistCount,
-    packages,
-  };
+    // 4. Lista de espera
+    const waitlistCount = await prisma.waitingList.count({
+      where: {
+        userId,
+        isAvailable: true, // Solo contar los que están esperando disponibilidad
+      },
+    });
+
+    // 5. Detalle por paquete (todas las transacciones pagadas del usuario, incluyendo expiradas)
+    let userTransactions = await prisma.transaction.findMany({
+      where: {
+        userId,
+        status: 1, // Pagado (sin importar si está completado o expirado)
+      },
+      orderBy: {
+        createdAt: "desc", // Últimos paquetes primero
+      },
+      select: {
+        id: true,
+        packageTotalClasses: true,
+        expirationAt: true,
+        isExpired: true,
+        packageIsUnlimited: true,
+        packageType: true,
+        packageId: true,
+        reservations: {
+          where: {
+            cancellationAt: null,
+          },
+          select: {
+            id: true,
+          },
+        },
+      },
+    });
+
+    // Get package info separately
+    const packageIds = userTransactions
+      .map((t) => t.packageId)
+      .filter((id): id is number => id !== null);
+
+    let packagesInfo: Array<{ id: number; isActive: boolean }> = [];
+    if (packageIds.length > 0) {
+      packagesInfo = await prisma.package.findMany({
+        where: {
+          id: { in: packageIds },
+        },
+        select: {
+          id: true,
+          isActive: true,
+        },
+      });
+    }
+
+    const packageMap = new Map(packagesInfo.map((p) => [p.id, p]));
+
+    // Seleccionar solo los últimos 3 paquetes grupales y 3 individuales
+    const packages: UserPackageStats[] = [];
+    let groupsCount = 0;
+    let individualCount = 0;
+
+    for (const tx of userTransactions) {
+      const classType = normalizePackageType(tx.packageType);
+
+      if (classType === ClassType.GROUPS) {
+        if (groupsCount >= 3) continue;
+        groupsCount++;
+      } else if (classType === ClassType.INDIVIDUAL) {
+        if (individualCount >= 3) continue;
+        individualCount++;
+      } else {
+        // Paquetes que no son de clases (otro tipo) no se muestran en esta vista
+        continue;
+      }
+
+      const classesUsed = tx.reservations.length;
+      const classesAvailable = Math.max(
+        0,
+        tx.packageTotalClasses - classesUsed
+      );
+      const packageInfo = tx.packageId
+        ? packageMap.get(tx.packageId)
+        : undefined;
+
+      packages.push({
+        id: tx.id,
+        totalClasses: tx.packageTotalClasses,
+        classesUsed,
+        classesAvailable,
+        expirationAt: tx.expirationAt,
+        isExpired:
+          tx.isExpired ||
+          (tx.expirationAt ? tx.expirationAt.getTime() < now.getTime() : false),
+        isUnlimited: tx.packageIsUnlimited,
+        type: tx.packageType,
+        classType,
+        // Si por alguna razón no hay relación de package, asumimos true
+        isActive: packageInfo?.isActive ?? true,
+      });
+
+      // Si ya tenemos 3 y 3, podemos cortar
+      if (groupsCount >= 3 && individualCount >= 3) {
+        break;
+      }
+    }
+
+    return {
+      classesAvailable,
+      classesTaken,
+      upcomingClasses,
+      waitlistCount,
+      packages,
+    };
   } catch (error) {
     console.error("Error in getUserClassStats for userId:", userId);
     console.error("Error details:", error);

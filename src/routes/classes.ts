@@ -28,6 +28,7 @@ router.get("/stats", getClassesStatsController);
 router.get("/future", getFutureClassesController);
 router.get("/open", getOpenClassesPublicController);
 router.get("/available", getAvailableClassesByBranchController);
+router.get("/available-filtered", getAvailableClassesByBranchController);
 router.get("/for-reservation", verifyToken, getClassesForReservationController);
 router.get("/all-unlimited", verifyToken, getAllUnlimitedClassesController);
 router.get("/by-day", getClassesByDayController);

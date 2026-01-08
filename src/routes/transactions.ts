@@ -12,6 +12,7 @@ import {
   updateTransactionExpirationController,
   getCajaTransactionsController,
   getTransactionSummaryController,
+  getTransactionTotalController,
   getRankingsController,
   getRecentTransactionsController,
   deleteOldTransactionsController,
@@ -23,18 +24,22 @@ const router = express.Router();
 /* Rutas públicas para usuarios comunes: */
 router.get("/my", verifyToken, getUserTransactionsController); // Obtener transacciones del usuario actual
 
-/* Rutas administrativas (requieren permisos específicos y validación de sesión): */
+/* Rutas administrativas (requieren permisos específicos): */
+router.get(
+  "/total",
+  verifyToken,
+  checkPermission("transacciones", "listado"),
+  getTransactionTotalController
+);
 router.get(
   "/",
   verifyToken,
-  adminSessionGuard,
   checkPermission("transacciones", "listado"),
   getAllTransactionsController
 );
 router.get(
   "/export",
   verifyToken,
-  adminSessionGuard,
   checkPermission("transacciones", "exportar"),
   exportTransactionsController
 );
@@ -47,7 +52,6 @@ router.get(
 router.get(
   "/caja",
   verifyToken,
-  adminSessionGuard,
   checkPermission("transacciones", "caja"),
   getCajaTransactionsController
 );
@@ -61,28 +65,24 @@ router.get("/rankings", getRankingsController);
 router.get(
   "/:userId",
   verifyToken,
-  adminSessionGuard,
   checkPermission("transacciones", "detalle"),
   getUserTransactionsController
 );
 router.post(
   "/cash",
   verifyToken,
-  adminSessionGuard,
   checkPermission("transacciones", "crear"),
   createCashTransactionController
 );
 router.patch(
   "/:id/cancel",
   verifyToken,
-  adminSessionGuard,
   checkPermission("transacciones", "cancelar"),
   cancelTransactionController
 );
 router.patch(
   "/:id/expiration",
   verifyToken,
-  adminSessionGuard,
   checkPermission("transacciones", "editar_fecha_expiracion"),
   updateTransactionExpirationController
 );
@@ -90,7 +90,6 @@ router.patch(
 router.delete(
   "/cleanup",
   verifyToken,
-  adminSessionGuard,
   checkPermission("transacciones", "eliminar"), // Asumiendo que existe este permiso o similar, sino usar uno general de admin
   deleteOldTransactionsController
 );

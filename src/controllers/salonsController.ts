@@ -231,11 +231,17 @@ export const createClassroomController = async (
 };
 
 export const getAllClassroomsController = async (
-  _req: Request,
+  req: Request,
   res: Response
 ) => {
   try {
+    const { enabled } = req.query;
+
+    // Si enabled=true, filtrar solo rooms activas
+    const whereClause = enabled === "true" ? { isActive: true } : {};
+
     const rooms = await prisma.exerciseRoom.findMany({
+      where: whereClause,
       orderBy: { createdAt: "desc" },
       include: {
         discipline: true,

@@ -133,7 +133,47 @@ export const userController = async (
 };
 
 export const updateUserController = async (req: Request, res: Response) => {
-  res.status(501).json({ message: "Not implemented" });
+  try {
+    const { userId } = req.params;
+    const { firstName, lastName, email, phone, branch, enabled } = req.body;
+
+    const parsedUserId = parseInt(userId);
+    if (isNaN(parsedUserId)) {
+      res.status(400).json({ error: "ID de usuario inválido" });
+      return;
+    }
+
+    // Parsear branch a número si existe
+    const branchId = branch ? parseInt(branch) : undefined;
+
+    const updatedUser = await prisma.user.update({
+      where: { id: parsedUserId },
+      data: {
+        name: firstName,
+        lastname: lastName,
+        email,
+        phone,
+        branchOfficeId: branchId && !isNaN(branchId) ? branchId : undefined,
+        enabled: enabled !== undefined ? Boolean(enabled) : undefined,
+      },
+    });
+
+    res.json({
+      message: "Usuario actualizado correctamente",
+      user: {
+        id: updatedUser.id,
+        name: updatedUser.name,
+        lastname: updatedUser.lastname,
+        email: updatedUser.email,
+        phone: updatedUser.phone,
+        branchOfficeId: updatedUser.branchOfficeId,
+        enabled: updatedUser.enabled,
+      },
+    });
+  } catch (error) {
+    console.error("Error actualizando usuario:", error);
+    res.status(500).json({ error: "Error al actualizar usuario" });
+  }
 };
 export const deleteUserController = async (req: Request, res: Response) => {
   res.status(501).json({ message: "Not implemented" });
@@ -146,11 +186,16 @@ export const getAllUsersController = async (req: Request, res: Response) => {
       search = "",
       branchId = "",
       state = "",
+      startDate = "",
+      endDate = "",
     } = req.query;
 
-    const limitNum = parseInt(limit as string);
+    // Detectar si es una petición de exportación (sin paginación)
+    const isExport = req.path.includes("/export");
+
+    const limitNum = isExport ? 999999 : parseInt(limit as string);
     const pageNum = parseInt(page as string);
-    const skip = (pageNum - 1) * limitNum;
+    const skip = isExport ? 0 : (pageNum - 1) * limitNum;
 
     // Construir filtros
     const where: any = {};
@@ -174,6 +219,17 @@ export const getAllUsersController = async (req: Request, res: Response) => {
       where.enabled = true;
     } else if (state === "disabled") {
       where.enabled = false;
+    }
+
+    // Filtrar por rango de fechas (createdAt)
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) {
+        where.createdAt.gte = new Date(startDate as string);
+      }
+      if (endDate) {
+        where.createdAt.lte = new Date(endDate as string);
+      }
     }
 
     // Obtener usuarios con paginación
@@ -208,13 +264,21 @@ export const getAllUsersController = async (req: Request, res: Response) => {
       roles: user.roles,
     }));
 
-    res.json({
-      data: formattedUsers,
-      total,
-      page: pageNum,
-      limit: limitNum,
-      totalPages: Math.ceil(total / limitNum),
-    });
+    // Si es exportación, devolver solo los datos sin paginación
+    if (isExport) {
+      res.json({
+        data: formattedUsers,
+        total,
+      });
+    } else {
+      res.json({
+        data: formattedUsers,
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
+      });
+    }
   } catch (error) {
     console.error("Error getting users:", error);
     res.status(500).json({ error: "Error obteniendo usuarios" });
@@ -229,7 +293,8 @@ export const getRecentUsersController = async (req: Request, res: Response) => {
     res.status(500).json({ error: "Error obteniendo usuarios recientes" });
   }
 };
-export const getUserByIdController = async (
+
+export const getMyProfileController = async (
   req: AuthRequest,
   res: Response
 ): Promise<void> => {
@@ -286,13 +351,165 @@ export const getUserByIdController = async (
 
     res.status(200).json({
       ...user,
+      birthday: birthdayDayMonth,
+      ...stats,
+    });
+  } catch (error) {
+    console.error("Error obteniendo perfil:", error);
+    res.status(500).json({ error: "Error al obtener información del usuario" });
+  }
+};
+
+export const getUserByIdController = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    const parsedUserId = parseInt(userId);
+
+    if (isNaN(parsedUserId)) {
+      res.status(400).json({ error: "ID de usuario inválido" });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: parsedUserId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        lastname: true,
+        phone: true,
+        birthday: true,
+        emergencyContactName: true,
+        emergencyContactPhone: true,
+        branchOfficeId: true,
+        enabled: true,
+        roles: true,
+        permissions: true,
+        freeSession: true,
+        createdAt: true,
+        branchOffice: {
+          select: {
+            id: true,
+            name: true,
+            location: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      res.status(404).json({ error: "Usuario no encontrado" });
+      return;
+    }
+
+    // Formatear cumpleaños como dd/mm para el frontend, sin exponer año
+    let birthdayDayMonth: string | null = null;
+    if (user.birthday instanceof Date) {
+      const day = String(user.birthday.getDate()).padStart(2, "0");
+      const month = String(user.birthday.getMonth() + 1).padStart(2, "0");
+      birthdayDayMonth = `${day}/${month}`;
+    }
+
+    // Obtener estadísticas calculadas en tiempo real
+    const stats = await getUserClassStats(parsedUserId);
+
+    // Obtener las últimas 5 transacciones
+    const recentTransactions = await prisma.transaction.findMany({
+      where: {
+        userId: parsedUserId,
+        status: 1, // Pagado
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 5,
+      include: {
+        package: {
+          select: {
+            id: true,
+            altText: true,
+            totalClasses: true,
+            type: true,
+            amount: true,
+          },
+        },
+        branchOffice: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    // Obtener las últimas 50 reservaciones
+    const recentReservations = await prisma.reservation.findMany({
+      where: {
+        userId: parsedUserId,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 50,
+      include: {
+        session: {
+          include: {
+            discipline: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            instructor: {
+              select: {
+                id: true,
+                username: true,
+                profile: {
+                  select: {
+                    firstname: true,
+                    paternalSurname: true,
+                    maternalSurname: true,
+                  },
+                },
+              },
+            },
+            exerciseRoom: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+        transaction: {
+          select: {
+            id: true,
+            packageType: true,
+          },
+        },
+      },
+    });
+
+    res.status(200).json({
+      ...user,
       birthday: birthdayDayMonth, // siempre dd/mm o null
       ...stats, // Agrega classesAvailable, classesTaken, upcomingClasses, waitlistCount
+      recentTransactions,
+      recentReservations,
     });
   } catch (error) {
     console.error("Error obteniendo usuario:", error);
-    console.error("Error stack:", error instanceof Error ? error.stack : String(error));
-    console.error("Error message:", error instanceof Error ? error.message : String(error));
+    console.error(
+      "Error stack:",
+      error instanceof Error ? error.stack : String(error)
+    );
+    console.error(
+      "Error message:",
+      error instanceof Error ? error.message : String(error)
+    );
     res.status(500).json({ error: "Error al obtener información del usuario" });
   }
 };
@@ -459,7 +676,52 @@ export const searchUsersByFirstNameController = async (
   req: Request,
   res: Response
 ) => {
-  res.status(501).json({ message: "Not implemented" });
+  try {
+    const { q, limit = "10" } = req.query;
+
+    if (!q || typeof q !== "string") {
+      res.status(400).json({ error: "El parámetro 'q' es requerido" });
+      return;
+    }
+
+    const limitNum = parseInt(limit as string);
+
+    const users = await prisma.user.findMany({
+      where: {
+        enabled: true, // Solo usuarios activos
+        OR: [
+          { name: { contains: q } },
+          { lastname: { contains: q } },
+          { email: { contains: q } },
+        ],
+      },
+      take: limitNum,
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        lastname: true,
+        email: true,
+        phone: true,
+        branchOfficeId: true,
+        enabled: true,
+        branchOffice: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    res.json({
+      data: users,
+      total: users.length,
+    });
+  } catch (error) {
+    console.error("Error searching users:", error);
+    res.status(500).json({ error: "Error buscando usuarios" });
+  }
 };
 export const deleteOldUsersController = async (req: Request, res: Response) => {
   res.status(501).json({ message: "Not implemented" });

@@ -78,8 +78,14 @@ export const createCashTransactionController = async (
       branchId?: string | number;
     };
 
-    if (!["cash", "terminal"].includes(paymentMethod)) {
-      res.status(400).json({ error: "Método de pago inválido" });
+    // Métodos de pago válidos: cash (efectivo), terminal (tarjeta), free (gratis/cortesía)
+    if (!["cash", "terminal", "free"].includes(paymentMethod)) {
+      res
+        .status(400)
+        .json({
+          error:
+            "Método de pago inválido. Métodos válidos: cash, terminal, free",
+        });
       return;
     }
 
@@ -139,18 +145,16 @@ export const createCashTransactionController = async (
       return;
     }
 
-    // Buscar Sucursal (si aplica)
+    // Buscar Sucursal (si aplica) - Parsear a número
     let branchOfficeId: number | null = null;
     if (branchId) {
-      const branchOffice = await prisma.branchOffice.findFirst({
-        where: {
-          OR: [
-            { id: Number(branchId) || 0 },
-            // { slug: String(branchId) } // Si hubiera slug
-          ],
-        },
-      });
-      if (branchOffice) branchOfficeId = branchOffice.id;
+      const parsedBranchId = parseInt(String(branchId));
+      if (!isNaN(parsedBranchId)) {
+        const branchOffice = await prisma.branchOffice.findUnique({
+          where: { id: parsedBranchId },
+        });
+        if (branchOffice) branchOfficeId = branchOffice.id;
+      }
     }
 
     // ---------------------------------------------------------
@@ -503,11 +507,17 @@ export const exportTransactionsController = async (
   req: Request,
   res: Response
 ): Promise<void> => {
-  // Implementación simplificada para exportación
-  // Reutiliza la lógica de filtrado de getAllTransactionsController
-  // pero sin paginación (o paginación grande) y devuelve JSON completo.
-  // Por brevedad, redirijo a getAll con limit alto.
-  req.query.limit = "10000";
+  // Para exportación, no usar paginación. Si se proporciona 'max', usarlo como límite.
+  // Si no, traer todas las transacciones sin límite.
+  const maxParam = req.query.max as string | undefined;
+
+  if (maxParam) {
+    req.query.limit = maxParam;
+  } else {
+    // Sin límite, traer todas
+    req.query.limit = "999999";
+  }
+
   req.query.page = "1";
   await getAllTransactionsController(req, res);
 };
@@ -563,6 +573,44 @@ export const getCajaTransactionsController = async (
 ): Promise<void> => {
   req.query.method = "cash";
   await getAllTransactionsController(req, res);
+};
+
+export const getTransactionTotalController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    if (!startDate || !endDate) {
+      res.status(400).json({ error: "startDate y endDate son requeridos" });
+      return;
+    }
+
+    const start = new Date(startDate as string);
+    const end = new Date(endDate as string);
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      res.status(400).json({ error: "Fechas inválidas" });
+      return;
+    }
+
+    const result = await prisma.transaction.aggregate({
+      _sum: { total: true },
+      where: {
+        status: 1, // Pagadas
+        createdAt: {
+          gte: start,
+          lte: end,
+        },
+      },
+    });
+
+    res.status(200).json({ total: result._sum.total || 0 });
+  } catch (error) {
+    console.error("Error al obtener total de transacciones:", error);
+    res.status(500).json({ error: "Error al obtener total de transacciones" });
+  }
 };
 
 export const getTransactionSummaryController = async (

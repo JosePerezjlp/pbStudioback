@@ -6,6 +6,7 @@ import {
   getAllUsersController,
   getRecentUsersController,
   getUserByIdController,
+  getMyProfileController,
   completeProfileFromAuthController,
   updateMyProfileController,
   adminResetPasswordController,
@@ -27,7 +28,7 @@ const router = express.Router();
 // Rutas públicas para usuarios comunes
 router.post("/register", userRegisterValidations, userController);
 router.post("/complete-profile", completeProfileFromAuthController);
-router.get("/me", verifyToken, getUserByIdController); // Obtener perfil del usuario actual
+router.get("/me", verifyToken, getMyProfileController); // Obtener perfil del usuario actual
 router.put("/me", verifyToken, updateMyBirthDateController);
 router.patch("/me", verifyToken, updateMyProfileController);
 router.get(

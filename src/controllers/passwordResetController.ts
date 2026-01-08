@@ -5,7 +5,10 @@ import crypto from "crypto";
 import { sendPasswordResetCodeEmail } from "../utils/emailService";
 
 /* ---------- 1) Solicitar código ---------- */
-export const requestResetCode = async (req: Request, res: Response): Promise<void> => {
+export const requestResetCode = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
     const { email } = req.body as { email: string };
     if (!email) {
@@ -32,7 +35,7 @@ export const requestResetCode = async (req: Request, res: Response): Promise<voi
 
     /* 2. Generar código y fecha de expiración */
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const token = crypto.randomBytes(32).toString('hex');
+    const token = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // +2h
 
     /* 3. Guardar (Upsert) */
@@ -73,14 +76,19 @@ const getAndValidate = async (email: string, code: string | undefined) => {
   if (!resetRecord) return { ok: false, reason: "Código no encontrado" };
 
   if (resetRecord.used) return { ok: false, reason: "Código ya usado" };
-  if (new Date() > resetRecord.expiresAt) return { ok: false, reason: "Código expirado" };
-  if (code && code !== resetRecord.code) return { ok: false, reason: "Código inválido" };
+  if (new Date() > resetRecord.expiresAt)
+    return { ok: false, reason: "Código expirado" };
+  if (code && code !== resetRecord.code)
+    return { ok: false, reason: "Código inválido" };
 
   return { ok: true, resetRecord };
 };
 
 /* ---------- 2) Verificar código ---------- */
-export const verifyResetCode = async (req: Request, res: Response): Promise<void> => {
+export const verifyResetCode = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
     const { email, code } = req.body as { email: string; code: string };
 
@@ -97,7 +105,10 @@ export const verifyResetCode = async (req: Request, res: Response): Promise<void
 };
 
 /* ---------- 3) Confirmar nueva contraseña ---------- */
-export const confirmPasswordReset = async (req: Request, res: Response): Promise<void> => {
+export const confirmPasswordReset = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   try {
     const { email, code, newPassword } = req.body as {
       email: string;
@@ -119,8 +130,8 @@ export const confirmPasswordReset = async (req: Request, res: Response): Promise
     /* 1. Buscar usuario */
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
-        res.status(404).json({ error: "Usuario no encontrado" });
-        return;
+      res.status(404).json({ error: "Usuario no encontrado" });
+      return;
     }
 
     /* 2. Hash password */
@@ -129,14 +140,14 @@ export const confirmPasswordReset = async (req: Request, res: Response): Promise
 
     /* 3. Cambiar contraseña en User */
     await prisma.user.update({
-        where: { id: user.id },
-        data: { password: hashedPassword }
+      where: { id: user.id },
+      data: { password: hashedPassword },
     });
 
     /* 4. Marcar código como usado */
     await prisma.passwordReset.update({
-        where: { id: resetRecord.id },
-        data: { used: true }
+      where: { id: resetRecord.id },
+      data: { used: true },
     });
 
     res.status(200).json({ message: "Contraseña actualizada" });

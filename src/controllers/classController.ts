@@ -294,6 +294,25 @@ export const getFutureClassesController = async (
           },
         },
         branchOffice: true,
+        reservations: {
+          where: {
+            cancellationAt: null, // Solo reservaciones activas
+          },
+          select: {
+            id: true,
+            placeNumber: true,
+            userId: true,
+            attended: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                lastname: true,
+                email: true,
+              },
+            },
+          },
+        },
       },
       orderBy: [{ dateStart: "asc" }, { timeStart: "asc" }],
       // No limit here because we need to filter in memory for "hour" logic if we want to be precise,
@@ -350,6 +369,20 @@ export const getFutureClassesController = async (
         branchName: session.branchOffice?.name || "",
         disciplineName: session.discipline?.name || "",
         info: session.information || "",
+
+        // Reservaciones con detalle de usuarios y posiciones
+        reservations:
+          session.reservations?.map((r) => ({
+            id: r.id,
+            placeNumber: r.placeNumber,
+            attended: r.attended,
+            user: {
+              id: r.user?.id,
+              name: r.user?.name,
+              lastname: r.user?.lastname,
+              email: r.user?.email,
+            },
+          })) || [],
       };
     });
 

@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { userService } from "../services/user.service";
+import { ADMIN_PERMISSIONS } from "../constants/userPermissions";
 
 const JWT_SECRET =
   process.env.JWT_SECRET || "secreto_super_seguro_para_desarrollo";
@@ -56,7 +57,10 @@ export const loginController = async (
         name: user.name,
         isAdmin: user.isAdmin,
         branches: user.branches || [],
-        permissions: user.permissions || {},
+        permissions:
+          user.isAdmin || user.role === "admin"
+            ? ADMIN_PERMISSIONS
+            : user.permissions || {},
         sessionId: sessionId,
       },
     });

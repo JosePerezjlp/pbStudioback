@@ -17,18 +17,17 @@ const router = express.Router();
 
 // --- Rutas para "Quiénes somos" ---
 router.get("/who-we-are", getWhoWeAreController);
-router.post("/who-we-are", verifyToken, adminSessionGuard, updateWhoWeAreController);
+router.post("/who-we-are", verifyToken, updateWhoWeAreController);
 
 // --- Rutas para "Términos y condiciones" ---
 router.get("/terms", getTermsController);
-router.post("/terms", verifyToken, adminSessionGuard, updateTermsController);
+router.post("/terms", verifyToken, updateTermsController);
 
 // --- Rutas para "Aviso de privacidad" ---
 router.get("/privacy", getPrivacyController);
-router.post("/privacy", verifyToken, adminSessionGuard, updatePrivacyController);
+router.post("/privacy", verifyToken, updatePrivacyController);
 
 router.get("/home", getHomeContent);
-router.post("/home", verifyToken, adminSessionGuard, ...updateHomeContent);
-
+router.post("/home", verifyToken, ...updateHomeContent);
 
 export default router;

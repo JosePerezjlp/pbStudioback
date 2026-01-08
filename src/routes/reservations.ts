@@ -19,15 +19,25 @@ const router = express.Router();
 router.get("/my", verifyToken, getAllReservationsController); // Obtener reservas del usuario actual
 router.post("/", verifyToken, createReservationController); // Crear reserva
 router.post("/bulk", verifyToken, createBulkReservationsController); // Crear múltiples reservas
-router.get("/by-class/:classId", verifyToken, adminSessionGuard, checkPermission("clases", "reservaciones"), getReservationsByClassController); // Obtener reservas de una clase específica
-router.get("/", verifyToken, adminSessionGuard, checkPermission("clases", "reservaciones"), getAllReservationsController); // Ver todas las reservas (admin)
+router.get(
+  "/by-class/:classId",
+  verifyToken,
+  checkPermission("clases", "reservaciones"),
+  getReservationsByClassController
+); // Obtener reservas de una clase específica
+router.get(
+  "/",
+  verifyToken,
+  checkPermission("clases", "reservaciones"),
+  getAllReservationsController
+); // Ver todas las reservas (admin)
 
 // Ruta para cambiar clase (pública para usuarios autenticados)
 router.post("/:reservationId/change", verifyToken, changeReservationController);
 
-// Rutas administrativas con validación de sesión
-router.get("/:reservationId", verifyToken, adminSessionGuard, getReservationByIdController); // Ver reserva específica
-router.put("/:reservationId", verifyToken, adminSessionGuard, updateReservationController); // Actualizar reserva
-router.delete("/:reservationId", verifyToken, adminSessionGuard, deleteReservationController); // Cancelar reserva
+// Rutas administrativas
+router.get("/:reservationId", verifyToken, getReservationByIdController); // Ver reserva específica
+router.put("/:reservationId", verifyToken, updateReservationController); // Actualizar reserva
+router.delete("/:reservationId", verifyToken, deleteReservationController); // Cancelar reserva
 
 export default router;

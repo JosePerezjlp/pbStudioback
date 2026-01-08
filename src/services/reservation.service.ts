@@ -98,10 +98,8 @@ async function getUserActivePackages(
     LEFT JOIN reservation r ON r.transaction_id = t.id 
       AND r.cancellation_at IS NULL
     WHERE t.user_id = ${userId}
-      AND t.is_completed = 1
-      AND t.status = 1
-      AND t.have_sessions_available = 1
-      AND (t.expiration_at > NOW() OR t.expiration_at IS NULL)
+      AND t.status = 1 -- Pagado
+      AND (t.expiration_at > NOW() OR t.expiration_at IS NULL) -- No vencido por fecha o sin expiración
     GROUP BY t.id
     -- MySQL no soporta "NULLS LAST"; emulamos ordenando primero los no nulos
     ORDER BY (t.expiration_at IS NULL), t.expiration_at ASC
