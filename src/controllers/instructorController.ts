@@ -25,6 +25,33 @@ const parseDisciplines = (raw: unknown): string[] => {
   return [];
 };
 
+// Normaliza el estado recibido desde el frontend a flags internos
+// Regla para instructores: status 0 = activo, status 1 = inactivo
+// Soportamos temporalmente "enabled" / "isActive" para compatibilidad.
+const resolveActiveFromBody = (body: Record<string, unknown>): boolean => {
+  // Prioridad 1: status numérico (0/1) como string o número
+  const rawStatus = body.status as unknown;
+  if (rawStatus !== undefined && rawStatus !== null) {
+    const n = Number(rawStatus);
+    if (!Number.isNaN(n)) {
+      return n === 0; // 0 = activo, 1 = inactivo
+    }
+  }
+
+  // Prioridad 2: isActive explícito
+  if ((body as any).isActive !== undefined) {
+    return String((body as any).isActive) === "true";
+  }
+
+  // Prioridad 3: enabled (legacy boolean)
+  if (body.enabled !== undefined) {
+    return String(body.enabled) === "true";
+  }
+
+  // Valor por defecto: activo
+  return true;
+};
+
 /* ─────────────────────────────
    CREATE
 ────────────────────────────── */
@@ -40,15 +67,12 @@ export const createInstructorController = [
         address,
         description,
         joinDate,
-        enabled = true,
         branch,
         branchId,
       } = req.body as Record<string, unknown>;
 
-      const enabledFinal =
-        (req.body as any).isActive !== undefined
-          ? String((req.body as any).isActive) === "true"
-          : String(enabled) === "true";
+      // status 0 = activo, 1 = inactivo (ver helper)
+      const enabledFinal = resolveActiveFromBody(req.body as Record<string, unknown>);
 
       const branchFinal = String(branchId ?? branch ?? "");
 
@@ -180,12 +204,26 @@ export const getAllInstructorsController = async (
 ): Promise<void> => {
   try {
     const qp = req.query as Record<string, unknown>;
+
+    // Nuevo contrato: status 0 = activo, 1 = inactivo
+    const statusRaw =
+      typeof qp.status === "string" ? qp.status.trim() : undefined;
+
+    // Compatibilidad: también aceptamos enabled=true/false
     const enabledRaw =
       typeof qp.enabled === "string" ? qp.enabled.toLowerCase() : undefined;
 
-    let whereClause: any = {};
-    if (enabledRaw === "true") whereClause.isActive = true;
-    else if (enabledRaw === "false") whereClause.isActive = false;
+    let whereClause: any = { deleted: false };
+
+    if (statusRaw === "0") {
+      whereClause.isActive = true;
+    } else if (statusRaw === "1") {
+      whereClause.isActive = false;
+    } else if (enabledRaw === "true") {
+      whereClause.isActive = true;
+    } else if (enabledRaw === "false") {
+      whereClause.isActive = false;
+    }
 
     // Fetch all staff matching the active criteria
     const staffMembers = await prisma.staff.findMany({
@@ -266,6 +304,8 @@ export const getAllInstructorsController = async (
         description: inst.profile?.description || "",
         joinDate: inst.profile?.admissionAt || inst.lastLogin,
         disciplines: inst.instructorsDisciplines.map((d) => d.discipline.name),
+        // status 0 = activo, 1 = inactivo
+        status: inst.isActive ? 0 : 1,
         enabled: inst.isActive,
         branch: branchId, // ID numérico o null
         image: inst.profile?.photo || "",
@@ -313,7 +353,7 @@ export const getInstructorByIdController = async (
       },
     });
 
-    if (!instructor) {
+    if (!instructor || instructor.deleted) {
       res.status(404).json({ error: "Instructor no encontrado" });
       return;
     }
@@ -372,6 +412,8 @@ export const getInstructorByIdController = async (
       disciplines: instructor.instructorsDisciplines.map(
         (d) => d.discipline.name
       ),
+      // status 0 = activo, 1 = inactivo
+      status: instructor.isActive ? 0 : 1,
       enabled: instructor.isActive,
       branch: branchId,
       image: instructor.profile?.photo || "",
@@ -439,12 +481,13 @@ export const updateInstructorController = [
 
       const disciplinesParsed = parseDisciplines(body.disciplines);
 
-      const enabledFinal =
-        (body as any).isActive !== undefined
-          ? String((body as any).isActive) === "true"
-          : body.enabled !== undefined
-          ? String(body.enabled) === "true"
-          : undefined;
+      // status 0 = activo, 1 = inactivo; si no viene, mantenemos valor actual
+      const hasStatusField =
+        body.status !== undefined || (body as any).isActive !== undefined ||
+        body.enabled !== undefined;
+      const enabledFinal = hasStatusField
+        ? resolveActiveFromBody(body)
+        : undefined;
 
       const branchFinal = String((body.branchId ?? body.branch) ?? "");
 
@@ -585,28 +628,42 @@ export const deleteInstructorController = async (
   }
 
   try {
-    // DESHABILITADO: La tabla 'instructor' legacy ya no existe
-    res.status(501).json({
-      error: "Función no implementada - usar la tabla staff en su lugar",
+    const existing = await prisma.staff.findUnique({
+      where: { id },
     });
-    return;
 
-    // const instructor = await prisma.instructor.findUnique({
-    //   where: { id },
-    // });
-    //
-    // if (!instructor) {
-    //   res.status(404).json({ error: "Instructor no encontrado" });
-    //   return;
-    // }
-    //
-    // if (instructor.image) {
-    //   await deleteLocalFile(instructor.image);
-    // }
-    //
-    // await prisma.instructor.delete({
-    //   where: { id },
-    // });
+    if (!existing || existing.deleted) {
+      res.status(404).json({ error: "Instructor no encontrado" });
+      return;
+    }
+
+    // Validar que realmente sea instructor
+    let isInstructor = false;
+    try {
+      if (existing.roles.includes("ROLE_INSTRUCTOR")) isInstructor = true;
+      else {
+        const parsed = JSON.parse(existing.roles);
+        if (Array.isArray(parsed) && parsed.includes("ROLE_INSTRUCTOR")) {
+          isInstructor = true;
+        }
+      }
+    } catch {
+      // noop
+    }
+
+    if (!isInstructor) {
+      res.status(404).json({ error: "Instructor no encontrado" });
+      return;
+    }
+
+    // Borrado lógico: deleted = true e inactivo
+    await prisma.staff.update({
+      where: { id },
+      data: {
+        deleted: true,
+        isActive: false,
+      },
+    });
 
     res.status(200).json({ message: "Instructor eliminado correctamente" });
   } catch (error) {

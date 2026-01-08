@@ -13,7 +13,7 @@ export class BranchService {
    */
   async createBranch(data: {
     name: string;
-    isActive?: boolean;
+    isActive?: boolean | number;
     isPublic?: boolean;
     location?: string;
     address?: string;
@@ -23,7 +23,11 @@ export class BranchService {
     return this.prisma.branchOffice.create({
       data: {
         ...data,
-        isActive: data.isActive ?? true, // Default true
+        // isActive: 0 = inactivo, 1 = activo (para sucursales)
+        isActive:
+          typeof data.isActive === "number"
+            ? data.isActive === 1
+            : data.isActive ?? true,
         isPublic: data.isPublic ?? true, // Default true
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -42,6 +46,7 @@ export class BranchService {
           id: {
             in: filterIds,
           },
+          isActive: true,
         },
         orderBy: {
           createdAt: "desc",
@@ -53,6 +58,7 @@ export class BranchService {
       orderBy: {
         createdAt: "desc",
       },
+      where: { isActive: true },
     });
   }
 
@@ -60,8 +66,8 @@ export class BranchService {
    * Obtiene una sucursal por ID
    */
   async getBranchById(id: number): Promise<BranchOffice | null> {
-    return this.prisma.branchOffice.findUnique({
-      where: { id },
+    return this.prisma.branchOffice.findFirst({
+      where: { id, isActive: true },
     });
   }
 
@@ -85,8 +91,6 @@ export class BranchService {
    * Elimina (o desactiva) una sucursal
    */
   async deleteBranch(id: number): Promise<BranchOffice> {
-    // Físicamente borrar o soft-delete depende de tu regla de negocio.
-    // Aquí asumiremos soft-delete usando isActive = false.
     return this.prisma.branchOffice.update({
       where: { id },
       data: {

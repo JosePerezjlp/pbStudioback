@@ -16,27 +16,12 @@ export const adminSessionGuard: RequestHandler = (
     return;
   }
 
-  const { role, sessionId } = user;
+  const { role } = user;
 
-  // Sólo exigir sesión única para admin y employee
+  // Mantener el guard como placeholder para roles admin/employee,
+  // pero sin exigir x-session-id (solo requiere JWT válido).
   if (role !== "admin" && role !== "employee") {
     next();
-    return;
-  }
-
-  const headerSid = (req.headers["x-session-id"] as string | undefined) ?? "";
-  if (!headerSid) {
-    res.status(401).json({ error: "Falta x-session-id" });
-    return;
-  }
-
-  if (!sessionId) {
-    res.status(401).json({ error: "Sesión inválida (sin registro de sessionId)" });
-    return;
-  }
-
-  if (sessionId !== headerSid) {
-    res.status(401).json({ error: "Sesión reemplazada" });
     return;
   }
 

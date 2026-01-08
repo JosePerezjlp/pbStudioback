@@ -13,11 +13,16 @@ export const createDisciplineController = async (
       return;
     }
 
+    const now = new Date();
+
     const newDiscipline = await prisma.discipline.create({
       data: {
         name,
         description: description || "",
-        isActive: Boolean(enabled),
+        // 0 = inactivo, 1 = activo, 2 = borrado lógico
+        isActive: enabled ? 1 : 0,
+        createdAt: now,
+        updatedAt: now,
       },
     });
 
@@ -37,6 +42,7 @@ export const getAllDisciplinesController = async (
 ): Promise<void> => {
   try {
     const disciplines = await prisma.discipline.findMany({
+      where: { isActive: { not: 2 } },
       orderBy: {
         createdAt: "desc",
       },
@@ -47,7 +53,7 @@ export const getAllDisciplinesController = async (
     // We might want to map 'isActive' back to 'enabled' if the frontend expects it.
     const mappedDisciplines = disciplines.map((d) => ({
       ...d,
-      enabled: d.isActive, // Backward compatibility
+      enabled: d.isActive === 1, // Backward compatibility
     }));
 
     res.status(200).json({ disciplines: mappedDisciplines });
@@ -76,14 +82,14 @@ export const getDisciplineByIdController = async (
       where: { id },
     });
 
-    if (!discipline) {
+    if (!discipline || discipline.isActive === 2) {
       res.status(404).json({ error: "Disciplina no encontrada" });
       return;
     }
 
     res.status(200).json({
       ...discipline,
-      enabled: discipline.isActive,
+      enabled: discipline.isActive === 1,
     });
   } catch (error) {
     res
@@ -117,7 +123,7 @@ export const updateDisciplineController = async (
     const updateData: {
       name?: string;
       description?: string;
-      isActive?: boolean;
+      isActive?: number;
       updatedAt?: Date;
     } = {
       updatedAt: new Date(),
@@ -126,7 +132,17 @@ export const updateDisciplineController = async (
     if (req.body.name) updateData.name = String(req.body.name);
     if ("description" in req.body)
       updateData.description = String(req.body.description ?? "");
-    if ("enabled" in req.body) updateData.isActive = Boolean(req.body.enabled);
+    if ("enabled" in req.body) {
+      const raw = req.body.enabled;
+      if (typeof raw === "boolean") {
+        updateData.isActive = raw ? 1 : 0;
+      } else {
+        const n = Number(raw);
+        if (!Number.isNaN(n) && (n === 0 || n === 1)) {
+          updateData.isActive = n;
+        }
+      }
+    }
 
     await prisma.discipline.update({
       where: { id },
@@ -158,13 +174,14 @@ export const deleteDisciplineController = async (
       where: { id },
     });
 
-    if (!existingDiscipline) {
+    if (!existingDiscipline || existingDiscipline.isActive === 2) {
       res.status(404).json({ error: "Disciplina no encontrada" });
       return;
     }
 
-    await prisma.discipline.delete({
+    await prisma.discipline.update({
       where: { id },
+      data: { isActive: 2, updatedAt: new Date() },
     });
     res.status(200).json({ message: "Disciplina eliminada correctamente" });
   } catch (error) {

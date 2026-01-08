@@ -167,7 +167,8 @@ export const createClassroomController = async (
       capacity,
       discipline,
       branch,
-      isActive = true,
+      isActive,
+      status,
       type,
       seatsLayout,
     } = req.body as {
@@ -176,7 +177,8 @@ export const createClassroomController = async (
       capacity: string | number;
       discipline: string;
       branch: string;
-      isActive?: boolean;
+      isActive?: boolean | number | string;
+      status?: number | string;
       type: string;
       seatsLayout?: string | Seat[];
     };
@@ -207,13 +209,31 @@ export const createClassroomController = async (
       return;
     }
 
+    // Resolver flag interno isActive (0/1/2) a partir de status/isActive del body
+    let isActiveValue = 1; // por defecto activo
+    if (status !== undefined && status !== null) {
+      const s = Number(status);
+      if (!Number.isNaN(s) && (s === 0 || s === 1)) {
+        isActiveValue = s;
+      }
+    } else if (isActive !== undefined && isActive !== null) {
+      if (typeof isActive === "boolean") {
+        isActiveValue = isActive ? 1 : 0;
+      } else {
+        const n = Number(isActive);
+        if (!Number.isNaN(n) && (n === 0 || n === 1)) {
+          isActiveValue = n;
+        }
+      }
+    }
+
     const room = await prisma.exerciseRoom.create({
       data: {
         name: String(name),
         capacity: parsedCapacity,
         disciplineId,
         branchOfficeId: branchId,
-        isActive: Boolean(isActive),
+        isActive: isActiveValue,
         type: String(type),
         seatsLayout: seats ? JSON.stringify(seats) : null,
         createdAt: new Date(),
@@ -237,8 +257,11 @@ export const getAllClassroomsController = async (
   try {
     const { enabled } = req.query;
 
-    // Si enabled=true, filtrar solo rooms activas
-    const whereClause = enabled === "true" ? { isActive: true } : {};
+    // Si enabled=true, solo activas (isActive = 1); siempre excluir borradas (isActive != 2)
+    const whereClause =
+      enabled === "true"
+        ? { isActive: 1 }
+        : { isActive: { not: 2 } };
 
     const rooms = await prisma.exerciseRoom.findMany({
       where: whereClause,
@@ -291,7 +314,7 @@ export const getClassroomsByBranchController = async (
     const rooms = await prisma.exerciseRoom.findMany({
       where: {
         branchOfficeId: bId,
-        isActive: true,
+        isActive: 1,
       },
       orderBy: { createdAt: "desc" },
       include: {
@@ -339,7 +362,7 @@ export const getClassroomByIdController = async (
       },
     });
 
-    if (!room) {
+    if (!room || room.isActive === 2) {
       res.status(404).json({ error: "Salón no encontrado" });
       return;
     }
@@ -394,8 +417,22 @@ export const updateClassroomController = async (
 
     // strings/bools
     if (body.name !== undefined) updateData.name = String(body.name);
-    if (body.isActive !== undefined)
-      updateData.isActive = Boolean(body.isActive);
+    if (body.status !== undefined) {
+      const s = Number(body.status);
+      if (!Number.isNaN(s) && (s === 0 || s === 1)) {
+        updateData.isActive = s;
+      }
+    } else if (body.isActive !== undefined) {
+      const raw = body.isActive;
+      if (typeof raw === "boolean") {
+        updateData.isActive = raw ? 1 : 0;
+      } else {
+        const n = Number(raw);
+        if (!Number.isNaN(n) && (n === 0 || n === 1 || n === 2)) {
+          updateData.isActive = n;
+        }
+      }
+    }
     if (body.type !== undefined) updateData.type = String(body.type);
 
     // Relations
@@ -451,11 +488,14 @@ export const deleteClassroomController = async (
 
   try {
     const room = await prisma.exerciseRoom.findUnique({ where: { id } });
-    if (!room) {
+    if (!room || room.isActive === 2) {
       res.status(404).json({ error: "Salón no encontrado" });
       return;
     }
-    await prisma.exerciseRoom.delete({ where: { id } });
+    await prisma.exerciseRoom.update({
+      where: { id },
+      data: { isActive: 2 },
+    });
     res.status(200).json({ message: "Salón eliminado correctamente" });
   } catch (err) {
     console.error("Error al eliminar salón:", err);

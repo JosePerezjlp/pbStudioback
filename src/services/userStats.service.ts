@@ -26,7 +26,7 @@ interface UserPackageStats {
   isUnlimited: boolean;
   type: string; // Valor crudo desde MySQL (ej. "groups", "individual", "g", "i")
   classType: ClassType | null; // Tipo normalizado para filtrar en el front
-  isActive: boolean; // Estado del paquete en la tabla package (is_active)
+  isActive: number; // 0=inactivo,1=activo,2=borrado lógico (tabla package.is_active)
 }
 
 /**
@@ -154,7 +154,7 @@ export async function getUserClassStats(
       .map((t) => t.packageId)
       .filter((id): id is number => id !== null);
 
-    let packagesInfo: Array<{ id: number; isActive: boolean }> = [];
+    let packagesInfo: Array<{ id: number; isActive: number }> = [];
     if (packageIds.length > 0) {
       packagesInfo = await prisma.package.findMany({
         where: {
@@ -209,8 +209,8 @@ export async function getUserClassStats(
         isUnlimited: tx.packageIsUnlimited,
         type: tx.packageType,
         classType,
-        // Si por alguna razón no hay relación de package, asumimos true
-        isActive: packageInfo?.isActive ?? true,
+        // Si por alguna razón no hay relación de package, asumimos activo (1)
+        isActive: packageInfo?.isActive ?? 1,
       });
 
       // Si ya tenemos 3 y 3, podemos cortar

@@ -53,6 +53,8 @@ export const getClassesForReservationController = async (
           gte: start,
           lte: end,
         },
+        // Ocultar clases borradas lógicamente
+        status: { not: 3 },
       },
       include: {
         discipline: {
@@ -114,9 +116,10 @@ export const getClassesForReservationController = async (
         date: session.dateStart,
         time: session.timeStart,
         type: session.type,
-        status: session.status, // 0 = cerrada, 1 = abierta
+        status: session.status, // 0 = cerrada, 1 = abierta, 2 = cancelada, 3 = borrada
         isOpen: session.status === 1,
         isClosed: session.status === 0,
+        isCanceled: session.status === 2,
         capacity: session.exerciseRoomCapacity,
         availableCapacity: session.availableCapacity,
         reservedSpots,

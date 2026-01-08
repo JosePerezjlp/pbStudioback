@@ -19,8 +19,8 @@ export const packageValidations = [
     .withMessage("daysExpiry debe ser un número entero positivo"),
 
   body("isActive")
-    .isBoolean()
-    .withMessage("isActive debe ser booleano"),
+    .isInt({ min: 0, max: 2 })
+    .withMessage("isActive debe ser un número entre 0 y 2"),
 
   body("isUnlimited")
     .isBoolean()

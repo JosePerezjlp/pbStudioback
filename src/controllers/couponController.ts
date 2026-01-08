@@ -501,9 +501,9 @@ export const validateCouponController = async (
         isValid = false;
         message = "Este cupón no aplica para el paquete seleccionado";
       } else {
-        // Verify package exists and is active
+        // Verify package exists and is active (isActive: 1)
         const pkg = await prisma.package.findUnique({ where: { id: pid } });
-        if (!pkg || !pkg.isActive) {
+        if (!pkg || pkg.isActive !== 1) {
           isValid = false;
           message = "El paquete no está disponible";
         }

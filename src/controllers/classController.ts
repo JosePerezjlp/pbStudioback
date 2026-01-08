@@ -15,6 +15,25 @@ import { GympassService, gympassEnabled } from "../services/gympass.service";
 import { CreateSlotRequest } from "../models/CreateSlotRequest";
 import { Prisma } from "../generated/prisma/client";
 
+// Estados de la sesión (clase)
+const SESSION_STATUS = {
+  CLOSED: 0, // cerrada
+  OPEN: 1, // abierta
+  CANCELED: 2, // cancelada
+  DELETED: 3, // borrado lógico / oculto
+} as const;
+
+type SessionStatus = (typeof SESSION_STATUS)[keyof typeof SESSION_STATUS];
+
+const mapSessionStatusToLabel = (
+  status: number
+): "abierta" | "cerrada" | "cancelada" => {
+  if (status === SESSION_STATUS.OPEN) return "abierta";
+  if (status === SESSION_STATUS.CANCELED) return "cancelada";
+  // Consideramos cualquier otro valor como "cerrada" (incluye 0 y legacy)
+  return "cerrada";
+};
+
 const parseNumberOrFail = (value: unknown): number => {
   const n = Number(value);
   if (Number.isNaN(n)) {
@@ -182,7 +201,13 @@ export const createClassController = async (
           ? "abierta"
           : "cerrada";
 
-    const statusInt = normalizedStatusStr === "abierta" ? 1 : 0;
+    // Nuevos estados:
+    // 0 = cerrada, 1 = abierta, 2 = cancelada, 3 = borrada (oculta)
+    // En creación normal solo usamos 0/1; 2 y 3 se usan para cancelación/borrado lógico.
+    const statusInt: SessionStatus =
+      normalizedStatusStr === "abierta"
+        ? SESSION_STATUS.OPEN
+        : SESSION_STATUS.CLOSED;
 
     // Crear sesión
     const newSession = await prisma.session.create({
@@ -271,7 +296,7 @@ export const getFutureClassesController = async (
 
     const where: Prisma.SessionWhereInput = {
       dateStart: { gte: new Date(day) },
-      status: 1, // Abierta
+      status: SESSION_STATUS.OPEN, // Solo clases abiertas
     };
 
     // Filter by discipline if provided
@@ -354,7 +379,7 @@ export const getFutureClassesController = async (
         instructor: String(session.instructorId),
         capacity: session.exerciseRoomCapacity,
         occupied: session.exerciseRoomCapacity - session.availableCapacity,
-        status: session.status === 1 ? "abierta" : "cerrada",
+        status: mapSessionStatusToLabel(session.status),
         type: session.type,
         createdAt: session.createdAt?.toISOString(),
         legacyId: session.id, // Mapping id to legacyId
@@ -419,15 +444,27 @@ export const getAllClassesController = async (
     const startDate = (req.query.startDate as string | undefined) || undefined;
     const endDate = (req.query.endDate as string | undefined) || undefined;
 
-    const where: Prisma.SessionWhereInput = {};
+    const where: Prisma.SessionWhereInput = {
+      // Ocultar clases borradas lógicamente
+      status: { not: SESSION_STATUS.DELETED },
+    };
 
     if (branchId && !isNaN(Number(branchId)))
       where.branchOfficeId = Number(branchId);
     if (instructorId && !isNaN(Number(instructorId)))
       where.instructorId = Number(instructorId);
     if (statusParam) {
-      if (statusParam === "abierta") where.status = 1;
-      if (statusParam === "cerrada") where.status = 0;
+      if (statusParam === "abierta") where.status = SESSION_STATUS.OPEN;
+      else if (statusParam === "cerrada") where.status = SESSION_STATUS.CLOSED;
+      else if (statusParam === "cancelada")
+        where.status = SESSION_STATUS.CANCELED;
+      else {
+        const n = Number(statusParam);
+        if (!Number.isNaN(n)) {
+          // Permitir filtrar directamente por código 0/1/2/3
+          where.status = n as SessionStatus;
+        }
+      }
     }
     if (roomId && !isNaN(Number(roomId))) where.exerciseRoomId = Number(roomId);
 
@@ -490,7 +527,8 @@ export const getAllClassesController = async (
       id: String(session.id),
       day: session.dateStart.toISOString().slice(0, 10),
       hour: session.timeStart.toISOString().slice(11, 16),
-      status: session.status === 1 ? "abierta" : "cerrada",
+      // Importante: devolver status numérico (0,1,2,3) para el frontend
+      status: session.status,
       branch: String(session.branchOfficeId),
       room: String(session.exerciseRoomId),
       discipline: String(session.disciplineId),
@@ -540,8 +578,16 @@ export const deleteClassController = async (
   }
 
   try {
-    await prisma.session.delete({ where: { id: sessionId } });
-    res.json({ message: "Clase eliminada" });
+    // Borrado lógico: marcamos status=3 (DELETED) y actualizamos updatedAt
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: {
+        status: SESSION_STATUS.DELETED,
+        updatedAt: new Date(),
+      },
+    });
+
+    res.json({ message: "Clase eliminada (borrado lógico)" });
   } catch (e) {
     console.error("Error eliminando clase:", e);
     res.status(500).json({
@@ -707,9 +753,17 @@ export const updateClassController = async (
       updateData.exerciseRoomCapacity = newCapacity;
       updateData.availableCapacity = Math.max(newCapacity - newOccupied, 0);
     }
-    if (status !== undefined)
-      updateData.status =
-        status === "abierta" ? 1 : status === "cerrada" ? 0 : Number(status);
+    if (status !== undefined) {
+      // Acepta "abierta" | "cerrada" | "cancelada" o valores numéricos 0/1/2/3
+      if (status === "abierta") updateData.status = SESSION_STATUS.OPEN;
+      else if (status === "cerrada") updateData.status = SESSION_STATUS.CLOSED;
+      else if (status === "cancelada")
+        updateData.status = SESSION_STATUS.CANCELED;
+      else {
+        const n = Number(status);
+        if (!Number.isNaN(n)) updateData.status = n as SessionStatus;
+      }
+    }
 
     updateData.updatedAt = new Date();
 
@@ -732,7 +786,195 @@ export const createClassesBulkController = async (
   req: Request,
   res: Response
 ): Promise<void> => {
-  res.status(501).json({ error: "Not implemented" });
+  try {
+    const {
+      branchId: branchIdRaw,
+      day,
+      slots,
+    } = req.body as {
+      branchId?: unknown;
+      day?: unknown;
+      slots?: any;
+    };
+
+    const branchId = Number(branchIdRaw);
+    if (!branchId || Number.isNaN(branchId)) {
+      res.status(400).json({
+        error: "Parámetro 'branchId' inválido",
+      });
+      return;
+    }
+
+    if (!day || typeof day !== "string") {
+      res.status(400).json({
+        error: "Parámetro 'day' es requerido",
+      });
+      return;
+    }
+
+    if (!Array.isArray(slots) || slots.length === 0) {
+      res.status(400).json({
+        error: "Parámetro 'slots' debe ser un arreglo no vacío",
+      });
+      return;
+    }
+
+    const dateStart = new Date(day);
+    if (Number.isNaN(dateStart.getTime())) {
+      res.status(400).json({
+        error: "Parámetro 'day' inválido",
+      });
+      return;
+    }
+
+    const created: number[] = [];
+
+    for (const rawSlot of slots) {
+      try {
+        const slot = rawSlot || {};
+
+        // Saltar slots desactivados explícitamente
+        if (slot.isActive === false) continue;
+
+        const roomId = Number(slot.roomId);
+        const disciplineId = Number(slot.disciplineId);
+        const instructorId = Number(slot.instructorId);
+        const capacityRaw = slot.capacity;
+        const occupiedRaw = slot.occupied;
+        const hour = String(slot.hour || "");
+        const info = slot.info as string | undefined;
+
+        if (!roomId || !disciplineId || !instructorId || !hour) {
+          res.status(400).json({
+            error:
+              "Datos inválidos en uno de los slots (roomId, disciplineId, instructorId, hour)",
+            created,
+          });
+          return;
+        }
+
+        const timeStart = timeStringToDate(hour);
+
+        // Verificar salón
+        const roomRecord = await prisma.exerciseRoom.findUnique({
+          where: { id: roomId },
+        });
+
+        if (!roomRecord) {
+          res.status(404).json({
+            error: `Salón no encontrado para roomId=${roomId}`,
+            created,
+          });
+          return;
+        }
+
+        // Evitar duplicados por día/hora/sede/salón
+        const conflict = await prisma.session.findFirst({
+          where: {
+            dateStart,
+            branchOfficeId: branchId,
+            exerciseRoomId: roomId,
+          },
+        });
+
+        if (conflict) {
+          const conflictTime = conflict.timeStart.toISOString().slice(11, 16);
+          const reqTime = hour.slice(0, 5);
+          if (conflictTime === reqTime) {
+            res.status(409).json({
+              error:
+                "Ya existe una clase programada en ese salón, sede y horario.",
+              code: "CONFLICTING_CLASS",
+              created,
+            });
+            return;
+          }
+        }
+
+        // Capacidad y ocupación efectivas
+        let parsedCapacity: number | null = null;
+        let parsedOccupied = 0;
+
+        if (
+          capacityRaw !== undefined &&
+          capacityRaw !== null &&
+          capacityRaw !== ""
+        ) {
+          const n = Number(capacityRaw);
+          if (!Number.isNaN(n)) parsedCapacity = n;
+        }
+
+        if (
+          occupiedRaw !== undefined &&
+          occupiedRaw !== null &&
+          occupiedRaw !== ""
+        ) {
+          const n = Number(occupiedRaw);
+          if (!Number.isNaN(n)) parsedOccupied = n;
+        }
+
+        const effectiveCapacity =
+          parsedCapacity !== null && parsedCapacity > 0
+            ? parsedCapacity
+            : roomRecord.capacity;
+
+        const effectiveOccupied = parsedOccupied || 0;
+
+        const infoNormalized =
+          info && typeof info === "string" && info.trim() !== ""
+            ? info.trim()
+            : null;
+
+        const normalizedStatusStr =
+          slot.isActive === false ? "cerrada" : "abierta";
+        const statusInt = normalizedStatusStr === "abierta" ? 1 : 0;
+
+        const newSession = await prisma.session.create({
+          data: {
+            dateStart,
+            timeStart,
+            branchOfficeId: branchId,
+            exerciseRoomId: roomId,
+            disciplineId,
+            instructorId,
+            exerciseRoomCapacity: effectiveCapacity,
+            availableCapacity: Math.max(
+              effectiveCapacity - effectiveOccupied,
+              0
+            ),
+            status: statusInt,
+            type: roomRecord.type,
+            information: infoNormalized,
+            placesNotAvailable: "[]",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        });
+
+        created.push(newSession.id);
+      } catch (innerErr) {
+        console.error("Error creando clase en bulk:", innerErr);
+        res.status(500).json({
+          error: "Error al crear clases en bulk",
+          details:
+            innerErr instanceof Error ? innerErr.message : String(innerErr),
+          created,
+        });
+        return;
+      }
+    }
+
+    res.status(201).json({
+      message: "Clases creadas correctamente",
+      created,
+    });
+  } catch (error) {
+    console.error("Error en createClassesBulkController:", error);
+    res.status(500).json({
+      error: "Error interno al crear clases en bulk",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
 };
 
 export const getOpenClassesPublicController = async (
@@ -792,6 +1034,8 @@ export const getAllUnlimitedClassesController = async (
           gte: start.toJSDate(),
           lte: end.toJSDate(),
         },
+        // Excluir clases borradas lógicamente
+        status: { not: SESSION_STATUS.DELETED },
       },
       include: {
         discipline: true,
@@ -844,7 +1088,10 @@ export const getClassesStatsController = async (
   res: Response
 ): Promise<void> => {
   try {
-    const total = await prisma.session.count();
+    // Contar solo clases no borradas lógicamente
+    const total = await prisma.session.count({
+      where: { status: { not: SESSION_STATUS.DELETED } },
+    });
     res.json({ total });
   } catch (e) {
     res.status(500).json({ error: "Error" });
@@ -865,6 +1112,8 @@ export const getClassesByDayController = async (
 
     const where: Prisma.SessionWhereInput = {
       dateStart: new Date(day as string),
+      // Ocultar clases borradas lógicamente
+      status: { not: SESSION_STATUS.DELETED },
     };
 
     if (branchId && !isNaN(Number(branchId))) {
@@ -903,7 +1152,7 @@ export const getClassesByDayController = async (
       info: s.information || "",
       capacity: s.exerciseRoomCapacity || 0,
       occupied: s.exerciseRoomCapacity - s.availableCapacity,
-      status: s.status === 1 ? "abierta" : "cerrada",
+      status: mapSessionStatusToLabel(s.status),
       gympass: !!s.gympassSlotId,
       type: s.type,
     }));

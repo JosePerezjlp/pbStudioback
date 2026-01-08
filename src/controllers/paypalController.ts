@@ -203,7 +203,7 @@ export const capturePayPalOrderController = async (
       return;
     }
 
-    if (!pkg.isActive) {
+      if (pkg.isActive !== 1) {
       res.status(400).json({ error: "Este paquete no está activo" });
       return;
     }

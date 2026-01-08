@@ -136,11 +136,11 @@ export const createCashTransactionController = async (
     // Validar vigencia del paquete (si aplica)
     // Nota: El modelo Package actual en Prisma NO tiene campos startDate/endDate explícitos en el schema proporcionado.
     // Asumiremos que si existen en la lógica de negocio, deberían estar, pero basándome en el schema.prisma leído:
-    // Package tiene: id, totalClasses, amount, type, daysExpiry, isActive, isUnlimited, etc.
+    // Package tiene: id, totalClasses, amount, type, daysExpiry, isActive (0/1/2), isUnlimited, etc.
     // NO tiene startDate/endDate. Omitiré esa validación específica de fechas de publicación del paquete
     // a menos que estén en campos no vistos o JSON. En Firestore sí existían.
-    // Si 'isActive' es false, no se debería vender.
-    if (!pkg.isActive) {
+    // Si 'isActive' es distinto de 1 (activo), no se debería vender.
+    if (pkg.isActive !== 1) {
       res.status(400).json({ error: "Este paquete no está activo" });
       return;
     }

@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import multer from "multer";
 import prisma from "../config/prisma";
-import { uploadLocal, deleteLocalFile } from "../utils/uploadLocal";
+import { uploadToFirebaseStorage } from "../utils/firebaseStorage";
 
 // Helper to save configuration
 const saveConfiguration = async (moduleName: string, data: any) => {
@@ -31,7 +31,19 @@ const getConfiguration = async (moduleName: string) => {
   });
 
   if (!config) return null;
-  return JSON.parse(config.data);
+
+  // Algunos registros antiguos pueden venir en formatos no JSON
+  // (por ejemplo, strings serializados de PHP). En ese caso,
+  // evitamos lanzar error y los tratamos como "sin configuración".
+  try {
+    return JSON.parse(config.data);
+  } catch (e) {
+    console.warn(
+      `Config '${moduleName}' tiene datos no JSON, se ignora valor antiguo`,
+      e
+    );
+    return null;
+  }
 };
 
 // Crea o reemplaza el tiempo de cancelación
@@ -221,11 +233,12 @@ export const setNoticeConfigController = async (
 
     // Si hay nueva imagen, la subimos
     if (req.file) {
-      newImageUrl = await uploadLocal(req.file, "notices");
-
-      // si la imagen anterior existe y es distinta, la borramos
-      if (oldImageUrl && oldImageUrl !== newImageUrl) {
-        await deleteLocalFile(oldImageUrl);
+      try {
+        newImageUrl = await uploadToFirebaseStorage(req.file, "notices");
+      } catch (e) {
+        console.error("Error subiendo imagen de aviso a Firebase Storage:", e);
+        res.status(500).json({ error: "Error subiendo imagen de aviso" });
+        return;
       }
     }
 

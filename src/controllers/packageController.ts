@@ -3,6 +3,56 @@ import { validationResult } from "express-validator";
 import { prisma } from "../config/prisma";
 import { Prisma } from "../generated/prisma/client";
 
+// Conversión entre el nuevo contrato de "status" y los flags internos
+// Regla para paquetes:
+//   status 0 = inactivo
+//   status 1 = activo
+//   status 2 = eliminado lógicamente
+// Lo mapeamos a isActive (0/1/2) en BD
+const resolvePackageFlagsFromBody = (body: any): { isActive?: number } => {
+  const result: { isActive?: number } = {};
+
+  if (body.status !== undefined && body.status !== null) {
+    const n = Number(body.status);
+    if (!Number.isNaN(n)) {
+      if (n === 0) {
+        result.isActive = 0;
+      } else if (n === 1) {
+        result.isActive = 1;
+      } else if (n === 2) {
+        result.isActive = 2;
+      }
+    }
+  }
+
+  return result;
+};
+
+// Mapea un registro de Package al formato de respuesta esperado por el frontend
+// Solo expone status (0/1/2), nunca el campo interno isActive
+const mapPackageToResponse = (pkg: Prisma.PackageGetPayload<{}>) => {
+  const status = Number(pkg.isActive ?? 0); // 0,1,2
+  return {
+    id: String(pkg.id),
+    totalClasses: pkg.totalClasses,
+    amount: pkg.amount,
+    type: pkg.type,
+    daysExpiry: pkg.daysExpiry,
+    isUnlimited: pkg.isUnlimited,
+    altText: pkg.altText,
+    newUser: pkg.newUser, // tinyint 0/1 tal como en BD
+    public: pkg.public ? 1 : 0,
+    specialPrice: pkg.specialPrice,
+    discountInfo: pkg.discountInfo,
+    status,
+    createdAt: pkg.createdAt?.toISOString(),
+    updatedAt: pkg.updatedAt?.toISOString(),
+    // Estas fechas ya no existen en SQL; las dejamos en null para compatibilidad
+    startDate: null,
+    endDate: null,
+  };
+};
+
 /* ============================================================
    CREATE
    ============================================================ */
@@ -18,19 +68,22 @@ export const createPackageController = async (
   }
 
   try {
+    const body = req.body as any;
+
     const {
       totalClasses,
       amount,
       type,
       daysExpiry,
-      isActive,
       isUnlimited,
       altText,
       newUser,
       public: isPublic,
       specialPrice,
       discountInfo,
-    } = req.body;
+    } = body;
+
+    const flags = resolvePackageFlagsFromBody(body);
 
     const newPackage = await prisma.package.create({
       data: {
@@ -38,7 +91,9 @@ export const createPackageController = async (
         amount: Number(amount || 0),
         type: String(type || "individual"),
         daysExpiry: Number(daysExpiry || 0),
-        isActive: isActive !== undefined ? Boolean(isActive) : true,
+        // isActive en BD es tinyint (0=inactivo,1=activo,2=eliminado)
+        // Si no viene status en el body, por defecto dejamos 1 (activo)
+        isActive: flags.isActive ?? 1,
         isUnlimited: Boolean(isUnlimited),
         altText: altText ? String(altText) : null,
         newUser: newUser ? 1 : 0,
@@ -50,9 +105,10 @@ export const createPackageController = async (
       },
     });
 
-    res
-      .status(201)
-      .json({ message: "Paquete creado correctamente", id: newPackage.id });
+    res.status(201).json({
+      message: "Paquete creado correctamente",
+      id: newPackage.id,
+    });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
     console.error("Error al crear paquete:", msg);
@@ -72,17 +128,7 @@ export const getAllPackagesController = async (
       orderBy: { createdAt: "desc" },
     });
 
-    // Mapear a formato respuesta (incluyendo conversión de IDs a string si es necesario)
-    const mappedPackages = packages.map((pkg) => ({
-      ...pkg,
-      id: String(pkg.id),
-      newUser: pkg.newUser === 1, // Convertir a boolean para frontend
-      createdAt: pkg.createdAt?.toISOString(),
-      updatedAt: pkg.updatedAt?.toISOString(),
-      // startDate/endDate ya no existen en SQL, se omiten o se envían null si frontend los requiere
-      startDate: null,
-      endDate: null,
-    }));
+    const mappedPackages = packages.map(mapPackageToResponse);
 
     res
       .status(200)
@@ -102,25 +148,15 @@ export const getActivePackagesController = async (
   res: Response
 ): Promise<void> => {
   try {
-    // En SQL filtramos directamente por isActive y public (opcionalmente)
-    // El código original filtraba por fechas startDate/endDate en memoria.
-    // Como SQL no tiene esas fechas, confiamos en isActive.
+    // En SQL filtramos directamente por isActive=1 (activo)
     const packages = await prisma.package.findMany({
       where: {
-        isActive: true,
+        isActive: 1,
       },
       orderBy: { createdAt: "desc" },
     });
 
-    const mappedPackages = packages.map((pkg) => ({
-      ...pkg,
-      id: String(pkg.id),
-      newUser: pkg.newUser === 1,
-      createdAt: pkg.createdAt?.toISOString(),
-      updatedAt: pkg.updatedAt?.toISOString(),
-      startDate: null,
-      endDate: null,
-    }));
+    const mappedPackages = packages.map(mapPackageToResponse);
 
     res
       .status(200)
@@ -157,15 +193,7 @@ export const getPackageByIdController = async (
       return;
     }
 
-    res.status(200).json({
-      ...pkg,
-      id: String(pkg.id),
-      newUser: pkg.newUser === 1,
-      createdAt: pkg.createdAt?.toISOString(),
-      updatedAt: pkg.updatedAt?.toISOString(),
-      startDate: null,
-      endDate: null,
-    });
+    res.status(200).json(mapPackageToResponse(pkg));
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";
     console.error("Error al obtener paquete:", msg);
@@ -189,7 +217,7 @@ export const updatePackageController = async (
   }
 
   // Filtrar campos no editables y undefined
-  const updateDataRaw = { ...req.body };
+  const updateDataRaw = { ...req.body } as any;
 
   // Campos prohibidos según controlador original
   const nonEditableFields = [
@@ -215,16 +243,20 @@ export const updatePackageController = async (
     dataToUpdate.type = String(updateDataRaw.type);
   if (updateDataRaw.daysExpiry !== undefined)
     dataToUpdate.daysExpiry = Number(updateDataRaw.daysExpiry);
-  if (updateDataRaw.isActive !== undefined)
-    dataToUpdate.isActive = Boolean(updateDataRaw.isActive);
+
+  // Nuevo contrato: status 0/1/2
+  const flags = resolvePackageFlagsFromBody(updateDataRaw);
+  if (flags.isActive !== undefined) {
+    dataToUpdate.isActive = flags.isActive;
+  }
   if (updateDataRaw.isUnlimited !== undefined)
     dataToUpdate.isUnlimited = Boolean(updateDataRaw.isUnlimited);
   if (updateDataRaw.altText !== undefined)
     dataToUpdate.altText = String(updateDataRaw.altText);
   if (updateDataRaw.newUser !== undefined)
-    dataToUpdate.newUser = updateDataRaw.newUser ? 1 : 0;
+    dataToUpdate.newUser = Number(updateDataRaw.newUser) ? 1 : 0;
   if (updateDataRaw.public !== undefined)
-    dataToUpdate.public = Boolean(updateDataRaw.public);
+    dataToUpdate.public = Number(updateDataRaw.public) === 1;
 
   // Ignoramos startDate / endDate ya que no existen en modelo
 
@@ -268,13 +300,18 @@ export const deletePackageController = async (
   }
 
   try {
-    await prisma.package.delete({
+    // Borrado lógico: status = 2 => isActive = 2 (0/1/2)
+    const updated = await prisma.package.update({
       where: { id },
+      data: {
+        isActive: 2,
+      },
     });
 
     res.status(200).json({
       message: "Paquete eliminado correctamente",
       deletedPackageId: packageId,
+      status: 2,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";

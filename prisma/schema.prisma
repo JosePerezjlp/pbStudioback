@@ -89,7 +89,8 @@ model Discipline {
   id                     Int                      @id @default(autoincrement())
   name                   String                   @unique(map: "UNIQ_75BEEE3F5E237E06") @db.VarChar(100)
   description            String?                  @db.LongText
-  isActive               Boolean                  @map("is_active")
+  /// 0 = inactivo, 1 = activo, 2 = borrado lógico
+  isActive               Int                      @map("is_active") @db.TinyInt
   createdAt              DateTime?                @map("created_at") @db.DateTime(0)
   updatedAt              DateTime?                @map("updated_at") @db.DateTime(0)
   exerciseRooms          ExerciseRoom[]
@@ -104,7 +105,8 @@ model ExerciseRoom {
   name               String        @db.VarChar(100)
   type               String        @db.VarChar(25)
   capacity           Int
-  isActive           Boolean       @map("is_active")
+  /// 0 = inactivo, 1 = activo, 2 = borrado lógico
+  isActive           Int           @map("is_active") @db.TinyInt
   createdAt          DateTime?     @map("created_at") @db.DateTime(0)
   disciplineId       Int?          @map("discipline_id")
   branchOfficeId     Int?          @map("branch_office_id")
@@ -139,7 +141,7 @@ model Package {
   amount         Decimal         @db.Decimal(10, 2)
   type           String          @db.VarChar(25)
   daysExpiry     Int             @map("days_expiry") @db.SmallInt
-  isActive       Boolean         @map("is_active")
+  isActive       Int             @map("is_active") @db.TinyInt
   createdAt      DateTime?       @map("created_at") @db.DateTime(0)
   updatedAt      DateTime?       @map("updated_at") @db.DateTime(0)
   isUnlimited    Boolean         @map("is_unlimited")

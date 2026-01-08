@@ -65,7 +65,8 @@ class UserService {
         emergencyContactName: data.emergencyContactName,
         emergencyContactPhone: data.emergencyContactPhone,
         enabled: true,
-        freeSession: false,
+        // Usuarios registrados desde la web/app comienzan con una free session disponible
+        freeSession: true,
         roles: JSON.stringify(["user"]),
         createdAt: new Date(),
         updatedAt: new Date(),
