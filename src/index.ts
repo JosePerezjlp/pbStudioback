@@ -248,6 +248,10 @@ const startServer = async () => {
 
 startServer();
 
+// Flags para controlar recordatorios automáticos por correo
+const LOW_CLASSES_REMINDER_ENABLED = false; // Aviso "te quedan pocas clases"
+const PACKAGE_EXPIRY_REMINDER_ENABLED = false; // Aviso "tu paquete está por vencer"
+
 /* ────────────────────────────────────────────────────────────────
    CRON 1: Cierra automáticamente clases vencidas
 ──────────────────────────────────────────────────────────────── */
@@ -380,6 +384,7 @@ cron.schedule("*/10 * * * *", async () => {
 ──────────────────────────────────────────────────────────────── */
 cron.schedule("0 8 * * *", async () => {
   try {
+    if (!LOW_CLASSES_REMINDER_ENABLED) return; // deshabilitado por configuración
     const users = await prisma.user.findMany({
       where: {
         classesAvailable: { lte: 1, gte: 0 },
@@ -441,6 +446,7 @@ cron.schedule("0 8 * * *", async () => {
 ──────────────────────────────────────────────────────────────── */
 cron.schedule("30 8 * * *", async () => {
   try {
+    if (!PACKAGE_EXPIRY_REMINDER_ENABLED) return; // deshabilitado por configuración
     const today = DateTime.now().setZone("America/Mexico_City").startOf("day");
 
     const startRange = today.plus({ days: 1 }).toJSDate();
