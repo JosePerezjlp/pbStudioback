@@ -27,7 +27,7 @@ export class BranchService {
         isActive:
           typeof data.isActive === "number"
             ? data.isActive === 1
-            : data.isActive ?? true,
+            : (data.isActive ?? true),
         isPublic: data.isPublic ?? true, // Default true
         createdAt: new Date(),
         updatedAt: new Date(),

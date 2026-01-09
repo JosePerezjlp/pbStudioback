@@ -72,7 +72,9 @@ export const createInstructorController = [
       } = req.body as Record<string, unknown>;
 
       // status 0 = activo, 1 = inactivo (ver helper)
-      const enabledFinal = resolveActiveFromBody(req.body as Record<string, unknown>);
+      const enabledFinal = resolveActiveFromBody(
+        req.body as Record<string, unknown>
+      );
 
       const branchFinal = String(branchId ?? branch ?? "");
 
@@ -111,8 +113,15 @@ export const createInstructorController = [
       // Crear instructor usando tablas staff / staff_profile / instructors_disciplines / staff_branch_office
 
       // username único basado en email o nombre
-      const baseUsername = (email && String(email).split("@")[0]) || String(firstName).toLowerCase().replace(/[^a-z0-9]/gi, "");
-      const username = `${baseUsername || "instructor"}-${Date.now()}`.slice(0, 25);
+      const baseUsername =
+        (email && String(email).split("@")[0]) ||
+        String(firstName)
+          .toLowerCase()
+          .replace(/[^a-z0-9]/gi, "");
+      const username = `${baseUsername || "instructor"}-${Date.now()}`.slice(
+        0,
+        25
+      );
 
       // password aleatoria (no se expone)
       const rawPassword = uuidv4();
@@ -483,13 +492,14 @@ export const updateInstructorController = [
 
       // status 0 = activo, 1 = inactivo; si no viene, mantenemos valor actual
       const hasStatusField =
-        body.status !== undefined || (body as any).isActive !== undefined ||
+        body.status !== undefined ||
+        (body as any).isActive !== undefined ||
         body.enabled !== undefined;
       const enabledFinal = hasStatusField
         ? resolveActiveFromBody(body)
         : undefined;
 
-      const branchFinal = String((body.branchId ?? body.branch) ?? "");
+      const branchFinal = String(body.branchId ?? body.branch ?? "");
 
       // Subir nueva imagen si viene
       let newImageUrl: string | undefined;
@@ -525,9 +535,7 @@ export const updateInstructorController = [
         if (body.lastName !== undefined)
           profileUpdateData.paternalSurname = String(body.lastName);
         if (body.phone !== undefined)
-          profileUpdateData.telephone = body.phone
-            ? String(body.phone)
-            : null;
+          profileUpdateData.telephone = body.phone ? String(body.phone) : null;
         if (body.address !== undefined)
           profileUpdateData.address = body.address
             ? String(body.address)

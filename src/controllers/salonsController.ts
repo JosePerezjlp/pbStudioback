@@ -259,9 +259,7 @@ export const getAllClassroomsController = async (
 
     // Si enabled=true, solo activas (isActive = 1); siempre excluir borradas (isActive != 2)
     const whereClause =
-      enabled === "true"
-        ? { isActive: 1 }
-        : { isActive: { not: 2 } };
+      enabled === "true" ? { isActive: 1 } : { isActive: { not: 2 } };
 
     const rooms = await prisma.exerciseRoom.findMany({
       where: whereClause,

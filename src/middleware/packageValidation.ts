@@ -9,10 +9,7 @@ export const packageValidations = [
     .isFloat({ min: 0 })
     .withMessage("amount debe ser un número positivo"),
 
-  body("type")
-    .isString()
-    .notEmpty()
-    .withMessage("type es requerido"),
+  body("type").isString().notEmpty().withMessage("type es requerido"),
 
   body("daysExpiry")
     .isInt({ min: 0 })
@@ -22,19 +19,14 @@ export const packageValidations = [
     .isInt({ min: 0, max: 2 })
     .withMessage("isActive debe ser un número entre 0 y 2"),
 
-  body("isUnlimited")
-    .isBoolean()
-    .withMessage("isUnlimited debe ser booleano"),
+  body("isUnlimited").isBoolean().withMessage("isUnlimited debe ser booleano"),
 
   body("isNewUser") // lo renombré de `new_user` a `isNewUser`
     .optional()
     .isBoolean()
     .withMessage("isNewUser debe ser booleano"),
 
-  body("public")
-    .optional()
-    .isBoolean()
-    .withMessage("public debe ser booleano"),
+  body("public").optional().isBoolean().withMessage("public debe ser booleano"),
 
   body("specialPrice")
     .optional()

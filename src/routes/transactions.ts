@@ -16,6 +16,7 @@ import {
   getRankingsController,
   getRecentTransactionsController,
   deleteOldTransactionsController,
+  getTransactionByIdController,
 } from "../controllers/transactionController";
 // Resumen de transacciones (solo admins)
 
@@ -63,7 +64,7 @@ router.get(
 );
 router.get("/rankings", getRankingsController);
 router.get(
-  "/:userId",
+  "/user/:userId",
   verifyToken,
   checkPermission("transacciones", "detalle"),
   getUserTransactionsController
@@ -92,6 +93,14 @@ router.delete(
   verifyToken,
   checkPermission("transacciones", "eliminar"), // Asumiendo que existe este permiso o similar, sino usar uno general de admin
   deleteOldTransactionsController
+);
+
+// Detalle de transacción por ID (debe ir al final para no interferir con rutas estáticas)
+router.get(
+  "/:id",
+  verifyToken,
+  checkPermission("transacciones", "detalle"),
+  getTransactionByIdController
 );
 
 export default router;

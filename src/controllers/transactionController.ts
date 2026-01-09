@@ -52,9 +52,37 @@ const normalizeToday = (): Date => {
 export type PaymentMethod = "paypal" | "cash" | "terminal";
 export type TransactionStatus = "paid" | "pending" | "rejected" | "cancelled";
 
+/* ---------- formateo de respuesta común ---------- */
+const formatTransactionRecord = (t: any) => ({
+  ...t,
+  // Adaptar campos para compatibilidad con frontend
+  user: t.user
+    ? {
+        firstName: t.user.name,
+        lastName: t.user.lastname,
+        email: t.user.email,
+      }
+    : null,
+  packageDoc: t.package
+    ? {
+        id: String(t.package.id),
+        type: formatPackageType(t.package.type),
+        totalClasses: t.package.totalClasses,
+      }
+    : null,
+  // Convertir Decimal a number para JSON
+  amount: Number(t.total),
+  total: Number(t.total),
+  packageAmount: Number(t.packageAmount),
+  packageSpecialPrice: t.packageSpecialPrice
+    ? Number(t.packageSpecialPrice)
+    : null,
+  couponDiscount: t.couponDiscount ? Number(t.couponDiscount) : null,
+});
+
 /* ===============================================================
-   1)  CASH – Registro manual
-   =============================================================== */
+  1)  CASH – Registro manual
+  =============================================================== */
 export const createCashTransactionController = async (
   req: AuthRequest,
   res: Response
@@ -80,12 +108,9 @@ export const createCashTransactionController = async (
 
     // Métodos de pago válidos: cash (efectivo), terminal (tarjeta), free (gratis/cortesía)
     if (!["cash", "terminal", "free"].includes(paymentMethod)) {
-      res
-        .status(400)
-        .json({
-          error:
-            "Método de pago inválido. Métodos válidos: cash, terminal, free",
-        });
+      res.status(400).json({
+        error: "Método de pago inválido. Métodos válidos: cash, terminal, free",
+      });
       return;
     }
 
@@ -462,32 +487,7 @@ export const getAllTransactionsController = async (
     ]);
 
     // Formatear respuesta compatible
-    const formatted = transactions.map((t) => ({
-      ...t,
-      // Adaptar campos para compatibilidad con frontend si es necesario
-      user: t.user
-        ? {
-            firstName: t.user.name,
-            lastName: t.user.lastname,
-            email: t.user.email,
-          }
-        : null,
-      packageDoc: t.package
-        ? {
-            id: String(t.package.id),
-            type: formatPackageType(t.package.type),
-            totalClasses: t.package.totalClasses,
-          }
-        : null,
-      // Convertir Decimal a number para JSON
-      amount: Number(t.total),
-      total: Number(t.total),
-      packageAmount: Number(t.packageAmount),
-      packageSpecialPrice: t.packageSpecialPrice
-        ? Number(t.packageSpecialPrice)
-        : null,
-      couponDiscount: t.couponDiscount ? Number(t.couponDiscount) : null,
-    }));
+    const formatted = transactions.map((t) => formatTransactionRecord(t));
 
     res.status(200).json({
       transactions: formatted,
@@ -500,6 +500,48 @@ export const getAllTransactionsController = async (
   } catch (err) {
     console.error("❌ Error listando transacciones:", err);
     res.status(500).json({ error: "Error al obtener transacciones" });
+  }
+};
+
+/**
+ * Devuelve el detalle de una transacción específica por ID
+ */
+export const getTransactionByIdController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const transactionId = Number(id);
+
+    if (!transactionId || Number.isNaN(transactionId)) {
+      res.status(400).json({ error: "ID de transacción inválido" });
+      return;
+    }
+
+    const transaction = await prisma.transaction.findUnique({
+      where: { id: transactionId },
+      include: {
+        user: {
+          select: { id: true, name: true, lastname: true, email: true },
+        },
+        package: {
+          select: { id: true, type: true, totalClasses: true },
+        },
+      },
+    });
+
+    if (!transaction) {
+      res.status(404).json({ error: "Transacción no encontrada" });
+      return;
+    }
+
+    const formatted = formatTransactionRecord(transaction);
+
+    res.status(200).json({ transaction: formatted });
+  } catch (err) {
+    console.error("❌ Error obteniendo transacción por ID:", err);
+    res.status(500).json({ error: "Error al obtener la transacción" });
   }
 };
 

@@ -137,6 +137,67 @@ class UserService {
   }
 
   /**
+   * Login o registro vía Google OAuth usando el email como clave.
+   * Si el usuario ya existe, solo actualiza lastLogin.
+   * Si no existe, crea uno nuevo con una contraseña aleatoria interna.
+   */
+  async loginOrRegisterWithGoogle(params: {
+    email: string;
+    name: string;
+    lastname?: string;
+  }): Promise<{ user: UserContext; isNewUser: boolean }> {
+    const { email, name, lastname } = params;
+
+    let isNewUser = false;
+
+    // ¿Ya existe un usuario con este email?
+    let user = await this.prisma.user.findUnique({
+      where: { email },
+      include: { branchOffice: true },
+    });
+
+    if (!user) {
+      // Crear usuario nuevo con password aleatoria (el usuario luego puede
+      // establecer/recuperar una contraseña local si quiere).
+      const randomPassword = `google_${Math.random()
+        .toString(36)
+        .slice(2, 10)}_${Date.now().toString(36)}`;
+
+      const created = await this.createUser({
+        email,
+        password: randomPassword,
+        name,
+        lastname,
+      });
+
+      user = await this.prisma.user.findUnique({
+        where: { id: created.id },
+        include: { branchOffice: true },
+      });
+
+      isNewUser = true;
+    } else {
+      // Usuario existente: solo registrar último login
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { lastLogin: new Date() },
+      });
+
+      user = await this.prisma.user.findUnique({
+        where: { id: user.id },
+        include: { branchOffice: true },
+      });
+    }
+
+    if (!user) {
+      throw new Error("No se pudo obtener el usuario después de login Google");
+    }
+
+    const context = this.mapUserToContext(user);
+    return { user: context, isNewUser };
+  }
+
+  /**
    * Obtiene usuario por ID (SQL)
    */
   async getUserById(

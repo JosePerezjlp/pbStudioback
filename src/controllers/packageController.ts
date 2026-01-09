@@ -327,12 +327,10 @@ export const deletePackageController = async (
       msg.includes("Foreign key constraint failed") ||
       msg.includes("P2003")
     ) {
-      res
-        .status(409)
-        .json({
-          error:
-            "No se puede eliminar el paquete porque tiene transacciones asociadas.",
-        });
+      res.status(409).json({
+        error:
+          "No se puede eliminar el paquete porque tiene transacciones asociadas.",
+      });
       return;
     }
 

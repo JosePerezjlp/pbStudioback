@@ -111,10 +111,19 @@ export const getClassesForReservationController = async (
       const reservedSpots = session.reservations.length;
       const availableSpots = session.availableCapacity - reservedSpots;
 
+      // Formatos "limpios" tal como están en la BD
+      const date = DateTime.fromJSDate(session.dateStart)
+        .setZone("utc")
+        .toFormat("yyyy-LL-dd"); // 2026-01-12
+
+      const time = DateTime.fromJSDate(session.timeStart)
+        .setZone("utc")
+        .toFormat("HH:mm:ss"); // 06:45:00
+
       return {
         id: session.id,
-        date: session.dateStart,
-        time: session.timeStart,
+        date,
+        time,
         type: session.type,
         status: session.status, // 0 = cerrada, 1 = abierta, 2 = cancelada, 3 = borrada
         isOpen: session.status === 1,
@@ -155,9 +164,8 @@ export const getClassesForReservationController = async (
     // Agrupar por fecha para facilitar la visualización
     const groupedByDate = formattedClasses.reduce(
       (acc, classItem) => {
-        const dateKey = DateTime.fromJSDate(classItem.date)
-          .setZone("America/Mexico_City")
-          .toFormat("yyyy-MM-dd");
+        // Ahora "date" ya viene formateado como yyyy-MM-dd
+        const dateKey = classItem.date as string;
 
         if (!acc[dateKey]) {
           acc[dateKey] = [];

@@ -56,15 +56,12 @@ const asBoolOrUndefined = (value: unknown): boolean | undefined => {
   return undefined;
 };
 
-// Helper para convertir string HH:mm a Date (usando fecha base dummy)
+// Helper para convertir string HH:mm a Date fijo en UTC (1970-01-01 HH:mm:00)
+// Esto evita que el timezone local mueva la hora al guardar/leer @db.Time(0) en MySQL.
 const timeStringToDate = (timeStr: string): Date => {
   const [hours, minutes] = timeStr.split(":").map(Number);
-  const date = new Date();
-  date.setUTCHours(hours, minutes, 0, 0); // Usar UTC o local según convención de la DB. Prisma @db.Time suele ignorar la fecha.
-  // Ajuste: si Prisma usa DateTime para Time, es mejor setear una fecha fija.
-  date.setFullYear(1970, 0, 1);
-  date.setHours(hours, minutes, 0, 0);
-  return date;
+  // Crear directamente en UTC sin tocar hora local
+  return new Date(Date.UTC(1970, 0, 1, hours, minutes, 0, 0));
 };
 
 /* ============================================================
@@ -514,6 +511,26 @@ export const getAllClassesController = async (
           },
         },
         branchOffice: true,
+        // Reservaciones activas con detalle de usuario y asiento
+        reservations: {
+          where: {
+            cancellationAt: null,
+          },
+          select: {
+            id: true,
+            placeNumber: true,
+            attended: true,
+            userId: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                lastname: true,
+                email: true,
+              },
+            },
+          },
+        },
       },
       orderBy:
         startDate || endDate
@@ -549,6 +566,27 @@ export const getAllClassesController = async (
       branchName: session.branchOffice?.name || "",
       disciplineName: session.discipline?.name || "",
       info: session.information || "",
+
+      // Información completa del salón (incluye layout de asientos)
+      exerciseRoom: session.exerciseRoom,
+      // Lugares marcados como no disponibles para esta sesión
+      placesNotAvailable: session.placesNotAvailable,
+      // Reservas activas con sus asientos y datos básicos del usuario
+      reservations:
+        session.reservations?.map((r) => ({
+          id: r.id,
+          placeNumber: r.placeNumber,
+          attended: r.attended,
+          userId: r.userId,
+          user: r.user
+            ? {
+                id: r.user.id,
+                name: r.user.name,
+                lastname: r.user.lastname,
+                email: r.user.email,
+              }
+            : null,
+        })) || [],
     }));
 
     res.status(200).json({
@@ -637,6 +675,15 @@ export const getClassByIdController = async (
             id: true,
             userId: true,
             placeNumber: true,
+            attended: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                lastname: true,
+                email: true,
+              },
+            },
           },
         },
       },
@@ -828,6 +875,7 @@ export const createClassesBulkController = async (
     }
 
     const created: number[] = [];
+    const updated: number[] = [];
 
     for (const rawSlot of slots) {
       try {
@@ -839,6 +887,11 @@ export const createClassesBulkController = async (
         const roomId = Number(slot.roomId);
         const disciplineId = Number(slot.disciplineId);
         const instructorId = Number(slot.instructorId);
+        const classIdRaw = slot.id ?? slot.sessionId;
+        const classId =
+          classIdRaw !== undefined && classIdRaw !== null
+            ? Number(classIdRaw)
+            : NaN;
         const capacityRaw = slot.capacity;
         const occupiedRaw = slot.occupied;
         const hour = String(slot.hour || "");
@@ -866,29 +919,6 @@ export const createClassesBulkController = async (
             created,
           });
           return;
-        }
-
-        // Evitar duplicados por día/hora/sede/salón
-        const conflict = await prisma.session.findFirst({
-          where: {
-            dateStart,
-            branchOfficeId: branchId,
-            exerciseRoomId: roomId,
-          },
-        });
-
-        if (conflict) {
-          const conflictTime = conflict.timeStart.toISOString().slice(11, 16);
-          const reqTime = hour.slice(0, 5);
-          if (conflictTime === reqTime) {
-            res.status(409).json({
-              error:
-                "Ya existe una clase programada en ese salón, sede y horario.",
-              code: "CONFLICTING_CLASS",
-              created,
-            });
-            return;
-          }
         }
 
         // Capacidad y ocupación efectivas
@@ -929,6 +959,66 @@ export const createClassesBulkController = async (
           slot.isActive === false ? "cerrada" : "abierta";
         const statusInt = normalizedStatusStr === "abierta" ? 1 : 0;
 
+        // Si el slot trae id/sessionId, interpretamos que es una EDICIÓN
+        // de una clase existente en lugar de crear una nueva.
+        if (!Number.isNaN(classId) && classId > 0) {
+          const existing = await prisma.session.findUnique({
+            where: { id: classId },
+          });
+
+          if (!existing) {
+            // Si no existe, caemos al flujo de creación normal.
+          } else {
+            const updatedSession = await prisma.session.update({
+              where: { id: classId },
+              data: {
+                dateStart,
+                timeStart,
+                branchOfficeId: branchId,
+                exerciseRoomId: roomId,
+                disciplineId,
+                instructorId,
+                exerciseRoomCapacity: effectiveCapacity,
+                availableCapacity: Math.max(
+                  effectiveCapacity - effectiveOccupied,
+                  0
+                ),
+                status: statusInt,
+                type: roomRecord.type,
+                information: infoNormalized,
+                updatedAt: new Date(),
+              },
+            });
+
+            updated.push(updatedSession.id);
+            continue;
+          }
+        }
+
+        // Creación de nueva clase: evitar duplicados exactos por día/hora/sede/salón
+        const conflict = await prisma.session.findFirst({
+          where: {
+            dateStart,
+            branchOfficeId: branchId,
+            exerciseRoomId: roomId,
+          },
+        });
+
+        if (conflict) {
+          const conflictTime = conflict.timeStart.toISOString().slice(11, 16);
+          const reqTime = hour.slice(0, 5);
+          if (conflictTime === reqTime) {
+            res.status(409).json({
+              error:
+                "Ya existe una clase programada en ese salón, sede y horario.",
+              code: "CONFLICTING_CLASS",
+              created,
+              updated,
+            });
+            return;
+          }
+        }
+
         const newSession = await prisma.session.create({
           data: {
             dateStart,
@@ -967,6 +1057,7 @@ export const createClassesBulkController = async (
     res.status(201).json({
       message: "Clases creadas correctamente",
       created,
+      updated,
     });
   } catch (error) {
     console.error("Error en createClassesBulkController:", error);
