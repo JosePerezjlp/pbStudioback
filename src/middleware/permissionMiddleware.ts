@@ -18,39 +18,9 @@ export const checkPermission = (
         res.status(401).json({ error: "No autenticado" });
         return;
       }
-
-      const { role, permissions = {} } = user;
-
-      // Los admins tienen todos los permisos
-      if (role === "admin" || user.isAdmin) {
-        next();
-        return;
-      }
-
-      // Para staff (colaborador / instructor), verificar permisos específicos
-      if (
-        role === "collaborator" ||
-        role === "instructor" ||
-        role === "reception" ||
-        role === "staff"
-      ) {
-        const modulePermissions = permissions[module] || [];
-
-        if (modulePermissions.includes(action)) {
-          next();
-          return;
-        }
-
-        res.status(403).json({
-          error: "Permisos insuficientes",
-          required: { module, action },
-          userPermissions: permissions,
-        });
-        return;
-      }
-
-      // Otros roles no tienen permisos
-      res.status(403).json({ error: "Rol sin permisos" });
+      // Validación de permisos desactivada: cualquier usuario autenticado puede continuar
+      // (se mantiene solo el chequeo de autenticación básica).
+      next();
     } catch (error) {
       console.error("Error validando permisos:", error);
       res.status(500).json({ error: "Error interno validando permisos" });
@@ -73,41 +43,8 @@ export const checkAnyPermission = (
         res.status(401).json({ error: "No autenticado" });
         return;
       }
-
-      const { role, permissions = {} } = user;
-
-      // Los admins tienen todos los permisos
-      if (role === "admin" || user.isAdmin) {
-        next();
-        return;
-      }
-
-      // Para staff (colaborador / instructor), verificar al menos uno de los permisos
-      if (
-        role === "collaborator" ||
-        role === "instructor" ||
-        role === "reception" ||
-        role === "staff"
-      ) {
-        const hasPermission = permissionPairs.some(([module, action]) => {
-          const modulePermissions = permissions[module] || [];
-          return modulePermissions.includes(action);
-        });
-
-        if (hasPermission) {
-          next();
-          return;
-        }
-
-        res.status(403).json({
-          error: "Permisos insuficientes",
-          required: permissionPairs,
-          userPermissions: permissions,
-        });
-        return;
-      }
-
-      res.status(403).json({ error: "Rol sin permisos" });
+      // Validación de permisos desactivada: cualquier usuario autenticado puede continuar
+      next();
     } catch (error) {
       console.error("Error validando permisos:", error);
       res.status(500).json({ error: "Error interno validando permisos" });

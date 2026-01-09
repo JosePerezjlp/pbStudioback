@@ -447,11 +447,27 @@ export const getAllTransactionsController = async (
     if (packageId) where.packageId = Number(packageId);
     if (userId) where.userId = Number(userId);
 
-    // Fechas
+    // Fechas: validar correctamente y evitar errores 500 por formato inválido
     if (startDate || endDate) {
       where.createdAt = {};
-      if (startDate) where.createdAt.gte = normalizeStartDate(startDate);
-      if (endDate) where.createdAt.lte = normalizeEndDate(endDate);
+
+      if (startDate) {
+        const start = new Date(String(startDate));
+        if (isNaN(start.getTime())) {
+          res.status(400).json({ error: "startDate inválida" });
+          return;
+        }
+        where.createdAt.gte = normalizeStartDate(start);
+      }
+
+      if (endDate) {
+        const end = new Date(String(endDate));
+        if (isNaN(end.getTime())) {
+          res.status(400).json({ error: "endDate inválida" });
+          return;
+        }
+        where.createdAt.lte = normalizeEndDate(end);
+      }
     }
 
     // Búsqueda por Email o Nombre (Join con User)
@@ -499,7 +515,10 @@ export const getAllTransactionsController = async (
     });
   } catch (err) {
     console.error("❌ Error listando transacciones:", err);
-    res.status(500).json({ error: "Error al obtener transacciones" });
+    res.status(500).json({
+      error: "Error al obtener transacciones",
+      details: err instanceof Error ? err.message : String(err),
+    });
   }
 };
 

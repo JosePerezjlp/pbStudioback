@@ -60,7 +60,7 @@ export const sendWelcomeEmail = async (to: string, name: string) => {
               <tr>
                 <td align="center" style="padding:24px 16px 8px 16px;">
                   <img 
-                    src="${BASE_URL}/uploads/emailImages/Registroemail.jpeg" 
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2F1.png?alt=media&token=32f07784-e443-42b2-821c-7e4aa1936d94" 
                     alt="Bienvenida de PB Studio"
                     width="600"
                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
@@ -135,7 +135,7 @@ export const sendReservationConfirmationEmail = async (
               <tr>
                 <td align="center" style="padding:24px 16px 8px 16px;">
                   <img
-                    src="${BASE_URL}/uploads/emailImages/Reservaconfirm.jpeg"
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2F4.png?alt=media&token=dfe672c1-d6f7-49ef-9b36-a01c953d5d0c"
                     alt="Reserva confirmada en PB Studio"
                     width="600"
                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
@@ -206,7 +206,7 @@ export const sendReservationCancelledEmail = async (
               <tr>
                 <td align="center" style="padding:24px 16px 8px 16px;">
                   <img
-                    src="${BASE_URL}/uploads/emailImages/ReservaCancelada.jpeg"
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2F5.png?alt=media&token=b38df4dd-2640-4a3c-b413-bd83297c9645"
                     alt="Reserva cancelada en PB Studio"
                     width="600"
                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
@@ -277,7 +277,7 @@ export const sendPackagePurchaseEmail = async (
               <tr>
                 <td align="center" style="padding:24px 16px 8px 16px;">
                   <img
-                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2Fcomprapaquete.jpeg?alt=media&token=caca023b-117b-4272-98e6-9bbad7694372"
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2F9.png?alt=media&token=d018147c-e4a3-4ab9-8d6f-e18836e930ee"
                     alt="PB Studio - Compra de paquete confirmada"
                     width="600"
                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
@@ -368,7 +368,7 @@ export const sendPackageExpiryWarningEmail = async (
               <tr>
                 <td align="center" style="padding:24px 16px 8px 16px;">
                   <img 
-                    src="${BASE_URL}/uploads/emailImages/paqueteproximoaexpirar.jpeg" 
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2F14.png?alt=media&token=25e6628a-91f5-467a-bcc1-595715fb5669" 
                     alt="PB Studio - Paquete por expirar"
                     width="600"
                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
@@ -534,7 +534,7 @@ export const sendPasswordResetCodeEmail = async (
               <tr>
                 <td align="center" style="padding:24px 16px 8px 16px;">
                   <img 
-                    src="${BASE_URL}/uploads/emailImages/restablecerpass.jpeg" 
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2F8.png?alt=media&token=38ac99b8-c2eb-46dc-a50b-e0913f1405af" 
                     alt="PB Studio - Restablecer contraseña"
                     width="600"
                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
@@ -644,7 +644,7 @@ export const sendWaitlistEntryEmail = async (
               <tr>
                 <td align="center" style="padding:24px 16px 8px 16px;">
                   <img
-                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2FIngresoListaEspera.jpeg?alt=media&token=d8468a66-6397-4bc8-aacb-bf5a75b7afbc"
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2F2.png?alt=media&token=bdcb333d-1c2e-4a2a-916e-73b4d5c4c8ea"
                     alt="Ingreso a lista de espera en PB Studio"
                     width="600"
                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
@@ -734,7 +734,7 @@ export const sendWaitlistAcceptedEmail = async (
               <tr>
                 <td align="center" style="padding:24px 16px 8px 16px;">
                   <img
-                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2FAceptacionListaDeEspera.jpeg?alt=media&token=799c5ec8-6c8d-40c0-9a18-065a192de6ac"
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2F3.png?alt=media&token=993e6152-fd0d-454c-95c3-2b759accda6a"
                     alt="Cupo disponible en PB Studio"
                     width="600"
                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
@@ -801,7 +801,7 @@ export const sendWaitlistRejectedEmail = async (
               <tr>
                 <td align="center" style="padding:24px 16px 8px 16px;">
                   <img 
-                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2Ffinlistasincupo.jpeg?alt=media&token=7c24f0f4-a9ee-4977-9238-7c65ddd52ae1" 
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2F13.png?alt=media&token=b337be33-e5e6-41e4-9b73-19f22630aa6e" 
                     alt="PB Studio - Lista de espera finalizada"
                     width="600"
                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
@@ -860,7 +860,7 @@ export const sendWaitlistCancelledByUserEmail = async (
               <tr>
                 <td align="center" style="padding:24px 16px 8px 16px;">
                   <img 
-                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2FAceptacionListaDeEspera.jpeg?alt=media&token=2fa33598-a13b-42c6-8a99-90e6bed4e1d3" 
+                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2F3.png?alt=media&token=993e6152-fd0d-454c-95c3-2b759accda6a" 
                     alt="PB Studio - Lista de espera"
                     width="600"
                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"

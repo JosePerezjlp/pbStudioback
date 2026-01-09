@@ -53,6 +53,11 @@ export const loginController = async (
     );
 
     // Responder con estructura similar a la que espera el frontend (adaptada)
+    // Importante: si el staff/admin tiene permisos definidos en BD, respetarlos;
+    // solo usar ADMIN_PERMISSIONS como fallback cuando no haya ninguno.
+    const hasCustomPermissions =
+      user.permissions && Object.keys(user.permissions).length > 0;
+
     res.json({
       message: "Login exitoso",
       token,
@@ -64,10 +69,11 @@ export const loginController = async (
         name: user.name,
         isAdmin: user.isAdmin,
         branches: user.branches || [],
-        permissions:
-          user.isAdmin || user.role === "admin"
-            ? ADMIN_PERMISSIONS
-            : user.permissions || {},
+        permissions: hasCustomPermissions
+          ? user.permissions
+          : user.isAdmin || user.role === "admin"
+          ? ADMIN_PERMISSIONS
+          : {},
         sessionId: sessionId,
       },
     });
@@ -220,6 +226,9 @@ export const oauthLoginController = async (
       { expiresIn: "7d" }
     );
 
+    const hasCustomPermissions =
+      user.permissions && Object.keys(user.permissions).length > 0;
+
     res.json({
       message: "Login OAuth Google exitoso",
       token,
@@ -231,10 +240,11 @@ export const oauthLoginController = async (
         name: user.name,
         isAdmin: user.isAdmin,
         branches: user.branches || [],
-        permissions:
-          user.isAdmin || user.role === "admin"
-            ? ADMIN_PERMISSIONS
-            : user.permissions || {},
+        permissions: hasCustomPermissions
+          ? user.permissions
+          : user.isAdmin || user.role === "admin"
+          ? ADMIN_PERMISSIONS
+          : {},
         sessionId,
       },
       isNewUser,

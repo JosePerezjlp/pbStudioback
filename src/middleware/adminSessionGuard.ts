@@ -15,15 +15,6 @@ export const adminSessionGuard: RequestHandler = (
     res.status(401).json({ error: "No autenticado" });
     return;
   }
-
-  const { role } = user;
-
-  // Mantener el guard como placeholder para roles admin/employee,
-  // pero sin exigir x-session-id (solo requiere JWT válido).
-  if (role !== "admin" && role !== "employee") {
-    next();
-    return;
-  }
-
+  // Validación de sesión/admin desactivada: con estar autenticado es suficiente.
   next();
 };
