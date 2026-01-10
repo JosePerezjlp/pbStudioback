@@ -705,7 +705,9 @@ export const getUserTransactionsController = async (
     });
   } catch (err) {
     console.error("❌ Error listando transacciones de usuario:", err);
-    res.status(500).json({ error: "Error al obtener transacciones del usuario" });
+    res
+      .status(500)
+      .json({ error: "Error al obtener transacciones del usuario" });
   }
 };
 

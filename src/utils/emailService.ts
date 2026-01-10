@@ -346,96 +346,96 @@ export const sendPackagePurchaseEmail = async (
 };
 
 // Paqquete por ExpressValidator, Enviando con imagen
-export const sendPackageExpiryWarningEmail = async (
-  to: string,
-  name: string,
-  daysLeft: number
-) => {
-  try {
-    const daysLabel = daysLeft === 1 ? "1 día" : `${daysLeft} días`;
+// export const sendPackageExpiryWarningEmail = async (
+//   to: string,
+//   name: string,
+//   daysLeft: number
+// ) => {
+//   try {
+//     const daysLabel = daysLeft === 1 ? "1 día" : `${daysLeft} días`;
 
-    await safeSendEmail({
-      from: FROM,
-      to,
-      subject: "Tu paquete está por vencer",
-      html: `
-      <!-- Wrapper a 100% -->
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;">
-        <tr>
-          <td align="center">
-            <!-- Contenedor centrado -->
-            <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
-              <tr>
-                <td align="center" style="padding:24px 16px 8px 16px;">
-                  <img 
-                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2F14.png?alt=media&token=25e6628a-91f5-467a-bcc1-595715fb5669" 
-                    alt="PB Studio - Paquete por expirar"
-                    width="600"
-                    style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
-                  />
-                </td>
-              </tr>
+//     await safeSendEmail({
+//       from: FROM,
+//       to,
+//       subject: "Tu paquete está por vencer",
+//       html: `
+//       <!-- Wrapper a 100% -->
+//       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;">
+//         <tr>
+//           <td align="center">
+//             <!-- Contenedor centrado -->
+//             <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
+//               <tr>
+//                 <td align="center" style="padding:24px 16px 8px 16px;">
+//                   <img
+//                     src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2F14.png?alt=media&token=25e6628a-91f5-467a-bcc1-595715fb5669"
+//                     alt="PB Studio - Paquete por expirar"
+//                     width="600"
+//                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
+//                   />
+//                 </td>
+//               </tr>
 
-              <!-- Espaciador compatible -->
-              <tr>
-                <td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td>
-              </tr>
+//               <!-- Espaciador compatible -->
+//               <tr>
+//                 <td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td>
+//               </tr>
 
-              <tr>
-                <td align="center" style="padding:0 24px;">
-                  <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
-                    Hola ${name},<br/>
-                    tu paquete <strong>vencerá en ${daysLabel}</strong>.
-                  </p>
-                </td>
-              </tr>
+//               <tr>
+//                 <td align="center" style="padding:0 24px;">
+//                   <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
+//                     Hola ${name},<br/>
+//                     tu paquete <strong>vencerá en ${daysLabel}</strong>.
+//                   </p>
+//                 </td>
+//               </tr>
 
-              <tr>
-                <td align="center" style="padding:12px 24px 20px 24px;">
-                  <p style="margin:0;font-size:14px;line-height:22px;color:#4b5563;">
-                    ¡Aprovecha tus clases antes de que expire!<br/>
-                    Si ya realizaste la renovación, puedes ignorar este mensaje.
-                  </p>
-                </td>
-              </tr>
+//               <tr>
+//                 <td align="center" style="padding:12px 24px 20px 24px;">
+//                   <p style="margin:0;font-size:14px;line-height:22px;color:#4b5563;">
+//                     ¡Aprovecha tus clases antes de que expire!<br/>
+//                     Si ya realizaste la renovación, puedes ignorar este mensaje.
+//                   </p>
+//                 </td>
+//               </tr>
 
-            </table>
-          </td>
-        </tr>
-      </table>`,
-    });
-  } catch (error) {
-    console.error("Error enviando email de expiración de paquete:", error);
-  }
-};
+//             </table>
+//           </td>
+//         </tr>
+//       </table>`,
+//     });
+//   } catch (error) {
+//     console.error("Error enviando email de expiración de paquete:", error);
+//   }
+// };
 
 // NO IMAGEN
-export const sendClassReminderEmail = async (
-  to: string,
-  name: string,
-  info: { day: string; hour: string; discipline: string; branch: string },
-  classType?: string
-) => {
-  const { day, hour, discipline, branch } = info;
-  const formattedClassType = formatClassType(classType);
+// export const sendClassReminderEmail = async (
+//   to: string,
+//   name: string,
+//   info: { day: string; hour: string; discipline: string; branch: string },
+//   classType?: string
+// ) => {
+//   const { day, hour, discipline, branch } = info;
+//   const formattedClassType = formatClassType(classType);
 
-  await safeSendEmail({
-    from: FROM,
-    to,
-    subject: "⏰ ¡Tu clase comienza en 2 horas!",
-    html: `
-      <p>Hola ${name},</p>
-      <p>Este es un recordatorio de tu clase:</p>
-      <ul>
-        <li><strong>Disciplina:</strong> ${discipline} ${formattedClassType}</li>
-        <li><strong>Fecha:</strong> ${day}</li>
-        <li><strong>Hora:</strong> ${hour}</li>
-        <li><strong>Sucursal:</strong> ${branch}</li>
-      </ul>
-      <p>¡Nos vemos pronto! 💪</p>
-    `,
-  });
-};
+//   await safeSendEmail({
+//     from: FROM,
+//     to,
+//     subject: "⏰ ¡Tu clase comienza en 2 horas!",
+//     html: `
+//       <p>Hola ${name},</p>
+//       <p>Este es un recordatorio de tu clase:</p>
+//       <ul>
+//         <li><strong>Disciplina:</strong> ${discipline} ${formattedClassType}</li>
+//         <li><strong>Fecha:</strong> ${day}</li>
+//         <li><strong>Hora:</strong> ${hour}</li>
+//         <li><strong>Sucursal:</strong> ${branch}</li>
+//       </ul>
+//       <p>¡Nos vemos pronto! 💪</p>
+//     `,
+//   });
+// };
 
 /* ===============================================================
    CONTACTO WEB
@@ -779,62 +779,62 @@ export const sendWaitlistAcceptedEmail = async (
 /**
  * Cuando la ventana de espera finaliza sin cupo. envio con imagen
  */
-export const sendWaitlistRejectedEmail = async (
-  to: string,
-  name: string,
-  classId: string
-) => {
-  try {
-    const { discipline, dateStr, hour } = await getClassInfo(classId);
+// export const sendWaitlistRejectedEmail = async (
+//   to: string,
+//   name: string,
+//   classId: string
+// ) => {
+//   try {
+//     const { discipline, dateStr, hour } = await getClassInfo(classId);
 
-    await safeSendEmail({
-      from: FROM,
-      to,
-      subject: "Tu solicitud en lista de espera ha finalizado",
-      html: `
-      <!-- Wrapper a 100% -->
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;">
-        <tr>
-          <td align="center">
-            <!-- Contenedor centrado -->
-            <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
-              <tr>
-                <td align="center" style="padding:24px 16px 8px 16px;">
-                  <img 
-                    src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2F13.png?alt=media&token=b337be33-e5e6-41e4-9b73-19f22630aa6e" 
-                    alt="PB Studio - Lista de espera finalizada"
-                    width="600"
-                    style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
-                  />
-                </td>
-              </tr>
+//     await safeSendEmail({
+//       from: FROM,
+//       to,
+//       subject: "Tu solicitud en lista de espera ha finalizado",
+//       html: `
+//       <!-- Wrapper a 100% -->
+//       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;">
+//         <tr>
+//           <td align="center">
+//             <!-- Contenedor centrado -->
+//             <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
+//               <tr>
+//                 <td align="center" style="padding:24px 16px 8px 16px;">
+//                   <img
+//                     src="https://firebasestorage.googleapis.com/v0/b/pb-studio-ffb8f.firebasestorage.app/o/emailImages%2F13.png?alt=media&token=b337be33-e5e6-41e4-9b73-19f22630aa6e"
+//                     alt="PB Studio - Lista de espera finalizada"
+//                     width="600"
+//                     style="display:block;width:100%;max-width:600px;height:auto;border:0;line-height:100%;outline:none;text-decoration:none;"
+//                   />
+//                 </td>
+//               </tr>
 
-              <!-- Espaciador compatible -->
-              <tr>
-                <td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td>
-              </tr>
+//               <!-- Espaciador compatible -->
+//               <tr>
+//                 <td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td>
+//               </tr>
 
-              <tr>
-                <td align="center" style="padding:0 24px 24px 24px;">
-                  <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
-                    Hola ${name},
-                    <br/>lamentablemente <strong>no se liberó ningún cupo</strong> para la clase de <strong>${discipline}</strong> del <strong>${dateStr}</strong> a las <strong>${hour}</strong>.
-                  </p>
-                  <p style="margin:16px 0 0 0;font-size:16px;line-height:24px;color:#333333;">
-                    Tu solicitud en lista de espera ha finalizado. 
-                    <br/>¡No te desanimes! Puedes volver a intentarlo en próximas clases desde la agenda.
-                  </p>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-      </table>`,
-    });
-  } catch (error) {
-    console.error("Error enviando email de rechazo de lista de espera:", error);
-  }
-};
+//               <tr>
+//                 <td align="center" style="padding:0 24px 24px 24px;">
+//                   <p style="margin:0;font-size:16px;line-height:24px;color:#333333;">
+//                     Hola ${name},
+//                     <br/>lamentablemente <strong>no se liberó ningún cupo</strong> para la clase de <strong>${discipline}</strong> del <strong>${dateStr}</strong> a las <strong>${hour}</strong>.
+//                   </p>
+//                   <p style="margin:16px 0 0 0;font-size:16px;line-height:24px;color:#333333;">
+//                     Tu solicitud en lista de espera ha finalizado.
+//                     <br/>¡No te desanimes! Puedes volver a intentarlo en próximas clases desde la agenda.
+//                   </p>
+//                 </td>
+//               </tr>
+//             </table>
+//           </td>
+//         </tr>
+//       </table>`,
+//     });
+//   } catch (error) {
+//     console.error("Error enviando email de rechazo de lista de espera:", error);
+//   }
+// };
 
 // Cancelacion de lista de espera envio con imagen
 

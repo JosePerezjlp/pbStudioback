@@ -7,6 +7,7 @@ import {
   getCouponByIdController,
   updateCouponController,
   deleteCouponController,
+  getCouponsWithRemainingUsesController,
 } from "../controllers/couponController";
 
 const router = express.Router();
@@ -25,6 +26,12 @@ router.get(
   verifyToken,
   checkPermission("cupones", "listado"),
   getAllCouponsController
+);
+router.get(
+  "/available",
+  verifyToken,
+  checkPermission("cupones", "listado"),
+  getCouponsWithRemainingUsesController
 );
 router.get(
   "/:couponId",

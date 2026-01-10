@@ -284,7 +284,7 @@ export const getAllWaitlistsController = async (
         session: {
           include: {
             discipline: true,
-            instructor: true, // This is `Staff`
+            instructor: { include: { profile: true } },
             branchOffice: true,
           },
         },
@@ -309,18 +309,13 @@ export const getAllWaitlistsController = async (
               day: s.dateStart, // Format? Old was "YYYY-MM-DD"
               hour: s.timeStart, // Format? Old was "HH:mm"
               disciplineName: s.discipline?.name || "",
-              instructorFirstName: s.instructor?.username || "", // Staff doesn't have firstName in main table?
-              // Staff has `profile`.
-              // Need to include profile in query.
+              instructorFirstName:
+                s.instructor?.profile?.firstname || s.instructor?.username || "",
               branch: s.branchOffice?.id,
             }
           : null,
       };
     });
-
-    // To get instructor name correctly:
-    // `session.instructor` is `Staff`. `Staff` has `profile` relation.
-    // I should update include.
 
     res.status(200).json({ waitlists: enriched });
   } catch (err) {

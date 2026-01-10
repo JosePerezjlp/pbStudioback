@@ -32,6 +32,7 @@ nvm use 18
 ## Paso 4: Subir el Código al Servidor
 
 ### Opción A: Con Git (Recomendado)
+
 ```bash
 cd ~
 git clone https://github.com/tu-usuario/apip-bstudio-relacional.git
@@ -39,6 +40,7 @@ cd apip-bstudio-relacional
 ```
 
 ### Opción B: Con FTP/SFTP
+
 - Usa FileZilla o WinSCP
 - Sube toda la carpeta del proyecto
 - Ubícala en `/home/tu-usuario/apip-bstudio-relacional`
@@ -56,6 +58,7 @@ nano .env
 ```
 
 ### Contenido del .env para producción:
+
 ```env
 FIREBASE_CREDENTIALS_JSON={"type":"service_account",...}
 DATABASE_URL="mysql://sa:rootroot@212.85.2.104:3306/pbstudio"
@@ -104,6 +107,7 @@ pm2 logs pbstudio-api
 ### A. Ubicar el archivo de configuración de Nginx
 
 En Hostinger, el archivo puede estar en:
+
 - `/etc/nginx/sites-available/`
 - `/etc/nginx/conf.d/`
 - `/usr/local/lsws/conf/vhosts/` (si usa LiteSpeed)
@@ -127,6 +131,7 @@ sudo nano /etc/nginx/conf.d/pbstudio-api.conf
 ### C. Pegar la configuración (del archivo nginx.conf que creamos)
 
 **IMPORTANTE:** Edita estos valores:
+
 - `api.tudominio.com` → Tu subdominio real
 - `/home/tu-usuario/` → Tu ruta real en Hostinger
 
@@ -249,16 +254,19 @@ pm2 restart pbstudio-api
 ## Troubleshooting
 
 ### Error: "502 Bad Gateway"
+
 - Verifica que PM2 esté corriendo: `pm2 status`
 - Verifica el puerto: `netstat -tlnp | grep 3000`
 - Revisa los logs: `pm2 logs pbstudio-api`
 
 ### Error: "Connection refused"
+
 - Verifica que el puerto 3000 está libre
 - Verifica el firewall: `sudo ufw status`
 - Permite el puerto si es necesario: `sudo ufw allow 3000`
 
 ### Prisma no funciona
+
 ```bash
 cd ~/apip-bstudio-relacional
 npx prisma generate
@@ -267,6 +275,7 @@ pm2 restart pbstudio-api
 ```
 
 ### Cambios no se reflejan
+
 ```bash
 # Asegúrate de compilar después de cambios
 npm run build

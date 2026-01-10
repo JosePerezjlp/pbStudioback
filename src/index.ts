@@ -30,11 +30,10 @@ import staffRouter from "./routes/staffRoutes";
 import attendanceRouter from "./routes/attendances";
 import waitListRouter from "./routes/waitlist";
 import notificationsRouter from "./routes/notifications";
-import {
-  sendClassReminderEmail,
-  sendPackageExpiryWarningEmail,
-  sendWaitlistRejectedEmail,
-} from "./utils/emailService";
+import {} from // sendClassReminderEmail,
+// sendPackageExpiryWarningEmail,
+// sendWaitlistRejectedEmail,
+"./utils/emailService";
 import { adminSessionGuard } from "./middleware/adminSessionGuard";
 import { verifyToken } from "./middleware/authMiddleware";
 // import { verifyToken } from "./middleware/authMiddleware";
@@ -352,17 +351,17 @@ cron.schedule("*/10 * * * *", async () => {
         emailPromises.push(
           (async () => {
             try {
-              await sendClassReminderEmail(
-                email,
-                name ?? "Usuario",
-                {
-                  day: dayStr,
-                  hour: hourStr,
-                  discipline: disciplineName,
-                  branch: branchName,
-                },
-                "individual"
-              );
+              // await sendClassReminderEmail(
+              //   email,
+              //   name ?? "Usuario",
+              //   {
+              //     day: dayStr,
+              //     hour: hourStr,
+              //     discipline: disciplineName,
+              //     branch: branchName,
+              //   },
+              //   "individual"
+              // );
 
               console.log(`📧 Recordatorio enviado a ${email}`);
             } catch (err) {
@@ -407,17 +406,17 @@ cron.schedule("0 8 * * *", async () => {
         updatePromises.push(
           (async () => {
             try {
-              await sendClassReminderEmail(
-                user.email,
-                user.name ?? "Usuario",
-                {
-                  day: "Próximas clases",
-                  hour: "¡Atención!",
-                  discipline: `Te queda${user.classesAvailable === 1 ? "" : "n"} ${user.classesAvailable} clase${user.classesAvailable === 1 ? "" : "s"}`,
-                  branch: "¡Aprovecha antes que se acabe tu paquete!",
-                },
-                "individual"
-              );
+              // await sendClassReminderEmail(
+              //   user.email,
+              //   user.name ?? "Usuario",
+              //   {
+              //     day: "Próximas clases",
+              //     hour: "¡Atención!",
+              //     discipline: `Te queda${user.classesAvailable === 1 ? "" : "n"} ${user.classesAvailable} clase${user.classesAvailable === 1 ? "" : "s"}`,
+              //     branch: "¡Aprovecha antes que se acabe tu paquete!",
+              //   },
+              //   "individual"
+              // );
 
               await prisma.transaction.updateMany({
                 where: { id: { in: user.transactions.map((t) => t.id) } },
@@ -478,11 +477,11 @@ cron.schedule("30 8 * * *", async () => {
         updatePromises.push(
           (async () => {
             try {
-              await sendPackageExpiryWarningEmail(
-                tx.user!.email,
-                tx.user!.name ?? "Usuario",
-                daysLeft
-              );
+              // await sendPackageExpiryWarningEmail(
+              //   tx.user!.email,
+              //   tx.user!.name ?? "Usuario",
+              //   daysLeft
+              // );
 
               await prisma.transaction.update({
                 where: { id: tx.id },
@@ -567,13 +566,13 @@ cron.schedule("0 * * * *", async () => {
             });
           });
 
-          if (!wl.rejectedEmailSent) {
-            await sendWaitlistRejectedEmail(
-              wl.user!.email,
-              wl.user!.name ?? "Usuario",
-              String(wl.sessionId)
-            );
-          }
+          // if (!wl.rejectedEmailSent) {
+          //   await sendWaitlistRejectedEmail(
+          //     wl.user!.email,
+          //     wl.user!.name ?? "Usuario",
+          //     String(wl.sessionId)
+          //   );
+          // }
 
           processed++;
         })()

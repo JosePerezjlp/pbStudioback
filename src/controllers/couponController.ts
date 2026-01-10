@@ -405,6 +405,66 @@ export const getAllCouponsController = async (
   }
 };
 
+export const getCouponsWithRemainingUsesController = async (
+  _req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const today = normalizeToday();
+
+    const coupons = await prisma.coupon.findMany({
+      where: {
+        // Solo cupones dentro de su vigencia
+        dateStart: { lte: today },
+        dateEnd: { gte: today },
+      },
+      orderBy: { createdAt: "desc" },
+      include: {
+        couponPackages: {
+          include: {
+            package: true,
+          },
+        },
+      },
+    });
+
+    const couponsWithQuota = coupons
+      .map((coupon) => {
+        const isUnlimited = coupon.usesTotal >= 999999;
+        const remainingUses = isUnlimited
+          ? null
+          : coupon.usesTotal - coupon.used;
+
+        const hasQuota = isUnlimited || (remainingUses ?? 0) > 0;
+
+        if (!hasQuota) {
+          return null;
+        }
+
+        const isUniversal = coupon.couponPackages.length === 0;
+
+        return {
+          ...coupon,
+          remainingUses,
+          isUnlimited,
+          isUniversal,
+          packages: coupon.couponPackages.map((cp) => cp.package),
+        };
+      })
+      .filter((item) => item !== null);
+
+    res.status(200).json({
+      coupons: couponsWithQuota,
+      total: couponsWithQuota.length,
+    });
+  } catch (error) {
+    console.error("Error al obtener cupones con cupos disponibles:", error);
+    res
+      .status(500)
+      .json({ error: "Error interno", details: String(error) });
+  }
+};
+
 export const getCouponByIdController = async (
   req: Request,
   res: Response
