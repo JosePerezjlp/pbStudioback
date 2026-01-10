@@ -571,8 +571,43 @@ export const updateMyProfileController = async (
 export const adminResetPasswordController = async (
   req: Request,
   res: Response
-) => {
-  res.status(501).json({ message: "Not implemented" });
+): Promise<void> => {
+  try {
+    const { userId } = req.params as { userId: string };
+    const { newPassword } = req.body as { newPassword?: string };
+
+    const id = Number(userId);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: "ID de usuario inválido" });
+      return;
+    }
+
+    // Si no nos mandan una contraseña explícita, generamos una temporal
+    let passwordToSet = newPassword;
+    if (!passwordToSet || typeof passwordToSet !== "string") {
+      // 8 caracteres hex aleatorios (4 bytes)
+      passwordToSet = Math.random().toString(36).slice(-8);
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(passwordToSet, salt);
+
+    const user = await prisma.user.update({
+      where: { id },
+      data: { password: hashedPassword },
+      select: { id: true, email: true, name: true },
+    });
+
+    res.status(200).json({
+      message: "Contraseña restablecida correctamente",
+      user,
+      // Si la contraseña fue generada por el backend, la devolvemos
+      generatedPassword: newPassword ? undefined : passwordToSet,
+    });
+  } catch (error) {
+    console.error("Error en adminResetPasswordController:", error);
+    res.status(500).json({ error: "Error al restablecer la contraseña" });
+  }
 };
 export const enableUserController = async (req: Request, res: Response) => {
   res.status(501).json({ message: "Not implemented" });

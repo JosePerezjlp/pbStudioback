@@ -26,8 +26,20 @@ export const requestResetCode = async (
       return;
     }
 
-    // Parse roles if needed, or just check generic logic
-    const roles = user.roles ? JSON.parse(user.roles) : [];
+    // Parse roles de forma segura (soporta datos legacy no-JSON)
+    let roles: string[] = [];
+    if (typeof user.roles === "string" && user.roles.trim()) {
+      try {
+        const parsed = JSON.parse(user.roles);
+        if (Array.isArray(parsed)) {
+          roles = parsed.map(String);
+        }
+      } catch {
+        // Si no es JSON (por ejemplo, formato PHP serializado), lo tratamos como no-admin
+        roles = [];
+      }
+    }
+
     if (roles.includes("admin")) {
       res.status(403).json({ error: "No permitido para administradores" });
       return;

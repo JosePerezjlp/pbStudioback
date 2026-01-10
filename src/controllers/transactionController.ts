@@ -80,6 +80,68 @@ const formatTransactionRecord = (t: any) => ({
   couponDiscount: t.couponDiscount ? Number(t.couponDiscount) : null,
 });
 
+/* Construye el objeto `where` para filtrar transacciones a partir de query params */
+const buildTransactionWhere = (query: any) => {
+  const {
+    status,
+    method,
+    branch,
+    packageId,
+    startDate,
+    endDate,
+    userId,
+    userEmail,
+    userName,
+  } = query;
+
+  const where: any = {};
+
+  // Status mapping (Frontend envía string "paid", etc.)
+  if (status) {
+    if (status === "paid") where.status = 1;
+    else if (status === "pending") where.status = 0;
+    else if (!isNaN(Number(status))) where.status = Number(status);
+  }
+
+  if (method) where.chargeMethod = method; // "cash", "terminal", "paypal"
+  if (branch) where.branchOfficeId = Number(branch);
+  if (packageId) where.packageId = Number(packageId);
+  if (userId) where.userId = Number(userId);
+
+  // Fechas
+  if (startDate || endDate) {
+    where.createdAt = {};
+
+    if (startDate) {
+      const start = new Date(String(startDate));
+      if (!isNaN(start.getTime())) {
+        where.createdAt.gte = normalizeStartDate(start);
+      }
+    }
+
+    if (endDate) {
+      const end = new Date(String(endDate));
+      if (!isNaN(end.getTime())) {
+        where.createdAt.lte = normalizeEndDate(end);
+      }
+    }
+  }
+
+  // Búsqueda por Email o Nombre (Join con User)
+  if (userEmail || userName) {
+    where.user = {};
+    if (userEmail) where.user.email = { contains: userEmail };
+    if (userName) {
+      where.user.OR = [
+        { name: { contains: userName } },
+        { lastname: { contains: userName } },
+      ];
+    }
+  }
+
+  return where;
+};
+
 /* ===============================================================
   1)  CASH – Registro manual
   =============================================================== */
@@ -188,8 +250,9 @@ export const createCashTransactionController = async (
     let finalCoupon: any = null;
     let finalAmount = Number(amount);
     let couponDiscountAmount = 0;
+    let isAutoCoupon = false;
 
-    // 1. Buscar cupón explícito
+    // 1. Buscar cupón explícito (enviado por el frontend)
     if (couponId || couponCode) {
       finalCoupon = await prisma.coupon.findFirst({
         where: {
@@ -204,11 +267,27 @@ export const createCashTransactionController = async (
       });
     }
 
-    // 2. Si no hay cupón explícito, buscar cupón automático vinculado al paquete?
-    // En SQL, la relación es CouponPackage. No hay un campo directo 'couponId' en Package para "automático".
-    // Pero en Firestore sí lo había. Asumiremos que si no se envía cupón, no hay descuento automático
-    // salvo que implementemos lógica de búsqueda inversa. Por simplicidad y migración directa:
-    // Si el usuario no envía cupón, no aplicamos (a menos que el frontend lo envíe).
+    // 2. Si no hay cupón explícito, intentar detectar un cupón automático
+    //    vinculado al paquete (descuento ya reflejado en specialPrice).
+    if (!finalCoupon && pkg.specialPrice && pkg.discountInfo) {
+      const auto = await prisma.coupon.findFirst({
+        where: {
+          applySpecialPrice: true,
+          name: String(pkg.discountInfo),
+          couponPackages: {
+            some: { packageId: pkg.id },
+          },
+        },
+        include: {
+          couponPackages: true,
+        },
+      });
+
+      if (auto) {
+        finalCoupon = auto;
+        isAutoCoupon = true;
+      }
+    }
 
     if (finalCoupon) {
       const today = normalizeToday();
@@ -264,26 +343,31 @@ export const createCashTransactionController = async (
       }
 
       // Calcular descuento
-      // Schema: discount Decimal (4,2). Es porcentaje?
-      // Firestore logic: (baseAmount * discount) / 100.
+      // Schema: discount Decimal (4,2). Es porcentaje.
       const discountVal = Number(finalCoupon.discount);
 
-      // Special Price logic from Firestore:
-      // "Si es cupón automático, el descuento ya está en specialPrice"
-      // "applyToSpecialPrice" logic.
-      // En SQL schema: Package tiene specialPrice. Coupon tiene applySpecialPrice boolean.
+      if (isAutoCoupon) {
+        // Cupón automático: el precio rebajado ya viene calculado en el frontend
+        // (y usualmente coincide con specialPrice). Solo registramos el monto final
+        // y la diferencia respecto al precio base, pero no aplicamos el porcentaje
+        // otra vez para evitar un doble descuento.
+        const basePrice = Number(pkg.amount);
+        finalAmount = Number(amount);
+        couponDiscountAmount = Math.max(0, basePrice - finalAmount);
+      } else {
+        // Cupón ingresado explícitamente: aplicamos el porcentaje sobre el monto base
+        let basePrice = Number(pkg.amount);
+        if (
+          pkg.specialPrice &&
+          Number(pkg.specialPrice) > 0 &&
+          finalCoupon.applySpecialPrice
+        ) {
+          basePrice = Number(pkg.specialPrice);
+        }
 
-      let basePrice = Number(pkg.amount);
-      if (
-        pkg.specialPrice &&
-        Number(pkg.specialPrice) > 0 &&
-        finalCoupon.applySpecialPrice
-      ) {
-        basePrice = Number(pkg.specialPrice);
+        couponDiscountAmount = (basePrice * discountVal) / 100;
+        finalAmount = Math.max(0, basePrice - couponDiscountAmount);
       }
-
-      couponDiscountAmount = (basePrice * discountVal) / 100;
-      finalAmount = Math.max(0, basePrice - couponDiscountAmount);
     } else {
       // Sin cupón, usar precio base o especial si existe?
       // Firestore logic usaba 'amount' recibido del body, pero validaba contra specialPrice si aplicaba.
@@ -430,58 +514,17 @@ export const getAllTransactionsController = async (
     const limit = Number(limitStr) > 0 ? Number(limitStr) : 50;
     const page = Number(pageStr) > 0 ? Number(pageStr) : 1;
     const skip = (page - 1) * limit;
-
-    const where: any = {};
-
-    // Status mapping (Frontend sends string "paid", etc. We map to Int)
-    // Asumimos: paid=1, pending=0, rejected=2, cancelled=3 (ejemplo)
-    // Si el frontend envía texto, intentamos mapear. Si envía numero, usamos directo.
-    if (status) {
-      if (status === "paid") where.status = 1;
-      else if (status === "pending") where.status = 0;
-      else if (!isNaN(Number(status))) where.status = Number(status);
-    }
-
-    if (method) where.chargeMethod = method; // "cash", "terminal", "paypal"
-    if (branch) where.branchOfficeId = Number(branch);
-    if (packageId) where.packageId = Number(packageId);
-    if (userId) where.userId = Number(userId);
-
-    // Fechas: validar correctamente y evitar errores 500 por formato inválido
-    if (startDate || endDate) {
-      where.createdAt = {};
-
-      if (startDate) {
-        const start = new Date(String(startDate));
-        if (isNaN(start.getTime())) {
-          res.status(400).json({ error: "startDate inválida" });
-          return;
-        }
-        where.createdAt.gte = normalizeStartDate(start);
-      }
-
-      if (endDate) {
-        const end = new Date(String(endDate));
-        if (isNaN(end.getTime())) {
-          res.status(400).json({ error: "endDate inválida" });
-          return;
-        }
-        where.createdAt.lte = normalizeEndDate(end);
-      }
-    }
-
-    // Búsqueda por Email o Nombre (Join con User)
-    if (userEmail || userName) {
-      where.user = {};
-      if (userEmail) where.user.email = { contains: userEmail }; // MySQL default case-insensitive often, but better check collation
-      if (userName) {
-        // Prisma no soporta búsqueda full-text nativa simple en todos los modos, usamos contains OR
-        where.user.OR = [
-          { name: { contains: userName } },
-          { lastname: { contains: userName } },
-        ];
-      }
-    }
+    const where = buildTransactionWhere({
+      status,
+      method,
+      branch,
+      packageId,
+      startDate,
+      endDate,
+      userId,
+      userEmail,
+      userName,
+    });
 
     // Query
     const [transactions, total] = await prisma.$transaction([
@@ -587,12 +630,83 @@ export const getUserTransactionsController = async (
   req: AuthRequest,
   res: Response
 ): Promise<void> => {
-  if (req.path === "/my" && req.user) {
-    req.query.userId = String(req.user.id);
-  } else if (req.params.userId) {
-    req.query.userId = req.params.userId;
+  try {
+    // Determinar el usuario objetivo
+    let effectiveUserId: number | null = null;
+
+    if (req.path === "/my" && req.user) {
+      effectiveUserId = req.user.id;
+    } else if (req.params.userId) {
+      const parsed = Number(req.params.userId);
+      if (!Number.isNaN(parsed)) effectiveUserId = parsed;
+    }
+
+    if (!effectiveUserId) {
+      res.status(400).json({ error: "Usuario no válido para transacciones" });
+      return;
+    }
+
+    const {
+      limit: limitStr,
+      page: pageStr,
+      status,
+      method,
+      branch,
+      packageId,
+      startDate,
+      endDate,
+      userEmail,
+      userName,
+    } = req.query as any;
+
+    const limit = Number(limitStr) > 0 ? Number(limitStr) : 50;
+    const page = Number(pageStr) > 0 ? Number(pageStr) : 1;
+    const skip = (page - 1) * limit;
+
+    const where = buildTransactionWhere({
+      status,
+      method,
+      branch,
+      packageId,
+      startDate,
+      endDate,
+      userId: effectiveUserId,
+      userEmail,
+      userName,
+    });
+
+    const [transactions, total] = await prisma.$transaction([
+      prisma.transaction.findMany({
+        where,
+        take: limit,
+        skip,
+        orderBy: { createdAt: "desc" },
+        include: {
+          user: {
+            select: { id: true, name: true, lastname: true, email: true },
+          },
+          package: {
+            select: { id: true, type: true, totalClasses: true },
+          },
+        },
+      }),
+      prisma.transaction.count({ where }),
+    ]);
+
+    const formatted = transactions.map((t) => formatTransactionRecord(t));
+
+    res.status(200).json({
+      transactions: formatted,
+      total,
+      pages: Math.ceil(total / limit),
+      page,
+      limit,
+      hasMore: skip + transactions.length < total,
+    });
+  } catch (err) {
+    console.error("❌ Error listando transacciones de usuario:", err);
+    res.status(500).json({ error: "Error al obtener transacciones del usuario" });
   }
-  await getAllTransactionsController(req, res);
 };
 
 export const cancelTransactionController = async (

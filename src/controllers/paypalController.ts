@@ -217,8 +217,9 @@ export const capturePayPalOrderController = async (
 
     /* ---------- Manejar cupones ---------- */
     let finalCoupon: any = null;
+    let isAutoCoupon = false;
 
-    // 1. Buscar cupón
+    // 1. Buscar cupón explícito
     if (couponId || couponCode) {
       finalCoupon = await prisma.coupon.findFirst({
         where: {
@@ -229,6 +230,26 @@ export const capturePayPalOrderController = async (
         },
         include: { couponPackages: true },
       });
+    }
+
+    // 2. Si no hay cupón explícito, intentar detectar un cupón automático
+    //    asociado al paquete (specialPrice aplicado en el frontend).
+    if (!finalCoupon && pkg.specialPrice && pkg.discountInfo) {
+      const auto = await prisma.coupon.findFirst({
+        where: {
+          applySpecialPrice: true,
+          name: String(pkg.discountInfo),
+          couponPackages: {
+            some: { packageId: pkg.id },
+          },
+        },
+        include: { couponPackages: true },
+      });
+
+      if (auto) {
+        finalCoupon = auto;
+        isAutoCoupon = true;
+      }
     }
 
     // Validar cupón si existe

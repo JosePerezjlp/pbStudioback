@@ -149,14 +149,51 @@ export const getActivePackagesController = async (
 ): Promise<void> => {
   try {
     // En SQL filtramos directamente por isActive=1 (activo)
+    // e incluimos la relación con cupones para saber si el descuento automático sigue vigente.
     const packages = await prisma.package.findMany({
       where: {
         isActive: 1,
       },
       orderBy: { createdAt: "desc" },
+      include: {
+        couponPackages: {
+          include: { coupon: true },
+        },
+      },
     });
 
-    const mappedPackages = packages.map(mapPackageToResponse);
+    const today = new Date();
+
+    const mappedPackages = packages.map((pkg: any) => {
+      // Un paquete puede estar ligado a uno o varios cupones.
+      // Consideramos que el descuento automático está activo
+      // sólo si al menos uno de esos cupones sigue vigente
+      // por fecha y por límite de usos.
+      const hasActiveCoupon = (pkg.couponPackages || []).some((cp: any) => {
+        const c = cp.coupon;
+        if (!c) return false;
+
+        const startOk = !c.dateStart || today >= new Date(c.dateStart);
+        const endOk = !c.dateEnd || today <= new Date(c.dateEnd);
+
+        const unlimited = !c.usesTotal || c.usesTotal <= 0;
+        const hasUsesLeft = unlimited || c.used < c.usesTotal;
+
+        return startOk && endOk && hasUsesLeft;
+      });
+
+      const base = mapPackageToResponse(pkg);
+
+      if (!hasActiveCoupon) {
+        return {
+          ...base,
+          specialPrice: null,
+          discountInfo: null,
+        };
+      }
+
+      return base;
+    });
 
     res
       .status(200)

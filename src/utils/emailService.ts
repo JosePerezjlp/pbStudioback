@@ -4,9 +4,9 @@ import { prisma } from "../config/prisma";
 
 const resend = new Resend(process.env.RESEND_API_KEY); // usa variables de entorno en producción
 
-// Flag global para deshabilitar envíos reales de correo
-// Ahora lo dejamos en false para habilitar Resend en general.
-const EMAIL_SENDING_DISABLED = false;
+// Flag global para deshabilitar envíos reales de correo.
+// De momento lo dejamos en true para NO enviar nada por Resend.
+const EMAIL_SENDING_DISABLED = true;
 
 // Helper centralizado: respeta el flag y evita tocar cada llamada a Resend
 const safeSendEmail = async (
