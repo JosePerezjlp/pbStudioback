@@ -6,7 +6,7 @@ const resend = new Resend(process.env.RESEND_API_KEY); // usa variables de entor
 
 // Flag global para deshabilitar envíos reales de correo.
 // De momento lo dejamos en true para NO enviar nada por Resend.
-const EMAIL_SENDING_DISABLED = true;
+const EMAIL_SENDING_DISABLED = false;
 
 // Helper centralizado: respeta el flag y evita tocar cada llamada a Resend
 const safeSendEmail = async (
