@@ -130,7 +130,7 @@ export const listAttendancesByClass = async (req: Request, res: Response): Promi
     const reservations = await prisma.reservation.findMany({
     where: {
       sessionId: sId,
-      isAvailable: true
+      cancellationAt: null, // mismas reglas que clases: solo reservas no canceladas
     },
     select: {
       userId: true,
