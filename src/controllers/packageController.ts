@@ -122,8 +122,7 @@ export const createPackageController = async (
         isActive: flags.isActive ?? 1,
         isUnlimited: Boolean(isUnlimited),
         altText: altText ? String(altText) : null,
-        newUser:
-          rawNewUser !== undefined && Number(rawNewUser) ? 1 : 0,
+        newUser: rawNewUser !== undefined && Number(rawNewUser) ? 1 : 0,
         public: isPublic !== undefined ? Boolean(isPublic) : false,
         specialPrice: specialPrice ? Number(specialPrice) : null,
         discountInfo: discountInfo ? String(discountInfo) : null,

@@ -517,7 +517,9 @@ export const changeReservationController = async (
   const newSessionId = Number(newClassId);
 
   if (!id || Number.isNaN(id) || !newSessionId || Number.isNaN(newSessionId)) {
-    res.status(400).json({ error: "reservationId y newClassId son requeridos" });
+    res
+      .status(400)
+      .json({ error: "reservationId y newClassId son requeridos" });
     return;
   }
 

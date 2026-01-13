@@ -258,9 +258,18 @@ export const sendPackagePurchaseEmail = async (
     ? formatDateVisibleMx(expiresAt.slice(0, 10))
     : "Sin vencimiento";
 
-  const formattedModality = modality
-    ? modality.charAt(0).toUpperCase() + modality.slice(1)
-    : packageName;
+  // Normalizar modalidad a "Grupal" / "Individual"
+  const formattedModality = (() => {
+    if (!modality) return packageName;
+    const t = modality.toString().toLowerCase();
+    if (t === "g" || t.includes("group") || t.includes("grupal")) {
+      return "Grupal";
+    }
+    if (t === "i" || t.includes("individual")) {
+      return "Individual";
+    }
+    return modality.charAt(0).toUpperCase() + modality.slice(1);
+  })();
 
   try {
     await safeSendEmail({

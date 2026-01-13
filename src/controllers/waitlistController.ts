@@ -297,7 +297,7 @@ export const getAllWaitlistsController = async (
     const enriched = waitlists.map((wl) => {
       const s = wl.session;
       const normalizedType = s
-        ? normalizeClassType(s.type) ?? ClassType.INDIVIDUAL
+        ? (normalizeClassType(s.type) ?? ClassType.INDIVIDUAL)
         : null;
       return {
         id: `${wl.userId}_${wl.sessionId}`,
@@ -314,7 +314,9 @@ export const getAllWaitlistsController = async (
               hour: s.timeStart, // Format? Old was "HH:mm"
               disciplineName: s.discipline?.name || "",
               instructorFirstName:
-                s.instructor?.profile?.firstname || s.instructor?.username || "",
+                s.instructor?.profile?.firstname ||
+                s.instructor?.username ||
+                "",
               branch: s.branchOffice?.id,
               type: normalizedType,
             }

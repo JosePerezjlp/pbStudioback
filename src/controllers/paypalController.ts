@@ -372,9 +372,10 @@ export const capturePayPalOrderController = async (
       await sendPackagePurchaseEmail(
         user.email,
         user.name,
-        `Paquete ${pkg.type}`, // Simple formatting
+        `Paquete ${pkg.type}`, // Nombre comercial, se mantiene
         pkg.totalClasses,
-        expirationAt ? expirationAt.toISOString() : null
+        expirationAt ? expirationAt.toISOString() : null,
+        pkg.type
       );
     } catch (e) {
       console.error("Error enviando email de compra:", e);

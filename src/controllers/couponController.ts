@@ -459,9 +459,7 @@ export const getCouponsWithRemainingUsesController = async (
     });
   } catch (error) {
     console.error("Error al obtener cupones con cupos disponibles:", error);
-    res
-      .status(500)
-      .json({ error: "Error interno", details: String(error) });
+    res.status(500).json({ error: "Error interno", details: String(error) });
   }
 };
 

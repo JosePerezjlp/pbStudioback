@@ -460,7 +460,10 @@ export class ReservationService {
 
         if (session && user && user.email) {
           const dateStr = session.dateStart.toISOString().slice(0, 10);
-          const classInfo = `${session.discipline?.name || "Clase"} - ${formatDateVisibleMx(dateStr)} ${session.timeStart}`;
+          const timeStr = DateTime.fromJSDate(session.timeStart)
+            .setZone(TIMEZONE)
+            .toFormat("HH:mm");
+          const classInfo = `${session.discipline?.name || "Clase"} - ${formatDateVisibleMx(dateStr)} ${timeStr}`;
           const typeClass = session.type;
           const seatNumber = result.placeNumber;
 
@@ -618,7 +621,10 @@ export class ReservationService {
 
         if (user?.email && session) {
           const dateStr = session.dateStart.toISOString().slice(0, 10);
-          const classInfo = `${session.discipline?.name || "Clase"} - ${formatDateVisibleMx(dateStr)} ${session.timeStart}`;
+          const timeStr = DateTime.fromJSDate(session.timeStart)
+            .setZone(TIMEZONE)
+            .toFormat("HH:mm");
+          const classInfo = `${session.discipline?.name || "Clase"} - ${formatDateVisibleMx(dateStr)} ${timeStr}`;
           const classType = session.type;
 
           // Fire-and-forget: no bloquea la respuesta
@@ -657,8 +663,14 @@ export class ReservationService {
   async changeReservation(
     params: ChangeReservationParams
   ): Promise<ReservationResult> {
-    const { reservationId, userId, newSessionId, newSeat, ipAddress, userAgent } =
-      params;
+    const {
+      reservationId,
+      userId,
+      newSessionId,
+      newSeat,
+      ipAddress,
+      userAgent,
+    } = params;
 
     try {
       const result = await prisma.$transaction(async (tx) => {

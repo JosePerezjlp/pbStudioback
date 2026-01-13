@@ -469,8 +469,8 @@ export const createCashTransactionController = async (
         targetUser.name,
         `Paquete ${formatPackageType(pkg.type)}`,
         pkg.totalClasses,
-        expirationAt ? expirationAt.toISOString() : null
-        // pkg.modality // No existe en schema SQL Package, omitir o buscar alternativa
+        expirationAt ? expirationAt.toISOString() : null,
+        pkg.type
       );
     } catch (e) {
       console.error("Error enviando email de compra:", e);
