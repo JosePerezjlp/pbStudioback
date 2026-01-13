@@ -66,25 +66,48 @@ export const getAttendanceByUserClass = async (req: Request, res: Response): Pro
     }
 
     const reservation = await prisma.reservation.findFirst({
-        where: {
-            userId: uId,
-            sessionId: sId
+    where: {
+      userId: uId,
+      sessionId: sId,
+      isAvailable: true
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          lastname: true,
+          email: true,
+          phone: true
         }
-    });
+      }
+    }
+  });
 
     if (!reservation) {
       res.status(404).json({ error: "Asistencia no encontrada", code: "not-found" });
       return;
     }
 
-    // Simular estructura de respuesta anterior si es necesario, o devolver objeto
+    // Simular estructura de respuesta anterior y agregar información del usuario y reserva
     res.status(200).json({
-        id: `${sId}_${uId}`, // Fake ID compatible
-        userId: userId,
-        classId: classId,
-        attended: reservation.attended,
-        updatedAt: reservation.updatedAt
-    });
+    id: `${sId}_${uId}`, // Fake ID compatible
+    userId: uId,
+    classId: sId,
+    attended: reservation.attended,
+    updatedAt: reservation.updatedAt,
+    placeNumber: reservation.placeNumber,
+    reservationCreatedAt: reservation.createdAt,
+    user: reservation.user
+      ? {
+        id: reservation.user.id,
+        name: reservation.user.name,
+        lastname: reservation.user.lastname,
+        email: reservation.user.email,
+        phone: reservation.user.phone
+      }
+      : null
+  });
   } catch (error) {
     console.error("Error al obtener asistencia:", error);
     res.status(500).json({
@@ -105,22 +128,47 @@ export const listAttendancesByClass = async (req: Request, res: Response): Promi
     }
 
     const reservations = await prisma.reservation.findMany({
-        where: { sessionId: sId },
+    where: {
+      sessionId: sId,
+      isAvailable: true
+    },
+    select: {
+      userId: true,
+      sessionId: true,
+      attended: true,
+      updatedAt: true,
+      createdAt: true,
+      placeNumber: true,
+      user: {
         select: {
-            userId: true,
-            sessionId: true,
-            attended: true,
-            updatedAt: true
+          id: true,
+          name: true,
+          lastname: true,
+          email: true,
+          phone: true
         }
-    });
+      }
+    }
+  });
 
-    const data = reservations.map(r => ({
-        id: `${r.sessionId}_${r.userId}`,
-        userId: r.userId,
-        classId: r.sessionId,
-        attended: r.attended,
-        updatedAt: r.updatedAt
-    }));
+  const data = reservations.map(r => ({
+    id: `${r.sessionId}_${r.userId}`,
+    userId: r.userId,
+    classId: r.sessionId,
+    attended: r.attended,
+    updatedAt: r.updatedAt,
+    placeNumber: r.placeNumber,
+    reservationCreatedAt: r.createdAt,
+    user: r.user
+      ? {
+        id: r.user.id,
+        name: r.user.name,
+        lastname: r.user.lastname,
+        email: r.user.email,
+        phone: r.user.phone
+      }
+      : null
+  }));
 
     res.status(200).json({ attendances: data });
   } catch (error) {
