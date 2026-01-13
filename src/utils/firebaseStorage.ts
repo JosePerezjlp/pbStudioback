@@ -11,7 +11,9 @@ function getBucket(): any {
   const storageBucket = process.env.FIREBASE_STORAGE_BUCKET;
 
   if (!credentialsJson || !storageBucket) {
-    throw new Error("Firebase Storage no está configurado (FIREBASE_CREDENTIALS_JSON / FIREBASE_STORAGE_BUCKET)");
+    throw new Error(
+      "Firebase Storage no está configurado (FIREBASE_CREDENTIALS_JSON / FIREBASE_STORAGE_BUCKET)"
+    );
   }
 
   const serviceAccount = JSON.parse(credentialsJson);
