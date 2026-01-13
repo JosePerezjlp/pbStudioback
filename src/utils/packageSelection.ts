@@ -89,12 +89,12 @@ const sortByExpiryAssignedUnlimited = (a: Row, b: Row): number => {
  * Selecciona un paquete que:
  *   - esté activo
  *   - no esté vencido
- *   - coincida con la modalidad (normalizada) y tenga saldo, o sea ilimitado
- * Prioridad:
- *   A) match exacto por tipo (orden: vence antes → assignedAt más antiguo → finito antes que ilimitado)
- *   B) si no hay match, fallback a cualquier finito con saldo (mismo orden)
+ *   - coincida con la modalidad (normalizada) de la clase
+ *   - tenga saldo o sea ilimitado
  *
- * Nota: tu controlador ya maneja ilimitados aparte (límite diario), pero soportamos ambos escenarios.
+ * IMPORTANTE: ya **no** hay fallback a "cualquier paquete".
+ * Si el usuario sólo tiene paquetes grupales y la clase es individual (o viceversa),
+ * se devuelve null para que el servicio responda NO_COMPATIBLE_PACKAGE.
  */
 export const selectPackageForClass = (
   packages: UserPackage[],
@@ -105,23 +105,13 @@ export const selectPackageForClass = (
     .filter(({ pkg }) => pkg.active && !isExpired(pkg.expiresAt))
     .filter(({ pkg }) => pkg.isUnlimited || remainingOf(pkg) > 0);
 
-  // 1) candidatos con match exacto por tipo
+  // Candidatos que coinciden exactamente con el tipo de clase
   const exact = rows.filter(
     ({ pkg }) => normalizePackageType(pkg.type) === classType
   );
-  if (exact.length > 0) {
-    exact.sort(sortByExpiryAssignedUnlimited);
-    return exact[0];
-  }
 
-  // 2) Fallback práctico: cualquier paquete finito con saldo
-  const finiteWithBalance = rows.filter(({ pkg }) => !pkg.isUnlimited);
-  if (finiteWithBalance.length > 0) {
-    finiteWithBalance.sort(sortByExpiryAssignedUnlimited);
-    return finiteWithBalance[0];
-  }
+  if (exact.length === 0) return null;
 
-  // 3) Si no hay finitos, dejamos que el controlador trate ilimitados según su propia lógica
-  const anyUnlimited = rows.find(({ pkg }) => pkg.isUnlimited);
-  return anyUnlimited ?? null;
+  exact.sort(sortByExpiryAssignedUnlimited);
+  return exact[0];
 };

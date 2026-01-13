@@ -34,6 +34,15 @@ export interface CancelReservationParams {
   userAgent?: string;
 }
 
+export interface ChangeReservationParams {
+  reservationId: number;
+  userId: number;
+  newSessionId: number;
+  newSeat?: number | null;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
 export interface ReservationResult {
   success: boolean;
   reservationId?: number;
@@ -59,6 +68,57 @@ const CANCELLATION_WINDOW = {
 const TIMEZONE = "America/Mexico_City";
 
 /* ==================== HELPERS PRIVADOS ==================== */
+type CancellationConfig = {
+  individual: number;
+  groups: number;
+  changeIndividual?: number;
+  changeGroups?: number;
+};
+
+const DEFAULT_CANCELLATION_CONFIG: CancellationConfig = {
+  individual: CANCELLATION_WINDOW.INDIVIDUAL,
+  groups: CANCELLATION_WINDOW.GROUPS,
+};
+
+async function getCancellationConfig(tx?: any): Promise<CancellationConfig> {
+  try {
+    const client: any = tx || prisma;
+    const config = await client.configuration.findFirst({
+      where: { module: "cancellation_times" },
+    });
+
+    if (!config) return DEFAULT_CANCELLATION_CONFIG;
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(config.data);
+    } catch {
+      return DEFAULT_CANCELLATION_CONFIG;
+    }
+
+    const individual = Number(parsed.individual);
+    const groups = Number(parsed.groups);
+
+    return {
+      individual: Number.isFinite(individual)
+        ? individual
+        : DEFAULT_CANCELLATION_CONFIG.individual,
+      groups: Number.isFinite(groups)
+        ? groups
+        : DEFAULT_CANCELLATION_CONFIG.groups,
+      changeIndividual: parsed.changeIndividual
+        ? Number(parsed.changeIndividual)
+        : undefined,
+      changeGroups: parsed.changeGroups
+        ? Number(parsed.changeGroups)
+        : undefined,
+    };
+  } catch (e) {
+    console.warn("No se pudo leer cancellation_times, usando defaults", e);
+    return DEFAULT_CANCELLATION_CONFIG;
+  }
+}
+
 function diffMinutesFromNow(dateStr: string, timeStr: string): number {
   const now = DateTime.now().setZone(TIMEZONE);
   const classDateTime = DateTime.fromISO(`${dateStr}T${timeStr}`, {
@@ -67,22 +127,26 @@ function diffMinutesFromNow(dateStr: string, timeStr: string): number {
   return classDateTime.diff(now, "minutes").minutes;
 }
 
-function canCancelReservation(
+async function canCancelReservation(
   sessionDateStart: Date,
   sessionTimeStart: Date,
-  sessionType: string
-): boolean {
+  sessionType: string,
+  tx?: any
+): Promise<{ allowed: boolean; classType: ClassType; windowMinutes: number }> {
   const classType = normalizeClassType(sessionType) ?? ClassType.INDIVIDUAL;
+  const cfg = await getCancellationConfig(tx);
+
   const windowMinutes =
-    classType === ClassType.GROUPS
-      ? CANCELLATION_WINDOW.GROUPS
-      : CANCELLATION_WINDOW.INDIVIDUAL;
+    classType === ClassType.GROUPS ? cfg.groups : cfg.individual;
 
   const dateStr = sessionDateStart.toISOString().slice(0, 10);
   const timeStr = sessionTimeStart.toISOString().slice(11, 19);
   const minutesUntilClass = diffMinutesFromNow(dateStr, timeStr);
 
-  return minutesUntilClass > windowMinutes;
+  // Permitimos cancelar mientras falten al menos "windowMinutes" minutos
+  const allowed = minutesUntilClass >= windowMinutes;
+
+  return { allowed, classType, windowMinutes };
 }
 
 async function getUserActivePackages(
@@ -464,20 +528,22 @@ export class ReservationService {
           throw new Error("Esta reserva ya fue cancelada");
         }
 
-        // 2. Verificar ventana de cancelación
-        if (
-          !canCancelReservation(
-            reservation.session!.dateStart,
-            reservation.session!.timeStart,
-            reservation.session!.type
-          )
-        ) {
-          const classType =
-            normalizeClassType(reservation.session!.type) ??
-            ClassType.INDIVIDUAL;
-          const hours = classType === ClassType.GROUPS ? 12 : 24;
+        // 2. Verificar ventana de cancelación usando configuración dinámica
+        const cancelCheck = await canCancelReservation(
+          reservation.session!.dateStart,
+          reservation.session!.timeStart,
+          reservation.session!.type,
+          tx
+        );
+
+        if (!cancelCheck.allowed) {
+          const hours = cancelCheck.windowMinutes / 60;
+          const classTypeLabel =
+            cancelCheck.classType === ClassType.GROUPS
+              ? "grupales"
+              : "individuales";
           throw new Error(
-            `No se puede cancelar. Las clases ${classType === ClassType.GROUPS ? "grupales" : "individuales"} deben cancelarse con al menos ${hours} horas de anticipación`
+            `No se puede cancelar. Las clases ${classTypeLabel} deben cancelarse con al menos ${hours} horas de anticipación`
           );
         }
 
@@ -512,7 +578,11 @@ export class ReservationService {
       // 6. Procesar waitlist (si hay gente esperando) en una transacción separada
       try {
         await prisma.$transaction((tx) =>
-          this.processWaitlistForSession(result.sessionId!, tx)
+          this.processWaitlistForSession(
+            result.sessionId!,
+            tx,
+            (result as any).placeNumber ?? null
+          )
         );
       } catch (e) {
         console.error("Error procesando waitlist tras cancelación:", e);
@@ -580,11 +650,241 @@ export class ReservationService {
   }
 
   /**
+   * Cambia una reserva a otra clase
+   * - Respeta ventanas de cancelación/cambio (usa misma regla de cancelación por ahora)
+   * - Reutiliza el mismo paquete (transactionId) de la reserva original
+   */
+  async changeReservation(
+    params: ChangeReservationParams
+  ): Promise<ReservationResult> {
+    const { reservationId, userId, newSessionId, newSeat, ipAddress, userAgent } =
+      params;
+
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        // 1. Obtener reserva original
+        const original = await tx.reservation.findUnique({
+          where: { id: reservationId },
+          include: {
+            session: true,
+          },
+        });
+
+        if (!original) {
+          throw new Error("Reserva no encontrada");
+        }
+
+        if (original.userId !== userId) {
+          throw new Error("No tienes permiso para cambiar esta reserva");
+        }
+
+        if (original.cancellationAt !== null) {
+          throw new Error("Esta reserva ya fue cancelada");
+        }
+
+        // 2. Verificar ventana de cancelación/cambio sobre la clase original
+        const cancelCheck = await canCancelReservation(
+          original.session!.dateStart,
+          original.session!.timeStart,
+          original.session!.type,
+          tx
+        );
+
+        if (!cancelCheck.allowed) {
+          const hours = cancelCheck.windowMinutes / 60;
+          const classTypeLabel =
+            cancelCheck.classType === ClassType.GROUPS
+              ? "grupales"
+              : "individuales";
+          throw new Error(
+            `No se puede cambiar. Las clases ${classTypeLabel} deben cambiarse con al menos ${hours} horas de anticipación`
+          );
+        }
+
+        // 3. Obtener nueva sesión
+        const newSession = await tx.session.findUnique({
+          where: { id: newSessionId },
+          include: { discipline: true, exerciseRoom: true, branchOffice: true },
+        });
+
+        if (!newSession) {
+          throw new Error(ERROR_CODES.CLASS_NOT_FOUND);
+        }
+
+        // 4. Validar que la nueva clase no haya pasado
+        const now = DateTime.now().setZone(TIMEZONE);
+        const dateStr = newSession.dateStart.toISOString().slice(0, 10);
+        const timeStr = newSession.timeStart.toISOString().slice(11, 19);
+        const classDateTime = DateTime.fromISO(`${dateStr}T${timeStr}`, {
+          zone: TIMEZONE,
+        });
+
+        if (classDateTime <= now) {
+          throw new Error("No se puede reservar una clase que ya pasó");
+        }
+
+        // 5. Validar cupo y asiento en la nueva clase
+        const classType =
+          normalizeClassType(newSession.type) ?? ClassType.INDIVIDUAL;
+
+        // Cupos actuales
+        const currentReserved = await tx.reservation.count({
+          where: { sessionId: newSessionId, cancellationAt: null },
+        });
+
+        if (currentReserved >= newSession.exerciseRoomCapacity) {
+          throw new Error(ERROR_CODES.NO_SLOTS_AVAILABLE);
+        }
+
+        let assignedSeat: number;
+
+        if (classType === ClassType.GROUPS) {
+          const requestedSeat =
+            typeof newSeat === "number" ? newSeat : original.placeNumber;
+
+          if (!requestedSeat) {
+            throw new Error("Debe especificarse un asiento para la clase");
+          }
+
+          if (
+            requestedSeat < 1 ||
+            requestedSeat > newSession.exerciseRoomCapacity
+          ) {
+            throw new Error("El asiento seleccionado no existe en esta clase");
+          }
+
+          const seatTaken = await tx.reservation.findFirst({
+            where: {
+              sessionId: newSessionId,
+              placeNumber: requestedSeat,
+              cancellationAt: null,
+            },
+          });
+
+          if (seatTaken) {
+            throw new Error(ERROR_CODES.SEAT_ALREADY_TAKEN);
+          }
+
+          assignedSeat = requestedSeat;
+        } else {
+          assignedSeat = 1;
+        }
+
+        // 6. Marcar la reserva original como cancelada
+        const nowDate = new Date();
+        await tx.reservation.update({
+          where: { id: reservationId },
+          data: {
+            cancellationAt: nowDate,
+            updatedAt: nowDate,
+          },
+        });
+
+        if (original.transactionId) {
+          await updateTransactionCounters(original.transactionId, tx);
+        }
+
+        await tx.session.update({
+          where: { id: original.sessionId! },
+          data: { availableCapacity: { increment: 1 } },
+        });
+
+        // 7. Crear la nueva reserva reutilizando el mismo paquete
+        const transactionId = original.transactionId || undefined;
+
+        const newReservation = await tx.reservation.create({
+          data: {
+            userId,
+            sessionId: newSessionId,
+            transactionId,
+            placeNumber: assignedSeat,
+            isAvailable: true,
+            createdAt: nowDate,
+            updatedAt: nowDate,
+          },
+        });
+
+        if (transactionId) {
+          await updateTransactionCounters(transactionId, tx);
+        }
+
+        await tx.session.update({
+          where: { id: newSessionId },
+          data: { availableCapacity: { decrement: 1 } },
+        });
+
+        // 8. Log de eventos
+        await tx.reservationEvent.create({
+          data: {
+            reservationId,
+            userId,
+            sessionId: original.sessionId!,
+            eventType: "changed_from",
+            metadata: {
+              toSessionId: newSessionId,
+              previousSeat: original.placeNumber,
+            },
+            ipAddress,
+            userAgent,
+          },
+        });
+
+        await tx.reservationEvent.create({
+          data: {
+            reservationId: newReservation.id,
+            userId,
+            sessionId: newSessionId,
+            eventType: "changed_to",
+            metadata: {
+              fromReservationId: reservationId,
+              seat: assignedSeat,
+            },
+            ipAddress,
+            userAgent,
+          },
+        });
+
+        return {
+          newReservation,
+          originalSessionId: original.sessionId!,
+          freedSeat: original.placeNumber ?? null,
+        };
+      });
+      // Procesar waitlist para la clase original (asiento liberado)
+      try {
+        await prisma.$transaction((tx) =>
+          this.processWaitlistForSession(
+            result.originalSessionId,
+            tx,
+            result.freedSeat ?? null
+          )
+        );
+      } catch (e) {
+        console.error("Error procesando waitlist tras cambio:", e);
+      }
+
+      return {
+        success: true,
+        reservationId: result.newReservation.id,
+        message: "Reserva cambiada exitosamente",
+      };
+    } catch (error: any) {
+      const message = error.message || "Error desconocido";
+      return {
+        success: false,
+        error: message,
+        errorCode: this.getErrorCode(message),
+      };
+    }
+  }
+
+  /**
    * Procesa la lista de espera cuando se libera un cupo
    */
   private async processWaitlistForSession(
     sessionId: number,
-    tx: any
+    tx: any,
+    preferredSeat?: number | null
   ): Promise<void> {
     try {
       // Buscar el primer usuario en lista de espera pendiente (FIFO)
@@ -647,8 +947,17 @@ export class ReservationService {
 
         const packageToUse = selectedPackage.pkg;
 
-        // Asignar primer asiento disponible
-        const firstSeat = availability.availableSeats[0] || 1;
+        // Asignar asiento: primero intentamos usar el asiento liberado
+        let assignedSeat: number;
+        if (
+          typeof preferredSeat === "number" &&
+          preferredSeat > 0 &&
+          availability.availableSeats.includes(preferredSeat)
+        ) {
+          assignedSeat = preferredSeat;
+        } else {
+          assignedSeat = availability.availableSeats[0] || 1;
+        }
 
         const now = new Date();
         const reservation = await tx.reservation.create({
@@ -656,7 +965,7 @@ export class ReservationService {
             userId: waitlistEntry.userId,
             sessionId,
             transactionId: Number(packageToUse.id),
-            placeNumber: firstSeat,
+            placeNumber: assignedSeat,
             isAvailable: true,
             createdAt: now,
             updatedAt: now,
@@ -693,7 +1002,7 @@ export class ReservationService {
             userId: waitlistEntry.userId,
             sessionId,
             eventType: "created",
-            metadata: { fromWaitlist: true, seat: firstSeat },
+            metadata: { fromWaitlist: true, seat: assignedSeat },
           },
         });
 
@@ -705,7 +1014,7 @@ export class ReservationService {
             waitlistEntry.user.email,
             waitlistEntry.user.name || "Usuario",
             sessionId.toString(),
-            firstSeat,
+            assignedSeat,
             classType
           ).catch((err) => console.error("Error sending waitlist email:", err));
         }
@@ -790,7 +1099,8 @@ export class ReservationService {
     if (message === ERROR_CODES.SEAT_ALREADY_TAKEN) return "SEAT_ALREADY_TAKEN";
     if (message.includes("ya pasó")) return "CLASS_ALREADY_PAST";
     if (message.includes("ya fue cancelada")) return "ALREADY_CANCELLED";
-    if (message.includes("ventana")) return "CANCELLATION_WINDOW_EXPIRED";
+    if (message.includes("cancelarse")) return "CANCELLATION_WINDOW_EXPIRED";
+    if (message.includes("cambiarse")) return "CHANGE_WINDOW_EXPIRED";
     return "INTERNAL_ERROR";
   }
 }

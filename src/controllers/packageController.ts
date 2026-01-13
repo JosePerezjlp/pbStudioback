@@ -3,17 +3,40 @@ import { validationResult } from "express-validator";
 import { prisma } from "../config/prisma";
 import { Prisma } from "../generated/prisma/client";
 
-// Conversión entre el nuevo contrato de "status" y los flags internos
+// Conversión entre el contrato externo (status / isActive) y el flag interno isActive
 // Regla para paquetes:
 //   status 0 = inactivo
 //   status 1 = activo
 //   status 2 = eliminado lógicamente
+//   isActive (legacy) 0/1/2
 // Lo mapeamos a isActive (0/1/2) en BD
 const resolvePackageFlagsFromBody = (body: any): { isActive?: number } => {
   const result: { isActive?: number } = {};
 
+  // Preferimos "status" si viene en el body (nuevo contrato)
   if (body.status !== undefined && body.status !== null) {
     const n = Number(body.status);
+    if (!Number.isNaN(n)) {
+      if (n === 0) {
+        result.isActive = 0;
+      } else if (n === 1) {
+        result.isActive = 1;
+      } else if (n === 2) {
+        result.isActive = 2;
+      }
+    }
+    return result;
+  }
+
+  // Compatibilidad hacia atrás: aceptar "isActive" directamente (0/1/2 o boolean)
+  if (body.isActive !== undefined && body.isActive !== null) {
+    let n: number;
+    if (typeof body.isActive === "boolean") {
+      n = body.isActive ? 1 : 0;
+    } else {
+      n = Number(body.isActive);
+    }
+
     if (!Number.isNaN(n)) {
       if (n === 0) {
         result.isActive = 0;
@@ -77,11 +100,14 @@ export const createPackageController = async (
       daysExpiry,
       isUnlimited,
       altText,
-      newUser,
       public: isPublic,
       specialPrice,
       discountInfo,
     } = body;
+
+    // Soportar tanto "isNewUser" (nuevo nombre de la API) como "newUser" (legacy)
+    const rawNewUser =
+      body.isNewUser !== undefined ? body.isNewUser : body.newUser;
 
     const flags = resolvePackageFlagsFromBody(body);
 
@@ -96,7 +122,8 @@ export const createPackageController = async (
         isActive: flags.isActive ?? 1,
         isUnlimited: Boolean(isUnlimited),
         altText: altText ? String(altText) : null,
-        newUser: newUser ? 1 : 0,
+        newUser:
+          rawNewUser !== undefined && Number(rawNewUser) ? 1 : 0,
         public: isPublic !== undefined ? Boolean(isPublic) : false,
         specialPrice: specialPrice ? Number(specialPrice) : null,
         discountInfo: discountInfo ? String(discountInfo) : null,
@@ -290,8 +317,13 @@ export const updatePackageController = async (
     dataToUpdate.isUnlimited = Boolean(updateDataRaw.isUnlimited);
   if (updateDataRaw.altText !== undefined)
     dataToUpdate.altText = String(updateDataRaw.altText);
-  if (updateDataRaw.newUser !== undefined)
-    dataToUpdate.newUser = Number(updateDataRaw.newUser) ? 1 : 0;
+  // Soportar tanto "isNewUser" como "newUser" en el body
+  const rawNewUserUpdate =
+    updateDataRaw.isNewUser !== undefined
+      ? updateDataRaw.isNewUser
+      : updateDataRaw.newUser;
+  if (rawNewUserUpdate !== undefined)
+    dataToUpdate.newUser = Number(rawNewUserUpdate) ? 1 : 0;
   if (updateDataRaw.public !== undefined)
     dataToUpdate.public = Number(updateDataRaw.public) === 1;
 

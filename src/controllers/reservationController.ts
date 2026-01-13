@@ -67,6 +67,9 @@ const statusFromMessage = (m: string): number => {
   )
     return 400;
 
+  // Errores de ventana de cancelación configurable
+  if (m.startsWith("No se puede cancelar. Las clases")) return 400;
+
   return 500;
 };
 
@@ -507,7 +510,59 @@ export const changeReservationController = async (
   req: Request,
   res: Response
 ): Promise<void> => {
-  // Implementar cambio como: Cancelar anterior + Crear nueva
-  // dentro de una transacción.
-  res.status(501).json({ error: "Not implemented yet" });
+  const { reservationId } = req.params;
+  const { newClassId, newSeat } = req.body || {};
+
+  const id = Number(reservationId);
+  const newSessionId = Number(newClassId);
+
+  if (!id || Number.isNaN(id) || !newSessionId || Number.isNaN(newSessionId)) {
+    res.status(400).json({ error: "reservationId y newClassId son requeridos" });
+    return;
+  }
+
+  try {
+    // Obtener dueo de la reserva para validar permisos
+    const existing = await prisma.reservation.findUnique({
+      where: { id },
+      select: { userId: true },
+    });
+
+    if (!existing || !existing.userId) {
+      const msg = "Reserva no encontrada";
+      res
+        .status(statusFromMessage(msg))
+        .json({ error: msg, code: codeFromMessage(msg) });
+      return;
+    }
+
+    const result = await reservationService.changeReservation({
+      reservationId: id,
+      userId: existing.userId,
+      newSessionId,
+      newSeat: typeof newSeat === "number" ? newSeat : undefined,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"] as string | undefined,
+    });
+
+    if (!result.success) {
+      const msg = result.error || "Error al cambiar la reserva";
+      const status = statusFromMessage(msg);
+      const code = codeFromMessage(msg);
+      res
+        .status(status)
+        .json({ error: msg, code, errorCode: result.errorCode });
+      return;
+    }
+
+    res.status(200).json({
+      message: result.message || "Reserva cambiada correctamente",
+      id: result.reservationId,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const status = statusFromMessage(msg);
+    const code = codeFromMessage(msg);
+    res.status(status).json({ error: msg, code });
+  }
 };

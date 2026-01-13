@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { prisma } from "../config/prisma"; // Adjust path if needed
 import { ERROR_CODES, ClassType } from "../types/enums";
+import { normalizeClassType } from "../utils/packageSelection";
 import { DateTime } from "luxon";
 import { AuthRequest } from "../middleware/authMiddleware";
 import {
@@ -295,6 +296,9 @@ export const getAllWaitlistsController = async (
     // Enrich response to match old structure
     const enriched = waitlists.map((wl) => {
       const s = wl.session;
+      const normalizedType = s
+        ? normalizeClassType(s.type) ?? ClassType.INDIVIDUAL
+        : null;
       return {
         id: `${wl.userId}_${wl.sessionId}`,
         userId: String(wl.userId),
@@ -312,6 +316,7 @@ export const getAllWaitlistsController = async (
               instructorFirstName:
                 s.instructor?.profile?.firstname || s.instructor?.username || "",
               branch: s.branchOffice?.id,
+              type: normalizedType,
             }
           : null,
       };
