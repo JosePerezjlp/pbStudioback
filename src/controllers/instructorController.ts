@@ -112,16 +112,25 @@ export const createInstructorController = [
 
       // Crear instructor usando tablas staff / staff_profile / instructors_disciplines / staff_branch_office
 
-      // username único basado en email o nombre
-      const baseUsername =
+      // username único basado en email o nombre, SIN timestamp
+      let baseUsername =
         (email && String(email).split("@")[0]) ||
         String(firstName)
           .toLowerCase()
           .replace(/[^a-z0-9]/gi, "");
-      const username = `${baseUsername || "instructor"}-${Date.now()}`.slice(
-        0,
-        25
-      );
+
+      if (!baseUsername) {
+        baseUsername = "instructor";
+      }
+
+      // Asegurar unicidad agregando sufijo numérico si es necesario (sin fechas raras)
+      let username = baseUsername;
+      let counter = 0;
+      // NOTA: no usamos transacción acá; una pequeña condición de carrera es aceptable
+      while (await prisma.staff.findUnique({ where: { username } })) {
+        counter += 1;
+        username = `${baseUsername}${counter}`.slice(0, 25);
+      }
 
       // password aleatoria (no se expone)
       const rawPassword = uuidv4();

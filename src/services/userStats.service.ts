@@ -66,18 +66,32 @@ export async function getUserClassStats(
       },
     });
 
-    // Calcular clases disponibles
+    // Calcular clases disponibles (solo paquetes finitos)
     let classesAvailable = 0;
     let hasUnlimited = false;
 
     for (const tx of activeTransactions) {
       if (tx.packageIsUnlimited) {
         hasUnlimited = true;
-        break; // Si tiene ilimitado, no necesitamos contar más
+        // No sumamos nada aquí; el ilimitado se representa aparte.
+        continue;
       }
       const used = tx.reservations.length;
       const available = Math.max(0, tx.packageTotalClasses - used);
       classesAvailable += available;
+    }
+
+    // Descontar créditos "bloqueados" por waitlists pendientes
+    // Solo aplica para paquetes finitos. Para ilimitados se muestra 999.
+    if (!hasUnlimited && classesAvailable > 0) {
+      const pendingWaitlists = await prisma.waitingList.count({
+        where: {
+          userId,
+          isAvailable: true,
+        },
+      });
+
+      classesAvailable = Math.max(0, classesAvailable - pendingWaitlists);
     }
 
     // Si tiene paquete ilimitado, mostrar un número alto

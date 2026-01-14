@@ -260,16 +260,37 @@ export const sendPackagePurchaseEmail = async (
 
   // Normalizar modalidad a "Grupal" / "Individual"
   const formattedModality = (() => {
-    if (!modality) return packageName;
-    const t = modality.toString().toLowerCase();
-    if (t === "g" || t.includes("group") || t.includes("grupal")) {
+    const source = (modality || packageName || "").toString().toLowerCase();
+
+    if (!source) return "Individual";
+
+    if (
+      source === "g" ||
+      source.includes("group") ||
+      source.includes("grupal") ||
+      source.includes("paquete g")
+    ) {
       return "Grupal";
     }
-    if (t === "i" || t.includes("individual")) {
+
+    if (
+      source === "i" ||
+      source.includes("individual") ||
+      source.includes("paquete i")
+    ) {
       return "Individual";
     }
-    return modality.charAt(0).toUpperCase() + modality.slice(1);
+
+    // Fallback legible en caso de que llegue otro texto
+    return (modality || packageName || "").toString();
   })();
+
+  // Para la línea "Paquete:" se requiere mostrar
+  // "Paquete grupal" o "Paquete individual" cuando aplique.
+  const formattedPackageLabel =
+    formattedModality === "Grupal" || formattedModality === "Individual"
+      ? `Paquete ${formattedModality.toLowerCase()}`
+      : packageName;
 
   try {
     await safeSendEmail({
@@ -313,7 +334,7 @@ export const sendPackagePurchaseEmail = async (
                   <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:520px;">
                     <tr>
                       <td style="font-size:14px;line-height:22px;color:#111827;padding:8px 0;">
-                        <strong>Paquete:</strong> ${packageName}
+                        <strong>Paquete:</strong> ${formattedPackageLabel}
                       </td>
                     </tr>
                     <tr>

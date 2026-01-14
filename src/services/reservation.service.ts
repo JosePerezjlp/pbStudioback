@@ -460,9 +460,9 @@ export class ReservationService {
 
         if (session && user && user.email) {
           const dateStr = session.dateStart.toISOString().slice(0, 10);
-          const timeStr = DateTime.fromJSDate(session.timeStart)
-            .setZone(TIMEZONE)
-            .toFormat("HH:mm");
+          // Mantener la hora exactamente como se guarda en la BD,
+          // igual que en getClassInfo de emailService (HH:mm desde ISO).
+          const timeStr = session.timeStart.toISOString().slice(11, 16);
           const classInfo = `${session.discipline?.name || "Clase"} - ${formatDateVisibleMx(dateStr)} ${timeStr}`;
           const typeClass = session.type;
           const seatNumber = result.placeNumber;
@@ -621,9 +621,9 @@ export class ReservationService {
 
         if (user?.email && session) {
           const dateStr = session.dateStart.toISOString().slice(0, 10);
-          const timeStr = DateTime.fromJSDate(session.timeStart)
-            .setZone(TIMEZONE)
-            .toFormat("HH:mm");
+          // Usar el mismo formato de hora que en otros correos
+          // para evitar el desfase de 6 horas.
+          const timeStr = session.timeStart.toISOString().slice(11, 16);
           const classInfo = `${session.discipline?.name || "Clase"} - ${formatDateVisibleMx(dateStr)} ${timeStr}`;
           const classType = session.type;
 

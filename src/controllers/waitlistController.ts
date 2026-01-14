@@ -127,63 +127,9 @@ export const createWaitlistController = async (
         }
       }
 
-      // Package tracking removed as packageId and consumedClass fields don't exist in schema
-      // These would need to be tracked elsewhere if needed
-
-      if (!hasUnlimited) {
-        // Seleccionar paquete finito
-        // Sort by expiry (asc), then creation (asc)
-        const sortedPackages = activePackages.sort((a, b) => {
-          const expA = a.expirationAt ? a.expirationAt.getTime() : Infinity;
-          const expB = b.expirationAt ? b.expirationAt.getTime() : Infinity;
-          if (expA !== expB) return expA - expB;
-          return (a.createdAt?.getTime() || 0) - (b.createdAt?.getTime() || 0);
-        });
-
-        if (sortedPackages.length === 0) {
-          throw new Error(ERROR_CODES.NO_CLASSES_AVAILABLE);
-        }
-
-        // Descontar del paquete (Transaction)
-        // Waitlist logic: we deduct ONLY if it's NOT unlimited.
-        // The check `!hasUnlimited` guarantees this.
-        // We update the transaction inside the transaction block
-
-        // Update user stats?
-        // The original code updates `user.classes`.
-        // In SQL, `User` has `classesAvailable` and `classesTaken`.
-
-        // Update Transaction (assuming `haveSessionsAvailable` is the flag)
-        // We don't have a `classesUsed` field on Transaction in the schema provided?
-        // Let's check Transaction model again.
-        // `haveSessionsAvailable` Boolean.
-        // `packageTotalClasses` Int.
-        // It doesn't seem to track *remaining* classes explicitly on Transaction?
-        // Wait, User has `classesAvailable`.
-        // The schema for `Transaction` has `packageTotalClasses`.
-        // Maybe `User.classesAvailable` is the aggregate?
-
-        // Let's look at `User` model: `classesAvailable`, `classesTaken`.
-        // So we update `User`.
-
-        await tx.user.update({
-          where: { id: userId },
-          data: {
-            classesAvailable: { decrement: 1 },
-            classesTaken: { increment: 1 },
-          },
-        });
-
-        // Also, if we want to track which package was used, we might need to update the transaction?
-        // The schema doesn't show a `remainingClasses` on Transaction.
-        // But `Transaction` has `haveSessionsAvailable`.
-        // If `User.classesAvailable` reaches 0, we might need to set `haveSessionsAvailable = false` on the transactions?
-        // This logic is complex without seeing how `classesAvailable` is maintained.
-        // Assuming `User.classesAvailable` is the source of truth for now.
-
-        // Also check if we need to expire the transaction if it was the last class?
-        // Without granular tracking per transaction, we just pick one ID for reference.
-      }
+      // Package tracking: el consumo real de clases se calcula
+      // a partir de transacciones + reservas + waitlists pendientes
+      // en userStats.service, no tocamos directamente User.classesAvailable aquí.
 
       // 6. Crear Waitlist
       // Use upsert to handle re-entry if rejected/cancelled previously?
@@ -401,11 +347,31 @@ export const deleteWaitlistController = async (
   }
 
   try {
-    await prisma.waitingList.delete({
+    const waitlist = await prisma.waitingList.findUnique({
       where: {
-        userId_sessionId: { userId: ids.userId, sessionId: ids.sessionId },
+        userId_sessionId: {
+          userId: ids.userId,
+          sessionId: ids.sessionId,
+        },
       },
     });
+
+    if (!waitlist) {
+      res.status(404).json({ error: "Entrada de waitlist no encontrada" });
+      return;
+    }
+
+    await prisma.waitingList.delete({
+      where: {
+        userId_sessionId: {
+          userId: ids.userId,
+          sessionId: ids.sessionId,
+        },
+      },
+    });
+
+    // El crédito se "devuelve" automáticamente porque las clases disponibles
+    // se calculan restando solo las waitlists pendientes (isAvailable=true).
     res.json({ message: "Eliminado de la lista de espera" });
   } catch (e) {
     res.status(500).json({ error: "Error eliminando de waitlist" });

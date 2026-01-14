@@ -664,7 +664,11 @@ export const getClassByIdController = async (
       include: {
         discipline: true,
         exerciseRoom: true,
-        instructor: true,
+        instructor: {
+          include: {
+            profile: true,
+          },
+        },
         branchOffice: true,
         // Importante para backend: incluir reservaciones activas
         reservations: {
@@ -692,7 +696,24 @@ export const getClassByIdController = async (
       res.status(404).json({ error: "Clase no encontrada" });
       return;
     }
-    res.json(session);
+    // Aseguramos que en el objeto instructor se incluya firstName
+    const rawInstructor: any = session.instructor || null;
+    const { profile, ...restInstructor } = rawInstructor || {};
+
+    const instructorWithFirstName =
+      rawInstructor != null
+        ? {
+            ...restInstructor,
+            firstName: profile?.firstname ?? null,
+          }
+        : null;
+
+    const responsePayload: any = {
+      ...session,
+      instructor: instructorWithFirstName,
+    };
+
+    res.json(responsePayload);
   } catch (e) {
     console.error("Error obteniendo clase:", e);
     res.status(500).json({

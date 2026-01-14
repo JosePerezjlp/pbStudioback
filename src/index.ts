@@ -544,14 +544,6 @@ cron.schedule("0 * * * *", async () => {
       updates.push(
         (async () => {
           await prisma.$transaction(async (tx) => {
-            await tx.user.update({
-              where: { id: wl.userId },
-              data: {
-                classesAvailable: { increment: 1 },
-                classesTaken: { decrement: 1 },
-              },
-            });
-
             await tx.waitingList.update({
               where: {
                 userId_sessionId: {
