@@ -104,6 +104,11 @@ class UserService {
     });
 
     if (user && user.password) {
+      // Si el usuario existe pero está inactivo, bloquear login explícitamente
+      if (user.enabled === false) {
+        throw new Error("USER_DISABLED");
+      }
+
       const isValid = await bcrypt.compare(passwordPlain, user.password);
       if (isValid) {
         // Registrar último inicio de sesión para usuarios finales
@@ -177,6 +182,11 @@ class UserService {
 
       isNewUser = true;
     } else {
+      // Usuario existente: si está inactivo, no permitir login vía OAuth
+      if (user.enabled === false) {
+        throw new Error("USER_DISABLED");
+      }
+
       // Usuario existente: solo registrar último login
       await this.prisma.user.update({
         where: { id: user.id },

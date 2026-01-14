@@ -78,6 +78,14 @@ export const loginController = async (
       },
     });
   } catch (error) {
+    if (error instanceof Error && error.message === "USER_DISABLED") {
+      res.status(403).json({
+        error:
+          "Tu cuenta está inactiva, consulta con un administrador para más información",
+      });
+      return;
+    }
+
     console.error("Login error:", error);
     res.status(500).json({ error: "Error interno del servidor" });
   }
@@ -251,6 +259,14 @@ export const oauthLoginController = async (
       needsProfile: isNewUser,
     });
   } catch (error) {
+    if (error instanceof Error && error.message === "USER_DISABLED") {
+      res.status(403).json({
+        error:
+          "Tu cuenta está inactiva, consulta con un administrador para más información",
+      });
+      return;
+    }
+
     console.error("OAuth login error:", error);
     res.status(500).json({ error: "Error interno en login OAuth" });
   }

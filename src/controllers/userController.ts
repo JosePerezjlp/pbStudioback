@@ -445,7 +445,8 @@ export const getUserByIdController = async (
       },
     });
 
-    // Obtener las últimas 50 reservaciones
+    // Obtener todas las reservaciones del usuario (sin límite),
+    // pero manteniendo el nombre del campo "recentReservations" por compatibilidad.
     const recentReservations = await prisma.reservation.findMany({
       where: {
         userId: parsedUserId,
@@ -453,7 +454,6 @@ export const getUserByIdController = async (
       orderBy: {
         createdAt: "desc",
       },
-      take: 50,
       include: {
         session: {
           include: {
