@@ -517,11 +517,25 @@ cron.schedule("0 * * * *", async () => {
     const { hour } = now;
     if (hour < 6 || hour > 20) return;
 
+    // Solo considerar clases en una ventana de días reciente para no revisar años de historial
+    const startWindow = now.minus({ days: 3 }).startOf("day").toJSDate();
+    const endWindow = now.endOf("day").toJSDate();
+
     const todayStr = now.toISODate()!;
     const currentTime = now.toFormat("HH:mm");
 
     const waitlists = await prisma.waitingList.findMany({
-      where: { status: "pending" },
+      where: {
+        // Solo las que siguen pendientes en la lista de espera
+        isAvailable: true,
+        // Y cuya clase está dentro de una ventana reciente
+        session: {
+          dateStart: {
+            gte: startWindow,
+            lte: endWindow,
+          },
+        },
+      },
       include: { session: true, user: true },
     });
 
@@ -552,8 +566,12 @@ cron.schedule("0 * * * *", async () => {
                 },
               },
               data: {
+                // isAvailable = false => ya no bloquea crédito ni figura como pendiente
+                isAvailable: false,
                 status: "rejected",
+                error: "expired_no_slot",
                 rejectedEmailSent: true,
+                updatedAt: new Date(),
               },
             });
           });
