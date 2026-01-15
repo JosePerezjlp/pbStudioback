@@ -203,6 +203,14 @@ export const createCashTransactionController = async (
       return;
     }
 
+    if (targetUser.enabled === false) {
+      res.status(403).json({
+        error:
+          "Tu cuenta está inactiva, consulta con un administrador para más información",
+      });
+      return;
+    }
+
     if (!packageId || amount === undefined) {
       res
         .status(400)

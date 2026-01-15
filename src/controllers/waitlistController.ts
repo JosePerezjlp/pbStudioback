@@ -47,6 +47,10 @@ export const createWaitlistController = async (
       });
       if (!user) throw new Error(ERROR_CODES.USER_NOT_FOUND);
 
+      if (user.enabled === false) {
+        throw new Error("USER_DISABLED");
+      }
+
       // 2. Verificar Clase (Session)
       const session = await tx.session.findUnique({
         where: { id: sessionId },
@@ -173,6 +177,15 @@ export const createWaitlistController = async (
       .json({ message: "Entraste en lista de espera", id: resultId });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+
+    if (msg === "USER_DISABLED") {
+      res.status(403).json({
+        error:
+          "Tu cuenta está inactiva, consulta con un administrador para más información",
+      });
+      return;
+    }
+
     const map: Record<string, number> = {
       [ERROR_CODES.USER_NOT_FOUND]: 404,
       [ERROR_CODES.CLASS_NOT_FOUND]: 404,

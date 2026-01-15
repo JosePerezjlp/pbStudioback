@@ -215,6 +215,14 @@ export const capturePayPalOrderController = async (
       return;
     }
 
+    if (user.enabled === false) {
+      res.status(403).json({
+        error:
+          "Tu cuenta está inactiva, consulta con un administrador para más información",
+      });
+      return;
+    }
+
     /* ---------- Manejar cupones ---------- */
     let finalCoupon: any = null;
     let isAutoCoupon = false;

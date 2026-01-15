@@ -172,6 +172,14 @@ export const createReservationController = async (
         return;
       }
 
+      if (user.enabled === false) {
+        res.status(403).json({
+          error:
+            "Tu cuenta está inactiva, consulta con un administrador para más información",
+        });
+        return;
+      }
+
       userId = user.id;
     }
 
@@ -252,6 +260,14 @@ export const createBulkReservationsController = async (
         res
           .status(statusFromMessage(msg))
           .json({ error: msg, code: codeFromMessage(msg) });
+        return;
+      }
+
+      if (user.enabled === false) {
+        res.status(403).json({
+          error:
+            "Tu cuenta está inactiva, consulta con un administrador para más información",
+        });
         return;
       }
 

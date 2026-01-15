@@ -72,8 +72,8 @@ export const loginController = async (
         permissions: hasCustomPermissions
           ? user.permissions
           : user.isAdmin || user.role === "admin"
-          ? ADMIN_PERMISSIONS
-          : {},
+            ? ADMIN_PERMISSIONS
+            : {},
         sessionId: sessionId,
       },
     });
@@ -251,8 +251,8 @@ export const oauthLoginController = async (
         permissions: hasCustomPermissions
           ? user.permissions
           : user.isAdmin || user.role === "admin"
-          ? ADMIN_PERMISSIONS
-          : {},
+            ? ADMIN_PERMISSIONS
+            : {},
         sessionId,
       },
       isNewUser,
