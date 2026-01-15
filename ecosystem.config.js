@@ -23,5 +23,26 @@ module.exports = {
       max_restarts: 10,
       min_uptime: "10s",
     },
+    // --- Backend de desarrollo ---
+    {
+      name: "backPBstudioDev",
+      script: "./src/index.ts", // Cambia si tu entrypoint es diferente
+      interpreter: "./node_modules/.bin/ts-node", // Solo si usas TypeScript
+      instances: 1,
+      exec_mode: "fork",
+      watch: false,
+      max_memory_restart: "500M",
+      env: {
+        NODE_ENV: "development",
+        PORT: 3003, // Cambia el puerto si es necesario
+      },
+      error_file: "./logs/err-dev.log",
+      out_file: "./logs/out-dev.log",
+      log_date_format: "YYYY-MM-DD HH:mm:ss Z",
+      merge_logs: true,
+      autorestart: true,
+      max_restarts: 10,
+      min_uptime: "10s",
+    },
   ],
 };
