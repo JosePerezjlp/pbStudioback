@@ -26,15 +26,14 @@ module.exports = {
     // --- Backend de desarrollo ---
     {
       name: "backPBstudioDev",
-      script: "./src/index.ts", // Cambia si tu entrypoint es diferente
-      interpreter: "./node_modules/.bin/ts-node", // Solo si usas TypeScript
+      script: "./dist/index.js",
       instances: 1,
       exec_mode: "fork",
       watch: false,
       max_memory_restart: "500M",
       env: {
-        NODE_ENV: "production",
-        PORT: 3003, // Cambia el puerto si es necesario
+        NODE_ENV: "development",
+        PORT: 3003, // o el puerto que quieras para dev
       },
       error_file: "./logs/err-dev.log",
       out_file: "./logs/out-dev.log",
