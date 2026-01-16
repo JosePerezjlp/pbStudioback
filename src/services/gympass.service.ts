@@ -49,7 +49,8 @@ export const GympassService = {
   async getClass(gymId: number) {
     if (!gympassEnabled) throw new Error("Gympass no configurado");
     try {
-      const res = await api.get(`/gyms/${gymId}/classes`);
+      // Endpoint correcto según Booking API de Wellhub
+      const res = await api.get(`/booking/v1/gyms/${gymId}/classes`);
       return res.data;
     } catch (error) {
       handleAxiosError(error, "getClass");
