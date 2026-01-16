@@ -151,14 +151,8 @@ export const createClassController = async (
       }
     }
 
-    // Añadir gympass solo si viene en body
-    if (gympass !== undefined && typeof gympass !== "object") {
-      res.status(400).json({
-        error: "Formato inválido de 'gympass'",
-        code: "invalid-gympass",
-      });
-      return;
-    }
+    // El campo gympass puede ser booleano (true/false) o un objeto con más config.
+    // Cualquier valor truthy activará la publicación en Wellhub más adelante.
 
     // Obtener tipo desde el salón
     const roomRecord = await prisma.exerciseRoom.findUnique({
