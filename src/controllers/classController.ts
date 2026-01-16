@@ -13,6 +13,8 @@ import { normalizeClassType } from "../utils/packageSelection";
 import { AuthRequest } from "../middleware/authMiddleware";
 import { GympassService, gympassEnabled } from "../services/gympass.service";
 import { CreateSlotRequest } from "../models/CreateSlotRequest";
+import { ClassRequest } from "../models/ClassRequest";
+import { ClassPayload } from "../models/ClassPayload";
 import { Prisma } from "../generated/prisma/client";
 
 // Estados de la sesión (clase)
@@ -226,22 +228,115 @@ export const createClassController = async (
       },
     });
 
-    // Gympass integration
-    if (gympassEnabled) {
+    // Gympass integration: si la sucursal tiene gympass_gym_id y "gympass" viene truthy,
+    // publicamos automáticamente la clase en Wellhub usando datos del backend.
+    if (gympassEnabled && gympass) {
       try {
-        const gympassGymId = 198; // Hardcoded
-        const slot = new CreateSlotRequest();
-        slot.occur_date = `${day}T${hour}:00`;
-        slot.room = String(room);
-        slot.total_capacity = parsedCapacity;
-        slot.total_booked = parsedOccupied;
-        slot.status = statusInt;
-        slot.length_in_minutes = 60;
-        slot.instructors = []; // TODO: Add instructor info if needed
-        slot.product_id = gympassGymId;
-        slot.booking_window = null;
+        // 1) Obtener el gym_id de Wellhub desde la sucursal
+        const branch = await prisma.branchOffice.findUnique({
+          where: { id: branchId },
+        });
 
-        await GympassService.createClass(gympassGymId, 5, slot);
+        const gympassGymId = branch?.gympassGymId;
+
+        if (!gympassGymId) {
+          console.warn(
+            "Gympass: la sucursal no tiene gympass_gym_id configurado, se omite creación de slot",
+            { branchId }
+          );
+        } else {
+          // 2) Obtener un product_id adecuado desde la API de Wellhub
+          let productId: number | null = null;
+          try {
+            const products: any = await GympassService.getProducts(
+              Number(gympassGymId)
+            );
+            if (Array.isArray(products) && products.length > 0) {
+              productId = Number(products[0].id);
+            } else if (
+              products &&
+              Array.isArray((products as any).products) &&
+              (products as any).products.length > 0
+            ) {
+              productId = Number((products as any).products[0].id);
+            }
+          } catch (e) {
+            console.error("Gympass: error obteniendo products para el gym", e);
+          }
+
+          if (!Number.isFinite(productId as number)) {
+            console.warn(
+              "Gympass: no se encontró product_id válido, se omite publicación de la clase",
+              { gympassGymId }
+            );
+          } else {
+            // 3) Crear la categoría/clase en Wellhub
+            const disciplineRecord = await prisma.discipline.findUnique({
+              where: { id: disciplineId },
+            });
+
+            const classPayload = new ClassPayload();
+            classPayload.name =
+              disciplineRecord?.name || (infoNormalized as string) || "PB Class";
+            classPayload.description = infoNormalized;
+            classPayload.notes = null;
+            classPayload.bookable = true;
+            classPayload.visible = true;
+            classPayload.reference = String(newSession.id);
+            classPayload.product_id = productId as number;
+            classPayload.categories = [];
+
+            const classRequest = new ClassRequest();
+            classRequest.classes = [classPayload];
+
+            const createdCategory: any = await GympassService.createCategory(
+              Number(gympassGymId),
+              classRequest
+            );
+
+            const createdData: any =
+              createdCategory?.data ?? createdCategory ?? {};
+            const gympassClassId = Number(
+              createdData?.classes?.[0]?.id ?? createdData?.[0]?.id
+            );
+
+            if (!Number.isFinite(gympassClassId)) {
+              console.warn(
+                "Gympass: no se pudo obtener classId de respuesta al crear categoría",
+                { createdData }
+              );
+            } else {
+              // 4) Crear el slot (ocurrencia en fecha/hora específica)
+              const slot = new CreateSlotRequest();
+              slot.occur_date = `${day}T${hour}:00`;
+              slot.room = String(room);
+              slot.total_capacity = effectiveCapacity;
+              slot.total_booked = 0;
+              slot.status = statusInt;
+              slot.length_in_minutes = 60;
+              slot.instructors = [];
+              slot.product_id = productId as number;
+              slot.booking_window = null;
+
+              const slotResponse: any = await GympassService.createClass(
+                Number(gympassGymId),
+                Number(gympassClassId),
+                slot
+              );
+
+              const slotId = slotResponse?.id ?? slotResponse?.slot?.id ?? null;
+
+              // Guardar los IDs de Gympass en la sesión para mapear bookings
+              await prisma.session.update({
+                where: { id: newSession.id },
+                data: {
+                  gympassClassId: String(gympassClassId),
+                  gympassSlotId: slotId ? String(slotId) : null,
+                },
+              });
+            }
+          }
+        }
       } catch (error) {
         console.error("Error creating Gympass slot:", error);
       }

@@ -415,9 +415,269 @@ export const wellhubBookingWebhookController = async (
       slot: eventData?.slot,
     });
 
+    const userPayload = eventData.user;
+    const slotPayload = eventData.slot;
+
+    if (!userPayload?.unique_token || !slotPayload) {
+      res.status(400).json({ error: "Faltan datos de user/slot" });
+      return;
+    }
+
+    const uniqueToken: string = userPayload.unique_token;
+    const bookingNumber: string | null =
+      slotPayload.booking_number?.toString() ?? null;
+
+    // Resolver usuario por gympassId
+    const user = await prisma.user.findUnique({
+      where: { gympassId: uniqueToken },
+    });
+
+    if (!user) {
+      // No devolvemos 4xx a Wellhub para evitar reintentos infinitos;
+      // simplemente registramos y respondemos 200.
+      console.warn("Gympass booking: usuario no encontrado", {
+        uniqueToken,
+      });
+      res.status(200).json({
+        received: true,
+        event_type: rawType,
+        status: "USER_NOT_FOUND_LOCAL",
+      });
+      return;
+    }
+
+    // Resolver sesión por IDs de Gympass guardados en Session
+    const gympassSlotId = String(slotPayload.id);
+    const gympassClassId = String(slotPayload.class_id ?? "");
+
+    const session = await prisma.session.findFirst({
+      where: {
+        OR: [
+          { gympassSlotId },
+          gympassClassId ? { gympassClassId } : undefined,
+        ].filter(Boolean) as any,
+      },
+    });
+
+    if (!session) {
+      console.warn("Gympass booking: sesión no encontrada", {
+        gympassSlotId,
+        gympassClassId,
+      });
+      res.status(200).json({
+        received: true,
+        event_type: rawType,
+        status: "SESSION_NOT_FOUND_LOCAL",
+      });
+      return;
+    }
+
+    // Idempotencia: si ya existe reserva activa para este booking, solo devolvemos OK
+    if (bookingNumber) {
+      const existing = await prisma.reservation.findFirst({
+        where: {
+          userId: user.id,
+          sessionId: session.id,
+          cancellationAt: null,
+          // gympassBookingId es un campo agregado recientemente en el schema
+          // y puede que aún no esté en los tipos generados de Prisma.
+          gympassBookingId: bookingNumber,
+        } as any,
+      });
+
+      if (existing) {
+        res.status(200).json({
+          received: true,
+          event_type: rawType,
+          reservationId: existing.id,
+          idempotent: true,
+        });
+        return;
+      }
+    }
+
+    if (eventType === "booking.requested") {
+      // Crear reserva GYMPASS directamente, sin consumir paquetes locales
+      const created = await prisma.$transaction(async (tx) => {
+        // Verificar que no haya ya una reserva activa del usuario en esta clase
+        const duplicate = await tx.reservation.findFirst({
+          where: {
+            userId: user.id,
+            sessionId: session.id,
+            cancellationAt: null,
+          },
+        });
+
+        if (duplicate) {
+          return { reservation: duplicate, duplicated: true };
+        }
+
+        // Verificar cupo
+        const currentReserved = await tx.reservation.count({
+          where: { sessionId: session.id, cancellationAt: null },
+        });
+
+        if (currentReserved >= session.exerciseRoomCapacity) {
+          return { reservation: null, duplicated: false, full: true };
+        }
+
+        // Asignar asiento automáticamente (primer lugar libre)
+        const occupied = await tx.reservation.findMany({
+          where: { sessionId: session.id, cancellationAt: null },
+          select: { placeNumber: true },
+        });
+
+        const taken = new Set(occupied.map((r) => r.placeNumber));
+        let assignedSeat = 1;
+        for (let i = 1; i <= session.exerciseRoomCapacity; i++) {
+          if (!taken.has(i)) {
+            assignedSeat = i;
+            break;
+          }
+        }
+
+        const now = new Date();
+        const reservation = await tx.reservation.create({
+          data: {
+            userId: user.id,
+            sessionId: session.id,
+            transactionId: null,
+            placeNumber: assignedSeat,
+            isAvailable: true,
+            createdAt: now,
+            updatedAt: now,
+            // Campos especiales para trazabilidad Gympass
+            source: "GYMPASS",
+            gympassBookingId: bookingNumber,
+          } as any,
+        });
+
+        await tx.session.update({
+          where: { id: session.id },
+          data: {
+            availableCapacity: {
+              decrement: 1,
+            },
+          },
+        });
+
+        await tx.reservationEvent.create({
+          data: {
+            reservationId: reservation.id,
+            userId: user.id,
+            sessionId: session.id,
+            eventType: "created",
+            metadata: {
+              source: "GYMPASS",
+              bookingNumber,
+            },
+            ipAddress: req.ip,
+            userAgent: "GympassBookingWebhook",
+          },
+        });
+
+        return { reservation, duplicated: false, full: false };
+      });
+
+      if (created.duplicated && created.reservation) {
+        res.status(200).json({
+          received: true,
+          event_type: rawType,
+          reservationId: created.reservation.id,
+          duplicated: true,
+        });
+        return;
+      }
+
+      if (created.full) {
+        res.status(409).json({
+          received: true,
+          event_type: rawType,
+          error: "NO_SLOTS_AVAILABLE",
+        });
+        return;
+      }
+
+      res.status(200).json({
+        received: true,
+        event_type: rawType,
+        reservationId: created.reservation?.id,
+      });
+      return;
+    }
+
+    if (
+      eventType === "booking.canceled" ||
+      eventType === "booking.cancelled" ||
+      eventType === "booking.late_canceled"
+    ) {
+      // Cancelación de reserva GYMPASS si existe
+      const cancelled = await prisma.$transaction(async (tx) => {
+        const reservation = await tx.reservation.findFirst({
+          where: {
+            userId: user.id,
+            sessionId: session.id,
+            cancellationAt: null,
+            ...(bookingNumber
+              ? { gympassBookingId: bookingNumber }
+              : {}),
+          },
+        });
+
+        if (!reservation) return null;
+
+        const now = new Date();
+        const updated = await tx.reservation.update({
+          where: { id: reservation.id },
+          data: {
+            cancellationAt: now,
+            updatedAt: now,
+          },
+        });
+
+        if (reservation.sessionId) {
+          await tx.session.update({
+            where: { id: reservation.sessionId },
+            data: {
+              availableCapacity: {
+                increment: 1,
+              },
+            },
+          });
+        }
+
+        await tx.reservationEvent.create({
+          data: {
+            reservationId: reservation.id,
+            userId: reservation.userId!,
+            sessionId: reservation.sessionId!,
+            eventType: "cancelled",
+            metadata: {
+              source: "GYMPASS",
+              bookingNumber,
+              gympassEventType: eventType,
+            },
+            ipAddress: req.ip,
+            userAgent: "GympassBookingWebhook",
+          },
+        });
+
+        return updated;
+      });
+
+      res.status(200).json({
+        received: true,
+        event_type: rawType,
+        cancelled: Boolean(cancelled),
+      });
+      return;
+    }
+
+    // Otros tipos de evento de booking se aceptan pero no se procesan
     res.status(200).json({
       received: true,
       event_type: rawType,
+      status: "IGNORED_EVENT_TYPE",
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";

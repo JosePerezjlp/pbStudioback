@@ -10,6 +10,7 @@ datasource db {
 model BranchOffice {
   id                 Int                 @id @default(autoincrement())
   name               String              @unique(map: "UNIQ_81301E575E237E06") @db.VarChar(255)
+  gympassGymId       Int?                @map("gympass_gym_id")
   isActive           Boolean             @map("is_active")
   createdAt          DateTime?           @map("created_at") @db.DateTime(0)
   isPublic           Boolean             @default(false) @map("public")
@@ -181,6 +182,8 @@ model Reservation {
   updatedAt      DateTime?    @map("updated_at") @db.DateTime(0)
   attended       Boolean      @default(false)
   changedAt      DateTime?    @map("changed_at") @db.DateTime(0)
+  source         String       @default("LOCAL") @db.VarChar(20)
+  gympassBookingId String?    @map("gympass_booking_id") @db.VarChar(100)
   transaction    Transaction? @relation(fields: [transactionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "FK_42C849552FC0CB0F")
   session        Session?     @relation(fields: [sessionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "FK_42C84955613FECDF")
   user           User?        @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "FK_42C84955A76ED395")
