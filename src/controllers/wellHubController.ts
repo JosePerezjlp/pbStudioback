@@ -376,6 +376,57 @@ export const wellhubWebhookController = async (
 };
 
 /* ============================================================
+   POST – webhook de booking (reservas) de Gympass
+   Por ahora solo loguea el evento para ver el payload real sin
+   modificar reservas locales. Luego podremos mapearlo a Reservation.
+   ============================================================ */
+export const wellhubBookingWebhookController = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    if (!gympassOn) {
+      res.status(200).json({ disabled: true });
+      return;
+    }
+
+    const signature = (req.headers["x-gympass-signature"] ||
+      req.headers["X-Gympass-Signature"]) as string | undefined;
+
+    if (!signature) {
+      res.status(400).json({ error: "Falta la firma de Wellhub" });
+      return;
+    }
+
+    const event = req.body as any;
+    const rawType = event?.event_type;
+    const eventType =
+      typeof rawType === "string" ? rawType.toLowerCase().trim() : "";
+    const eventData = event?.event_data ?? {};
+
+    if (!eventType) {
+      res.status(400).json({ error: "Falta event_type" });
+      return;
+    }
+
+    console.log("📩 Wellhub booking webhook recibido", {
+      eventType: rawType,
+      user: eventData?.user,
+      slot: eventData?.slot,
+    });
+
+    res.status(200).json({
+      received: true,
+      event_type: rawType,
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Error desconocido";
+    console.error("❌ Error al procesar booking webhook:", msg);
+    res.status(500).json({ error: msg });
+  }
+};
+
+/* ============================================================
    PATCH – actualizar reserva (booking)
    ============================================================ */
 export const updateBookingController = async (

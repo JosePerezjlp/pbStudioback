@@ -9,6 +9,7 @@ import {
   getClassesController,
   getProductsController,
   getUserChecking,
+  wellhubBookingWebhookController,
   updateBookingController,
   wellhubWebhookController,
 } from "../controllers/wellHubController";
@@ -20,6 +21,12 @@ router.post(
   "/check-in-webhook",
   verifyGympassSignature,
   wellhubWebhookController
+);
+
+router.post(
+  "/booking-webhook",
+  verifyGympassSignature,
+  wellhubBookingWebhookController
 );
 
 router.get("/:gymId/products", verifyToken, getProductsController);

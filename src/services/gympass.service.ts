@@ -11,7 +11,8 @@ dotenv.config();
 
 const baseURL = process.env.GYMPASS_BASE_URL ?? "";
 const token = process.env.GYMPASS_TOKEN ?? "";
-const gympassDisabledFlag = (process.env.GYMPASS_DISABLE ?? "").toLowerCase() === "true";
+const gympassDisabledFlag =
+  (process.env.GYMPASS_DISABLE ?? "").toLowerCase() === "true";
 export const gympassEnabled = Boolean(baseURL && token) && !gympassDisabledFlag;
 
 const handleAxiosError = (error: unknown, context: string) => {
@@ -62,16 +63,15 @@ export const GympassService = {
     classPlayload: CreateSlotRequest
   ) {
     if (!gympassEnabled) throw new Error("Gympass no configurado");
-    try{
-        const res = await api.post(
-      `/booking/v1/gyms/${gymId}/classes/${classId}/slots`,
-      classPlayload
-    );
-    return res.data;
+    try {
+      const res = await api.post(
+        `/booking/v1/gyms/${gymId}/classes/${classId}/slots`,
+        classPlayload
+      );
+      return res.data;
     } catch (error) {
       handleAxiosError(error, "createClass");
     }
-  
   },
   async createCategory(gymId: number, classPlayload: ClassRequest) {
     if (!gympassEnabled) throw new Error("Gympass no configurado");
@@ -121,15 +121,15 @@ export const GympassService = {
   async findClassAndBranch(classOrReservationId: string) {
     const id = parseInt(classOrReservationId, 10);
     if (isNaN(id)) {
-        // If it's not a number, it might be a legacy ID or invalid. 
-        // For now, let's assume valid IDs are integers.
-        throw new Error(`ID inválido: ${classOrReservationId}`);
+      // If it's not a number, it might be a legacy ID or invalid.
+      // For now, let's assume valid IDs are integers.
+      throw new Error(`ID inválido: ${classOrReservationId}`);
     }
 
     // Buscar en reservations primero
     const reservation = await prisma.reservation.findUnique({
       where: { id },
-      include: { session: true }
+      include: { session: true },
     });
 
     if (reservation) {
@@ -145,7 +145,7 @@ export const GympassService = {
 
     // Si no es reserva, buscar como classId (sessionId)
     const session = await prisma.session.findUnique({
-      where: { id }
+      where: { id },
     });
 
     if (!session) {
@@ -160,9 +160,9 @@ export const GympassService = {
   async getBranchData(gymId: string) {
     const id = parseInt(gymId, 10);
     if (isNaN(id)) return null;
-    
+
     const branch = await prisma.branchOffice.findUnique({
-      where: { id }
+      where: { id },
     });
 
     return branch;
@@ -193,58 +193,58 @@ export const GympassService = {
 
     bookingRequest.total_booked = isCancelledOrRejected
       ? capacity + occupied // This logic seems weird in original code too (capacity + occupied > capacity?), but keeping original logic structure: occupied is what WAS occupied.
-      // Original: isCancelledOrRejected ? capacity + occupied : capacity - occupied;
-      // Wait, original: 
-      // const capacity = Number.parseInt(clasesDoc.data()?.capacity, 10);
-      // const occupied = Number.parseInt(clasesDoc.data()?.occupied, 10);
-      // total_booked = isCancelledOrRejected ? capacity + occupied : capacity - occupied;
-      // This looks like a bug in the original code or specific Gympass logic. 
-      // If cancelled, why capacity + occupied? 
-      // Maybe it means "Total Booked Slots" field in Gympass API.
-      // If I cancel, the booked count should decrease? 
-      // Let's stick to translating "occupied" correctly.
-      
-      // In Prisma: occupied = capacity - available.
-      // If I use the same formula:
-      : occupied; 
-      
-      // Wait, the original code was:
-      // bookingRequest.total_booked = isCancelledOrRejected
-      // ? capacity + occupied
-      // : capacity - occupied;
-      
-      // If capacity=10, occupied=2. 
-      // If cancelled: 10 + 2 = 12?
-      // If not cancelled: 10 - 2 = 8? 
-      // This seems wrong. "total_booked" usually means how many people are booked.
-      // Maybe "occupied" in Firestore meant "available seats"?
-      // If Firestore occupied = available seats:
-      // then capacity - occupied = actual booked count.
-      // And if cancelled, maybe they want something else.
-      
-      // Let's assume `occupied` variable in my new code is "count of people booked".
-      // In Firestore `occupied` field might have been "count of people booked".
-      
-      // Let's re-read the original logic carefully.
-      // const capacity = Number.parseInt(clasesDoc.data()?.capacity, 10);
-      // const occupied = Number.parseInt(clasesDoc.data()?.occupied, 10);
-      // bookingRequest.total_booked = isCancelledOrRejected ? capacity + occupied : capacity - occupied;
-      
-      // If Firestore `occupied` was "booked count":
-      // cancelled -> capacity + booked count. 
-      // not cancelled -> capacity - booked count (which would be available seats).
-      // But the field is called `total_booked`.
-      
-      // Maybe Firestore `occupied` was "available spots"?
-      // If occupied = available spots.
-      // not cancelled -> capacity - available = booked count. Correct.
-      // cancelled -> capacity + available.
-      
-      // So, `occupied` in Firestore likely meant "Available Spots".
-      // In Prisma, `availableCapacity` is "Available Spots".
-      
-    const availableSpots = session.availableCapacity; 
-    
+      : // Original: isCancelledOrRejected ? capacity + occupied : capacity - occupied;
+        // Wait, original:
+        // const capacity = Number.parseInt(clasesDoc.data()?.capacity, 10);
+        // const occupied = Number.parseInt(clasesDoc.data()?.occupied, 10);
+        // total_booked = isCancelledOrRejected ? capacity + occupied : capacity - occupied;
+        // This looks like a bug in the original code or specific Gympass logic.
+        // If cancelled, why capacity + occupied?
+        // Maybe it means "Total Booked Slots" field in Gympass API.
+        // If I cancel, the booked count should decrease?
+        // Let's stick to translating "occupied" correctly.
+
+        // In Prisma: occupied = capacity - available.
+        // If I use the same formula:
+        occupied;
+
+    // Wait, the original code was:
+    // bookingRequest.total_booked = isCancelledOrRejected
+    // ? capacity + occupied
+    // : capacity - occupied;
+
+    // If capacity=10, occupied=2.
+    // If cancelled: 10 + 2 = 12?
+    // If not cancelled: 10 - 2 = 8?
+    // This seems wrong. "total_booked" usually means how many people are booked.
+    // Maybe "occupied" in Firestore meant "available seats"?
+    // If Firestore occupied = available seats:
+    // then capacity - occupied = actual booked count.
+    // And if cancelled, maybe they want something else.
+
+    // Let's assume `occupied` variable in my new code is "count of people booked".
+    // In Firestore `occupied` field might have been "count of people booked".
+
+    // Let's re-read the original logic carefully.
+    // const capacity = Number.parseInt(clasesDoc.data()?.capacity, 10);
+    // const occupied = Number.parseInt(clasesDoc.data()?.occupied, 10);
+    // bookingRequest.total_booked = isCancelledOrRejected ? capacity + occupied : capacity - occupied;
+
+    // If Firestore `occupied` was "booked count":
+    // cancelled -> capacity + booked count.
+    // not cancelled -> capacity - booked count (which would be available seats).
+    // But the field is called `total_booked`.
+
+    // Maybe Firestore `occupied` was "available spots"?
+    // If occupied = available spots.
+    // not cancelled -> capacity - available = booked count. Correct.
+    // cancelled -> capacity + available.
+
+    // So, `occupied` in Firestore likely meant "Available Spots".
+    // In Prisma, `availableCapacity` is "Available Spots".
+
+    const availableSpots = session.availableCapacity;
+
     bookingRequest.total_booked = isCancelledOrRejected
       ? capacity + availableSpots
       : capacity - availableSpots;
