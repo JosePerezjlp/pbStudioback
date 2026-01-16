@@ -234,8 +234,9 @@ export const createWaitlistController = async (
       [ERROR_CODES.CLASS_NOT_FOUND]: 404,
       [ERROR_CODES.NO_SLOTS_AVAILABLE]: 400,
       [ERROR_CODES.DUPLICATE_RESERVATION]: 409,
+      // NO_CLASSES_AVAILABLE y NO_PACKAGES comparten el mismo mensaje de error,
+      // por lo que con una sola entrada es suficiente.
       [ERROR_CODES.NO_CLASSES_AVAILABLE]: 409,
-      [ERROR_CODES.NO_PACKAGES]: 409,
       [ERROR_CODES.NO_COMPATIBLE_PACKAGE]: 409,
       [ERROR_CODES.UNLIMITED_DAILY_LIMIT]: 400,
     };
