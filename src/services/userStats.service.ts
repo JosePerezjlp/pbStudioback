@@ -81,17 +81,33 @@ export async function getUserClassStats(
       classesAvailable += available;
     }
 
-    // Descontar créditos "bloqueados" por waitlists pendientes
-    // Solo aplica para paquetes finitos. Para ilimitados se muestra 999.
+    // Créditos "bloqueados" por waitlists pendientes, diferenciados por tipo
+    // (grupal / individual). Esto nos permitirá luego reflejar el bloqueo
+    // también a nivel de paquetes.
+    let pendingGroupsGlobal = 0;
+    let pendingIndividualGlobal = 0;
+
     if (!hasUnlimited && classesAvailable > 0) {
-      const pendingWaitlists = await prisma.waitingList.count({
+      const pendingWaitlists = await prisma.waitingList.findMany({
         where: {
           userId,
           isAvailable: true,
         },
+        include: {
+          session: {
+            select: { type: true },
+          },
+        },
       });
 
-      classesAvailable = Math.max(0, classesAvailable - pendingWaitlists);
+      for (const wl of pendingWaitlists) {
+        const classType = normalizePackageType(wl.session?.type ?? null);
+        if (classType === ClassType.GROUPS) pendingGroupsGlobal++;
+        else if (classType === ClassType.INDIVIDUAL) pendingIndividualGlobal++;
+      }
+
+      const totalPending = pendingGroupsGlobal + pendingIndividualGlobal;
+      classesAvailable = Math.max(0, classesAvailable - totalPending);
     }
 
     // Si tiene paquete ilimitado, mostrar un número alto
@@ -188,6 +204,11 @@ export async function getUserClassStats(
     let groupsCount = 0;
     let individualCount = 0;
 
+    // Copias locales de los pendientes por tipo para distribuir
+    // el bloqueo de créditos sobre los paquetes correspondientes.
+    let pendingGroups = pendingGroupsGlobal;
+    let pendingIndividual = pendingIndividualGlobal;
+
     for (const tx of userTransactions) {
       const classType = normalizePackageType(tx.packageType);
 
@@ -203,10 +224,27 @@ export async function getUserClassStats(
       }
 
       const classesUsed = tx.reservations.length;
-      const classesAvailable = Math.max(
+      let classesAvailable = Math.max(
         0,
         tx.packageTotalClasses - classesUsed
       );
+
+      // Reflejar créditos bloqueados por waitlists pendientes
+      // repartiendo primero sobre los paquetes más recientes / visibles.
+      if (!tx.packageIsUnlimited && classesAvailable > 0) {
+        if (classType === ClassType.GROUPS && pendingGroups > 0) {
+          const deduct = Math.min(classesAvailable, pendingGroups);
+          classesAvailable -= deduct;
+          pendingGroups -= deduct;
+        } else if (
+          classType === ClassType.INDIVIDUAL &&
+          pendingIndividual > 0
+        ) {
+          const deduct = Math.min(classesAvailable, pendingIndividual);
+          classesAvailable -= deduct;
+          pendingIndividual -= deduct;
+        }
+      }
       const packageInfo = tx.packageId
         ? packageMap.get(tx.packageId)
         : undefined;
