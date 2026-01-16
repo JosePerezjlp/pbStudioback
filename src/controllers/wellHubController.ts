@@ -274,21 +274,58 @@ export const wellhubWebhookController = async (
       return;
     }
 
-    // Check if user exists by Gympass ID
-    const existingUser = await prisma.user.findUnique({
+    // 1) Buscar por Gympass ID
+    const existingByGympass = await prisma.user.findUnique({
       where: { gympassId: uniqueToken },
     });
-    // Or check by email?
-    const existingEmail = await prisma.user.findUnique({
-      where: { email },
-    });
 
-    if (existingUser || existingEmail) {
-      res.status(409).json({ error: "Usuario ya existe" });
+    // 2) Buscar por email si no está ya vinculado por Gympass
+    const existingByEmail = !existingByGympass
+      ? await prisma.user.findUnique({ where: { email } })
+      : null;
+
+    // Si ya existe por Gympass, solo actualizamos datos de Gympass/gym y devolvemos OK
+    if (existingByGympass) {
+      const updated = await prisma.user.update({
+        where: { id: existingByGympass.id },
+        data: {
+          gympassGymId: gymId,
+          gympassProductId: productId,
+          phone: phoneRaw ?? existingByGympass.phone,
+          updatedAt: new Date(),
+        },
+      });
+
+      res.status(200).json({
+        message: "Usuario Gympass actualizado con check-in",
+        id: updated.id,
+        email: updated.email,
+      });
       return;
     }
 
-    // Create User in SQL
+    // Si existe por email pero aún no tiene Gympass, lo vinculamos
+    if (existingByEmail) {
+      const updated = await prisma.user.update({
+        where: { id: existingByEmail.id },
+        data: {
+          gympassId: uniqueToken,
+          gympassGymId: gymId,
+          gympassProductId: productId,
+          phone: phoneRaw ?? existingByEmail.phone,
+          updatedAt: new Date(),
+        },
+      });
+
+      res.status(200).json({
+        message: "Usuario existente vinculado a Gympass",
+        id: updated.id,
+        email: updated.email,
+      });
+      return;
+    }
+
+    // 3) Si no existe, crear usuario nuevo
     const hashedPassword = await bcrypt.hash(password, 10);
     const now = new Date();
 
