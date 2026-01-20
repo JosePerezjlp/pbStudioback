@@ -235,7 +235,11 @@ export const createClassController = async (
         const gympassProductId = 395; // ID del producto en Wellhub
 
         const slot = new CreateSlotRequest();
-        slot.occur_date = `${day}T${hour}:00`;
+        // Wellhub espera un datetime ISO con milisegundos y zona, ej:
+        // 2022-09-29T22:00:50.000Z
+        // Usamos el día y hora recibidos (HH:mm) y normalizamos a
+        // "YYYY-MM-DDTHH:mm:00.000Z" para cumplir el formato.
+        slot.occur_date = `${day}T${hour}:00.000Z`;
         slot.room = String(room);
         slot.total_capacity = parsedCapacity;
         slot.total_booked = parsedOccupied;
