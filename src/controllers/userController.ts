@@ -349,10 +349,40 @@ export const getMyProfileController = async (
     // Obtener estadísticas calculadas en tiempo real
     const stats = await getUserClassStats(userId);
 
+    // Obtener las últimas 5 transacciones del usuario autenticado
+    const recentTransactions = await prisma.transaction.findMany({
+      where: {
+        userId,
+        status: 1, // Pagado
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 5,
+      include: {
+        package: {
+          select: {
+            id: true,
+            altText: true,
+            totalClasses: true,
+            type: true,
+            amount: true,
+          },
+        },
+        branchOffice: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
     res.status(200).json({
       ...user,
       birthday: birthdayDayMonth,
       ...stats,
+      recentTransactions,
     });
   } catch (error) {
     console.error("Error obteniendo perfil:", error);

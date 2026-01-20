@@ -13,7 +13,7 @@ import { ClassPayload } from "../models/ClassPayload";
    ============================================================ */
 export const getProductsController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   const { gymId } = req.params;
 
@@ -36,7 +36,7 @@ export const getProductsController = async (
    ============================================================ */
 export const getClassesController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   const { gymId } = req.params;
 
@@ -66,7 +66,7 @@ export const createSlotController = async (
     object,
     CreateSlotRequest
   >,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   const { gymId, classId } = req.params;
   if (!gympassOn) {
@@ -103,7 +103,7 @@ export const createSlotController = async (
     const slot = await GympassService.createClass(
       Number(gympassGymId),
       Number(classId),
-      payload
+      payload,
     );
     res.status(201).json(slot);
   } catch (error) {
@@ -118,7 +118,7 @@ export const createSlotController = async (
    ============================================================ */
 export const createCategoryController = async (
   req: Request<{ gymId: string }, object, ClassPayload>,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     if (!gympassOn) {
@@ -142,7 +142,7 @@ export const createCategoryController = async (
     };
     const category = await GympassService.createCategory(
       Number(gympassGymId),
-      payload
+      payload,
     );
     res.status(201).json(category);
   } catch (error) {
@@ -157,7 +157,7 @@ export const createCategoryController = async (
    ============================================================ */
 export const getUserChecking = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   const { userId } = req.params;
   try {
@@ -201,7 +201,7 @@ export const getUserChecking = async (
         gympass_user_id: gympassUserId,
         product_id: productId?.toString() ?? null,
       },
-      gymId
+      gymId,
     );
     res.status(200).json({ checkingWellhub });
   } catch (error) {
@@ -217,7 +217,7 @@ export const getUserChecking = async (
 
 export const wellhubWebhookController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     if (!gympassOn) {
@@ -382,7 +382,7 @@ export const wellhubWebhookController = async (
    ============================================================ */
 export const wellhubBookingWebhookController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     if (!gympassOn) {
@@ -618,9 +618,7 @@ export const wellhubBookingWebhookController = async (
             userId: user.id,
             sessionId: session.id,
             cancellationAt: null,
-            ...(bookingNumber
-              ? { gympassBookingId: bookingNumber }
-              : {}),
+            ...(bookingNumber ? { gympassBookingId: bookingNumber } : {}),
           },
         });
 
@@ -691,7 +689,7 @@ export const wellhubBookingWebhookController = async (
    ============================================================ */
 export const updateBookingController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   const { classId } = req.params;
   const payload = req.body;
@@ -731,14 +729,14 @@ export const updateBookingController = async (
 
     const bookingRequest = GympassService.buildBookingRequest(
       clasesDoc,
-      payload.status
+      payload.status,
     );
 
     const updatedBooking = await GympassService.updateBooking(
       Number(gympassGymId),
       Number(gympassClassId),
       Number(gympassSlotId),
-      bookingRequest
+      bookingRequest,
     );
 
     res.status(200).json(updatedBooking);

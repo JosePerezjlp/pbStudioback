@@ -1,7 +1,10 @@
 import { Request, Response } from "express";
 import { prisma } from "../config/prisma"; // Adjust path if needed
 import { ERROR_CODES, ClassType } from "../types/enums";
-import { normalizeClassType } from "../utils/packageSelection";
+import {
+  normalizeClassType,
+  normalizePackageType,
+} from "../utils/packageSelection";
 import { DateTime } from "luxon";
 import { AuthRequest } from "../middleware/authMiddleware";
 import {
@@ -43,7 +46,6 @@ export const createWaitlistController = async (
       // 1. Verificar Usuario
       const user = await tx.user.findUnique({
         where: { id: userId },
-        include: { transactions: true }, // Need active packages
       });
       if (!user) throw new Error(ERROR_CODES.USER_NOT_FOUND);
 
@@ -90,23 +92,64 @@ export const createWaitlistController = async (
       }
 
       // 5. Lógica de Paquetes
-      // Filtrar paquetes activos
       const now = new Date();
-      const activePackages = user.transactions.filter(
-        (t) =>
-          t.status === 1 && // Active status (assuming 1 is active)
-          t.haveSessionsAvailable && // Has sessions
-          (!t.expirationAt || t.expirationAt > now) // Not expired
+
+      // 5.1 Obtener transacciones activas del usuario desde la BD
+      const userTransactions = await tx.transaction.findMany({
+        where: {
+          userId,
+          status: 1, // Pagado
+          OR: [
+            { expirationAt: null },
+            { expirationAt: { gt: now } }, // No vencido por fecha
+          ],
+        },
+        include: {
+          reservations: {
+            where: { cancellationAt: null },
+            select: { id: true },
+          },
+        },
+      });
+
+      if (userTransactions.length === 0) {
+        throw new Error(ERROR_CODES.NO_PACKAGES);
+      }
+
+      // 5.2 Filtrar solo paquetes compatibles con el tipo de clase
+      const classType =
+        normalizeClassType(session.type) ?? ClassType.INDIVIDUAL;
+
+      const compatibleTransactions = userTransactions.filter(
+        (t) => normalizePackageType(t.packageType) === classType
       );
 
-      // Check unlimited
-      const unlimitedPackages = activePackages.filter(
+      if (compatibleTransactions.length === 0) {
+        // Tiene paquetes, pero ninguno del mismo tipo (grupal/individual)
+        throw new Error(ERROR_CODES.NO_COMPATIBLE_PACKAGE);
+      }
+
+      // 5.3 De los compatibles, quedarnos solo con los que aún tienen clases
+      const compatibleWithBalance = compatibleTransactions.filter((t) => {
+        if (t.packageIsUnlimited) return true;
+        const used = t.reservations.length;
+        const available = Math.max(0, t.packageTotalClasses - used);
+        return available > 0;
+      });
+
+      if (compatibleWithBalance.length === 0) {
+        // Tiene paquetes del tipo correcto pero sin saldo de clases
+        throw new Error(ERROR_CODES.NO_CLASSES_AVAILABLE);
+      }
+
+      // 5.4 Reglas especiales para paquetes ilimitados (solo compatibles con saldo)
+      const unlimitedPackages = compatibleWithBalance.filter(
         (t) => t.packageIsUnlimited
       );
       const hasUnlimited = unlimitedPackages.length > 0;
 
       if (hasUnlimited) {
-        // Verificar límite diario (2 clases)
+        // Verificar límite diario (2 clases) para este tipo de clase
         const sessionDate = session.dateStart; // Date object
         const startOfDay = new Date(sessionDate);
         startOfDay.setHours(0, 0, 0, 0);
@@ -191,7 +234,10 @@ export const createWaitlistController = async (
       [ERROR_CODES.CLASS_NOT_FOUND]: 404,
       [ERROR_CODES.NO_SLOTS_AVAILABLE]: 400,
       [ERROR_CODES.DUPLICATE_RESERVATION]: 409,
+      // NO_CLASSES_AVAILABLE y NO_PACKAGES comparten el mismo mensaje de error,
+      // por lo que con una sola entrada es suficiente.
       [ERROR_CODES.NO_CLASSES_AVAILABLE]: 409,
+      [ERROR_CODES.NO_COMPATIBLE_PACKAGE]: 409,
       [ERROR_CODES.UNLIMITED_DAILY_LIMIT]: 400,
     };
     res.status(map[msg] ?? 500).json({ error: msg, code: msg });

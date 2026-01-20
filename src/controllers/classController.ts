@@ -28,7 +28,7 @@ const SESSION_STATUS = {
 type SessionStatus = (typeof SESSION_STATUS)[keyof typeof SESSION_STATUS];
 
 const mapSessionStatusToLabel = (
-  status: number
+  status: number,
 ): "abierta" | "cerrada" | "cancelada" => {
   if (status === SESSION_STATUS.OPEN) return "abierta";
   if (status === SESSION_STATUS.CANCELED) return "cancelada";
@@ -71,7 +71,7 @@ const timeStringToDate = (timeStr: string): Date => {
    ============================================================ */
 export const createClassController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const {
@@ -222,123 +222,56 @@ export const createClassController = async (
       },
     });
 
-    // Gympass integration: si la sucursal tiene gympass_gym_id y "gympass" viene truthy,
-    // publicamos automáticamente la clase en Wellhub usando datos del backend.
-    if (gympassEnabled && gympass) {
+    // Gympass / Wellhub integration (no bloquea la creación local)
+    let wellhubStatus: {
+      success: boolean;
+      error?: string;
+      data?: unknown;
+    } | null = null;
+
+    if (gympassEnabled) {
       try {
-        // 1) Obtener el gym_id de Wellhub desde la sucursal
-        const branch = await prisma.branchOffice.findUnique({
-          where: { id: branchId },
-        });
+        const gympassGymId = 198; // ID del gym en Wellhub
+        const gympassProductId = 395; // ID del producto en Wellhub
 
-        const gympassGymId = branch?.gympassGymId;
+        const slot = new CreateSlotRequest();
+        slot.occur_date = `${day}T${hour}:00`;
+        slot.room = String(room);
+        slot.total_capacity = parsedCapacity;
+        slot.total_booked = parsedOccupied;
+        slot.status = statusInt;
+        slot.length_in_minutes = 60;
+        slot.instructors = [];
+        slot.product_id = gympassProductId;
+        slot.booking_window = null;
 
-        if (!gympassGymId) {
-          console.warn(
-            "Gympass: la sucursal no tiene gympass_gym_id configurado, se omite creación de slot",
-            { branchId }
-          );
-        } else {
-          // 2) Obtener un product_id adecuado desde la API de Wellhub
-          let productId: number | null = null;
-          try {
-            const products: any = await GympassService.getProducts(
-              Number(gympassGymId)
-            );
-            if (Array.isArray(products) && products.length > 0) {
-              productId = Number(products[0].id);
-            } else if (
-              products &&
-              Array.isArray((products as any).products) &&
-              (products as any).products.length > 0
-            ) {
-              productId = Number((products as any).products[0].id);
-            }
-          } catch (e) {
-            console.error("Gympass: error obteniendo products para el gym", e);
-          }
+        const apiResponse = await GympassService.createClass(
+          gympassGymId,
+          5,
+          slot,
+        );
 
-          if (!Number.isFinite(productId as number)) {
-            console.warn(
-              "Gympass: no se encontró product_id válido, se omite publicación de la clase",
-              { gympassGymId }
-            );
-          } else {
-            // 3) Crear la categoría/clase en Wellhub
-            const disciplineRecord = await prisma.discipline.findUnique({
-              where: { id: disciplineId },
-            });
-
-            const classPayload = new ClassPayload();
-            classPayload.name =
-              disciplineRecord?.name || (infoNormalized as string) || "PB Class";
-            classPayload.description = infoNormalized;
-            classPayload.notes = null;
-            classPayload.bookable = true;
-            classPayload.visible = true;
-            classPayload.reference = String(newSession.id);
-            classPayload.product_id = productId as number;
-            classPayload.categories = [];
-
-            const classRequest = new ClassRequest();
-            classRequest.classes = [classPayload];
-
-            const createdCategory: any = await GympassService.createCategory(
-              Number(gympassGymId),
-              classRequest
-            );
-
-            const createdData: any =
-              createdCategory?.data ?? createdCategory ?? {};
-            const gympassClassId = Number(
-              createdData?.classes?.[0]?.id ?? createdData?.[0]?.id
-            );
-
-            if (!Number.isFinite(gympassClassId)) {
-              console.warn(
-                "Gympass: no se pudo obtener classId de respuesta al crear categoría",
-                { createdData }
-              );
-            } else {
-              // 4) Crear el slot (ocurrencia en fecha/hora específica)
-              const slot = new CreateSlotRequest();
-              slot.occur_date = `${day}T${hour}:00`;
-              slot.room = String(room);
-              slot.total_capacity = effectiveCapacity;
-              slot.total_booked = 0;
-              slot.status = statusInt;
-              slot.length_in_minutes = 60;
-              slot.instructors = [];
-              slot.product_id = productId as number;
-              slot.booking_window = null;
-
-              const slotResponse: any = await GympassService.createClass(
-                Number(gympassGymId),
-                Number(gympassClassId),
-                slot
-              );
-
-              const slotId = slotResponse?.id ?? slotResponse?.slot?.id ?? null;
-
-              // Guardar los IDs de Gympass en la sesión para mapear bookings
-              await prisma.session.update({
-                where: { id: newSession.id },
-                data: {
-                  gympassClassId: String(gympassClassId),
-                  gympassSlotId: slotId ? String(slotId) : null,
-                },
-              });
-            }
-          }
-        }
+        wellhubStatus = {
+          success: true,
+          data: apiResponse,
+        };
       } catch (error) {
-        console.error("Error creating Gympass slot:", error);
+        console.error("Error creating Gympass/Wellhub slot:", error);
+        wellhubStatus = {
+          success: false,
+          error:
+            error instanceof Error ? error.message : String(error ?? "Error"),
+        };
       }
     }
 
-    res
-      .status(201)
-      .json({ message: "Clase creada correctamente", id: newSession.id });
+    res.status(201).json({
+      message: "Clase creada correctamente",
+      id: newSession.id,
+      wellhub: gympassEnabled
+        ? (wellhubStatus ?? { success: false, error: "Estado desconocido" })
+        : { success: false, error: "Integración Wellhub desactivada" },
+    });
   } catch (error) {
     console.error("Error al crear clase:", error);
     res.status(500).json({
@@ -353,7 +286,7 @@ export const createClassController = async (
    ============================================================ */
 export const getFutureClassesController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const today = DateTime.now().toISODate();
@@ -368,7 +301,7 @@ export const getFutureClassesController = async (
     const limit =
       Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 50;
     const onlyAvailableParam = String(
-      req.query.onlyAvailable ?? "true"
+      req.query.onlyAvailable ?? "true",
     ).toLowerCase();
     const onlyAvailable = onlyAvailableParam !== "false";
 
@@ -509,7 +442,7 @@ export const getFutureClassesController = async (
    ============================================================ */
 export const getAllClassesController = async (
   req: Request | AuthRequest,
-  res: Response
+  res: Response,
 ) => {
   try {
     const authReq = req as AuthRequest;
@@ -693,7 +626,7 @@ export const getAllClassesController = async (
 
 export const deleteClassController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   const { id, classId } = req.params;
   const idToUse = id || classId; // Acepta ambos nombres de parámetro
@@ -726,7 +659,7 @@ export const deleteClassController = async (
 
 export const getClassByIdController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   const { id, classId } = req.params;
   const idToUse = id || classId; // Acepta ambos nombres de parámetro
@@ -737,7 +670,7 @@ export const getClassByIdController = async (
     "📋 getClassById - ID parseado:",
     sessionId,
     "isNaN:",
-    isNaN(sessionId)
+    isNaN(sessionId),
   );
 
   if (isNaN(sessionId)) {
@@ -814,7 +747,7 @@ export const getClassByIdController = async (
 
 export const updateClassController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   const { id, classId } = req.params;
   const idToUse = id || classId; // Acepta ambos nombres de parámetro
@@ -941,7 +874,7 @@ export const updateClassController = async (
 
 export const createClassesBulkController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const {
@@ -1091,7 +1024,7 @@ export const createClassesBulkController = async (
                 exerciseRoomCapacity: effectiveCapacity,
                 availableCapacity: Math.max(
                   effectiveCapacity - effectiveOccupied,
-                  0
+                  0,
                 ),
                 status: statusInt,
                 type: roomRecord.type,
@@ -1140,7 +1073,7 @@ export const createClassesBulkController = async (
             exerciseRoomCapacity: effectiveCapacity,
             availableCapacity: Math.max(
               effectiveCapacity - effectiveOccupied,
-              0
+              0,
             ),
             status: statusInt,
             type: roomRecord.type,
@@ -1180,7 +1113,7 @@ export const createClassesBulkController = async (
 
 export const getOpenClassesPublicController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   req.query.status = "abierta";
   req.query.onlyAvailable = "true";
@@ -1189,7 +1122,7 @@ export const getOpenClassesPublicController = async (
 
 export const getAvailableClassesByBranchController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   const { branchId } = req.params;
   req.query.branchId = branchId;
@@ -1198,7 +1131,7 @@ export const getAvailableClassesByBranchController = async (
 
 export const deleteOldClassesController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   res.status(501).json({ error: "Not implemented for safety" });
 };
@@ -1206,7 +1139,7 @@ export const deleteOldClassesController = async (
 // Lista reservaciones realizadas con paquetes ilimitados en un rango de fechas
 export const getAllUnlimitedClassesController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const { startDate, endDate } = req.query as {
@@ -1286,7 +1219,7 @@ export const getAllUnlimitedClassesController = async (
 
 export const getClassesStatsController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     // Contar solo clases no borradas lógicamente
@@ -1301,7 +1234,7 @@ export const getClassesStatsController = async (
 
 export const getClassesByDayController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const { day, branchId } = req.query;
