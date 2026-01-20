@@ -252,13 +252,32 @@ export const createClassController = async (
           // Usamos el día y hora recibidos (HH:mm) y normalizamos a
           // "YYYY-MM-DDTHH:mm:00.000Z" para cumplir el formato.
           slot.occur_date = `${day}T${hour}:00.000Z`;
-          slot.room = String(room);
+          // En room enviamos el nombre legible del salón si está disponible
+          slot.room = roomRecord.name ?? String(room);
           // Para Wellhub usamos la capacidad efectiva del salón
           slot.total_capacity = effectiveCapacity;
           slot.total_booked = effectiveOccupied;
           slot.status = statusInt;
           slot.length_in_minutes = 60;
-          slot.instructors = [];
+          // Incluir el nombre del instructor principal si existe
+          if (newSession.instructorId) {
+            const instructor = await prisma.staff.findUnique({
+              where: { id: newSession.instructorId },
+            });
+
+            if (instructor?.username) {
+              slot.instructors = [
+                {
+                  name: instructor.username,
+                  substitute: false,
+                },
+              ];
+            } else {
+              slot.instructors = [];
+            }
+          } else {
+            slot.instructors = [];
+          }
           slot.product_id = gympassProductId;
           slot.booking_window = null;
 
@@ -267,6 +286,30 @@ export const createClassController = async (
             gympassClassId,
             slot,
           );
+
+          // Guardar IDs de Wellhub en la sesión local (class y slot)
+          try {
+            const firstResult = (apiResponse as any)?.results?.[0];
+            if (firstResult?.id) {
+              const slotId = String(firstResult.id);
+              const classIdFromApi = String(
+                firstResult.class_id ?? gympassClassId,
+              );
+
+              await prisma.session.update({
+                where: { id: newSession.id },
+                data: {
+                  gympassClassId: classIdFromApi,
+                  gympassSlotId: slotId,
+                },
+              });
+            }
+          } catch (persistError) {
+            console.warn(
+              "Gympass: no se pudieron guardar gympassClassId/gympassSlotId en la sesión",
+              persistError,
+            );
+          }
 
           wellhubStatus = {
             success: true,
