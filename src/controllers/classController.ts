@@ -231,34 +231,48 @@ export const createClassController = async (
 
     if (gympassEnabled) {
       try {
-        const gympassGymId = 198; // ID del gym en Wellhub
-        const gympassProductId = 395; // ID del producto en Wellhub
+        const gympassGymId = Number(process.env.GYMPASS_GYM_ID ?? "0");
+        const gympassProductId = Number(process.env.GYMPASS_PRODUCT_ID ?? "0");
+        const gympassClassId = Number(process.env.GYMPASS_CLASS_ID ?? "0");
 
-        const slot = new CreateSlotRequest();
-        // Wellhub espera un datetime ISO con milisegundos y zona, ej:
-        // 2022-09-29T22:00:50.000Z
-        // Usamos el día y hora recibidos (HH:mm) y normalizamos a
-        // "YYYY-MM-DDTHH:mm:00.000Z" para cumplir el formato.
-        slot.occur_date = `${day}T${hour}:00.000Z`;
-        slot.room = String(room);
-        slot.total_capacity = parsedCapacity;
-        slot.total_booked = parsedOccupied;
-        slot.status = statusInt;
-        slot.length_in_minutes = 60;
-        slot.instructors = [];
-        slot.product_id = gympassProductId;
-        slot.booking_window = null;
+        if (!gympassGymId || !gympassProductId || !gympassClassId) {
+          console.warn(
+            "Gympass: faltan IDs de configuración, se omite publicación de la clase",
+            { gympassGymId, gympassProductId, gympassClassId },
+          );
+          wellhubStatus = {
+            success: false,
+            error:
+              "Faltan GYMPASS_GYM_ID / GYMPASS_PRODUCT_ID / GYMPASS_CLASS_ID",
+          };
+        } else {
+          const slot = new CreateSlotRequest();
+          // Wellhub espera un datetime ISO con milisegundos y zona, ej:
+          // 2022-09-29T22:00:50.000Z
+          // Usamos el día y hora recibidos (HH:mm) y normalizamos a
+          // "YYYY-MM-DDTHH:mm:00.000Z" para cumplir el formato.
+          slot.occur_date = `${day}T${hour}:00.000Z`;
+          slot.room = String(room);
+          // Para Wellhub usamos la capacidad efectiva del salón
+          slot.total_capacity = effectiveCapacity;
+          slot.total_booked = effectiveOccupied;
+          slot.status = statusInt;
+          slot.length_in_minutes = 60;
+          slot.instructors = [];
+          slot.product_id = gympassProductId;
+          slot.booking_window = null;
 
-        const apiResponse = await GympassService.createClass(
-          gympassGymId,
-          5,
-          slot,
-        );
+          const apiResponse = await GympassService.createClass(
+            gympassGymId,
+            gympassClassId,
+            slot,
+          );
 
-        wellhubStatus = {
-          success: true,
-          data: apiResponse,
-        };
+          wellhubStatus = {
+            success: true,
+            data: apiResponse,
+          };
+        }
       } catch (error) {
         console.error("Error creating Gympass/Wellhub slot:", error);
         wellhubStatus = {
