@@ -226,10 +226,18 @@ export const createClassController = async (
       },
     });
 
-    // Gympass integration
+    // Gympass / Wellhub integration (no bloquea la creación local)
+    let wellhubStatus: {
+      success: boolean;
+      error?: string;
+      data?: unknown;
+    } | null = null;
+
     if (gympassEnabled) {
       try {
-        const gympassGymId = 198; // Hardcoded
+        const gympassGymId = 198; // ID del gym en Wellhub
+        const gympassProductId = 395; // ID del producto en Wellhub
+
         const slot = new CreateSlotRequest();
         slot.occur_date = `${day}T${hour}:00`;
         slot.room = String(room);
@@ -237,19 +245,37 @@ export const createClassController = async (
         slot.total_booked = parsedOccupied;
         slot.status = statusInt;
         slot.length_in_minutes = 60;
-        slot.instructors = []; // TODO: Add instructor info if needed
-        slot.product_id = gympassGymId;
+        slot.instructors = [];
+        slot.product_id = gympassProductId;
         slot.booking_window = null;
 
-        await GympassService.createClass(gympassGymId, 5, slot);
+        const apiResponse = await GympassService.createClass(
+          gympassGymId,
+          5,
+          slot
+        );
+
+        wellhubStatus = {
+          success: true,
+          data: apiResponse,
+        };
       } catch (error) {
-        console.error("Error creating Gympass slot:", error);
+        console.error("Error creating Gympass/Wellhub slot:", error);
+        wellhubStatus = {
+          success: false,
+          error:
+            error instanceof Error ? error.message : String(error ?? "Error"),
+        };
       }
     }
 
-    res
-      .status(201)
-      .json({ message: "Clase creada correctamente", id: newSession.id });
+    res.status(201).json({
+      message: "Clase creada correctamente",
+      id: newSession.id,
+      wellhub: gympassEnabled
+        ? wellhubStatus ?? { success: false, error: "Estado desconocido" }
+        : { success: false, error: "Integración Wellhub desactivada" },
+    });
   } catch (error) {
     console.error("Error al crear clase:", error);
     res.status(500).json({
