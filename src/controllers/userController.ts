@@ -9,7 +9,7 @@ import { getUserClassStats } from "../services/userStats.service";
 
 export const completeProfileFromAuthController = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     // El middleware 'verifyToken' ya debió poblar req.user
@@ -102,7 +102,7 @@ export const completeProfileFromAuthController = async (
 
 export const userController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const {
@@ -296,7 +296,7 @@ export const getRecentUsersController = async (req: Request, res: Response) => {
 
 export const getMyProfileController = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const userId = req.user?.id;
@@ -392,7 +392,7 @@ export const getMyProfileController = async (
 
 export const getUserByIdController = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const { userId } = req.params;
@@ -534,18 +534,18 @@ export const getUserByIdController = async (
     console.error("Error obteniendo usuario:", error);
     console.error(
       "Error stack:",
-      error instanceof Error ? error.stack : String(error)
+      error instanceof Error ? error.stack : String(error),
     );
     console.error(
       "Error message:",
-      error instanceof Error ? error.message : String(error)
+      error instanceof Error ? error.message : String(error),
     );
     res.status(500).json({ error: "Error al obtener información del usuario" });
   }
 };
 export const updateMyProfileController = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const userId = req.user?.id;
@@ -600,7 +600,7 @@ export const updateMyProfileController = async (
 };
 export const adminResetPasswordController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const { userId } = req.params as { userId: string };
@@ -660,7 +660,7 @@ export const getUsersStatsController = async (req: Request, res: Response) => {
 };
 export const updateMyBirthDateController = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ) => {
   try {
     const userId = req.user?.id;
@@ -739,7 +739,7 @@ export const searchUsersController = async (req: Request, res: Response) => {
 };
 export const searchUsersByFirstNameController = async (
   req: Request,
-  res: Response
+  res: Response,
 ) => {
   try {
     const { q, limit = "10" } = req.query;

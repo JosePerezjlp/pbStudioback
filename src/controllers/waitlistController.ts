@@ -15,7 +15,7 @@ import {
 
 // Helper to parse composite ID
 const parseWaitlistId = (
-  id: string
+  id: string,
 ): { userId: number; sessionId: number } | null => {
   const parts = id.split("_");
   if (parts.length !== 2) return null;
@@ -30,7 +30,7 @@ const parseWaitlistId = (
    =============================================================== */
 export const createWaitlistController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const { userId: userIdStr, classId: classIdStr } = req.body;
@@ -121,7 +121,7 @@ export const createWaitlistController = async (
         normalizeClassType(session.type) ?? ClassType.INDIVIDUAL;
 
       const compatibleTransactions = userTransactions.filter(
-        (t) => normalizePackageType(t.packageType) === classType
+        (t) => normalizePackageType(t.packageType) === classType,
       );
 
       if (compatibleTransactions.length === 0) {
@@ -144,7 +144,7 @@ export const createWaitlistController = async (
 
       // 5.4 Reglas especiales para paquetes ilimitados (solo compatibles con saldo)
       const unlimitedPackages = compatibleWithBalance.filter(
-        (t) => t.packageIsUnlimited
+        (t) => t.packageIsUnlimited,
       );
       const hasUnlimited = unlimitedPackages.length > 0;
 
@@ -249,7 +249,7 @@ export const createWaitlistController = async (
    =============================================================== */
 export const getAllWaitlistsController = async (
   req: Request | AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const authReq = req as AuthRequest;
@@ -344,7 +344,7 @@ export const getAllWaitlistsController = async (
    =============================================================== */
 export const getWaitlistsByClassController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const classIdStr = req.query.classId as string;
@@ -396,7 +396,7 @@ export const getWaitlistsByClassController = async (
    =============================================================== */
 export const deleteWaitlistController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   const { waitlistId } = req.params;
   const ids = parseWaitlistId(waitlistId);
@@ -442,7 +442,7 @@ export const deleteWaitlistController = async (
    =============================================================== */
 export const getWaitlistByIdController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const { waitlistId } = req.params;
@@ -482,7 +482,7 @@ export const getWaitlistByIdController = async (
    =============================================================== */
 export const updateWaitlistController = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const { waitlistId } = req.params;
